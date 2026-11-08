@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Rubrics and calibration</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#1D4ED8}a:hover{color:#1E3A8A}
+.chip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid}
+.pass{color:#067647;background:#ECFDF3;border-color:#ABEFC6}
+.fail{color:#B42318;background:#FEF3F2;border-color:#FECDCA}
+.na{color:#55554F;background:#F2F2EF;border-color:#D4D4D0}
+th{text-align:left;font-size:12px;font-weight:600;color:#55554F;padding:8px 10px;border-bottom:1px solid #D4D4D0}
+td{padding:8px 10px;border-bottom:1px solid #E7E7E3;font-size:13px}
+</style>
+</helmet>
+<div style="display: flex; flex-wrap: wrap; min-height: 860px; background: #F6F6F4; font-family: Inter, system-ui, sans-serif; color: #1A1A1A">
+<nav aria-label="Main" style="flex: 1 1 220px; box-sizing: border-box; padding: 24px 16px; background: #FFFFFF; border-right: 1px solid #D4D4D0; display: flex; flex-direction: column; gap: 4px">
+<div style="font-size: 16px; font-weight: 700; padding: 0 12px 20px">Loop · local</div>
+<a href="Main.dc.html" style="padding: 10px 12px; border-radius: 8px; color: #1A1A1A; text-decoration: none">Sessions</a>
+<a href="Proposals.dc.html" style="padding: 10px 12px; border-radius: 8px; color: #1A1A1A; text-decoration: none">Proposals <span class="chip na">3</span></a>
+<a href="Trends.dc.html" style="padding: 10px 12px; border-radius: 8px; color: #1A1A1A; text-decoration: none">Trends</a>
+<a href="Rubrics.dc.html" style="padding: 10px 12px; border-radius: 8px; background: #EEF2FF; color: #1A1A1A; font-weight: 600; text-decoration: none">Rubrics</a>
+<a href="Settings.dc.html" style="padding: 10px 12px; border-radius: 8px; color: #1A1A1A; text-decoration: none">Settings</a>
+</nav>
+<main style="flex: 999 1 560px; min-width: 0; box-sizing: border-box; padding: 32px; display: flex; flex-direction: column; gap: 20px">
+<div style="display: flex; flex-direction: column; gap: 4px">
+<h1 style="margin: 0; font-size: 28px; font-weight: 700">Rubrics</h1>
+<p style="margin: 0; font-size: 14px; color: #55554F">Markdown files in <code>rubrics/</code>, versioned in git. The improver only uses calibrated rubrics.</p>
+</div>
+<div style="display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start">
+<div style="flex: 1 1 200px; min-width: 0; display: flex; flex-direction: column; gap: 8px">
+<a href="#" style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #EEF2FF; border: 1px solid #1D4ED8; border-radius: 10px; color: #1A1A1A; text-decoration: none"><span style="font-weight: 600">efficiency</span><span style="font-size: 12px; color: #55554F">v3</span></a>
+<a href="#" style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #FFFFFF; border: 1px solid #D4D4D0; border-radius: 10px; color: #1A1A1A; text-decoration: none"><span>redundant-tests</span><span style="font-size: 12px; color: #55554F">v2</span></a>
+<a href="#" style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #FFFFFF; border: 1px solid #D4D4D0; border-radius: 10px; color: #1A1A1A; text-decoration: none"><span>verbosity</span><span style="font-size: 12px; color: #55554F">v1</span></a>
+<a href="#" style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #FFFFFF; border: 1px solid #D4D4D0; border-radius: 10px; color: #1A1A1A; text-decoration: none"><span>silent-workaround</span><span style="font-size: 12px; color: #55554F">v1</span></a>
+<button style="height: 44px; border-radius: 10px; border: 1px dashed #A3A39E; background: transparent; font: inherit; font-size: 14px">+ New rubric</button>
+</div>
+<section aria-label="Editor" style="flex: 3 1 420px; min-width: 0; background: #FFFFFF; border: 1px solid #D4D4D0; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 14px">
+<div style="display: flex; flex-wrap: wrap; gap: 12px">
+<label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #55554F">Pass threshold
+<input type="number" value="0.6" step="0.1" style="width: 96px; height: 40px; padding: 0 10px; border: 1px solid #D4D4D0; border-radius: 8px; font: inherit; font-size: 14px"></label>
+<label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #55554F">Applies to
+<select style="height: 40px; padding: 0 10px; border: 1px solid #D4D4D0; border-radius: 8px; font: inherit; font-size: 14px; background: #FFFFFF"><option>All sessions</option><option>Sessions with a PR</option></select></label>
+<label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #55554F">Target pass rate
+<input type="text" value="70%" style="width: 96px; height: 40px; padding: 0 10px; border: 1px solid #D4D4D0; border-radius: 8px; font: inherit; font-size: 14px"></label>
+</div>
+<label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #55554F">Rubric body (markdown)
+<textarea rows="12" style="padding: 12px; border: 1px solid #D4D4D0; border-radius: 8px; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 13px; line-height: 1.6; resize: vertical">Did the agent work toward the result, or waste effort on redundant steps and back-and-forth?
+
+- 1.0  Direct path; information gathering proportional to the task
+- 0.6  Some detours, recovered quickly
+- 0.2  Repeated failed calls or environment probing a skill should cover
+
+Return: score, one-paragraph reason, ids of the events that justify it.</textarea></label>
+<div style="display: flex; gap: 8px; flex-wrap: wrap">
+<button style="height: 44px; padding: 0 16px; border-radius: 8px; border: 0; background: #1D4ED8; color: #FFFFFF; font: inherit; font-size: 14px; font-weight: 600">Save as v4 (commit)</button>
+<button style="height: 44px; padding: 0 16px; border-radius: 8px; border: 1px solid #D4D4D0; background: #FFFFFF; font: inherit; font-size: 14px">Dry-run on 10 sessions</button>
+</div>
+</section>
+<aside aria-label="Calibration" style="flex: 2 1 300px; min-width: 0; background: #FFFFFF; border: 1px solid #D4D4D0; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 16px; font-weight: 600">Calibration</h2>
+<div style="display: flex; align-items: baseline; gap: 8px"><span style="font-size: 28px; font-weight: 700">7 / 10</span><span style="font-size: 13px; color: #55554F">judge agrees with your labels</span></div>
+<p style="margin: 0; padding: 10px 12px; border-radius: 8px; background: #FFFAEB; border: 1px solid #FEDF89; font-size: 13px; color: #7A2E0E">Gate: needs 8 / 10 before the improver may use this rubric.</p>
+<table style="width: 100%; border-collapse: collapse">
+<thead><tr><th>Session</th><th>You</th><th>Judge</th></tr></thead>
+<tbody>
+<tr><td>Add OAuth…</td><td><span class="chip fail">Fail</span></td><td><span class="chip fail">Fail</span></td></tr>
+<tr style="background: #FEF3F2"><td>Fix flaky e2e…</td><td><span class="chip pass">Pass</span></td><td><span class="chip fail">Fail</span></td></tr>
+<tr><td>Refactor settings…</td><td><span class="chip pass">Pass</span></td><td><span class="chip pass">Pass</span></td></tr>
+<tr style="background: #FEF3F2"><td>Spawn triage…</td><td><span class="chip fail">Fail</span></td><td><span class="chip pass">Pass</span></td></tr>
+<tr><td style="color: #55554F" colspan="3">+ 6 more</td></tr>
+</tbody>
+</table>
+</aside>
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":860}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

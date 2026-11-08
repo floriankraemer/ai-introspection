@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Proposal inbox</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#1D4ED8}a:hover{color:#1E3A8A}
+.chip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid}
+.fail{color:#B42318;background:#FEF3F2;border-color:#FECDCA}
+.na{color:#55554F;background:#F2F2EF;border-color:#D4D4D0}
+code{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:13px}
+.add{display:block;background:#ECFDF3;color:#05603A}
+.del{display:block;background:#FEF3F2;color:#912018}
+.ctx{display:block;color:#55554F}
+</style>
+</helmet>
+<div style="display: flex; flex-wrap: wrap; min-height: 860px; background: #F6F6F4; font-family: Inter, system-ui, sans-serif; color: #1A1A1A">
+<nav aria-label="Main" style="flex: 1 1 220px; box-sizing: border-box; padding: 24px 16px; background: #FFFFFF; border-right: 1px solid #D4D4D0; display: flex; flex-direction: column; gap: 4px">
+<div style="font-size: 16px; font-weight: 700; padding: 0 12px 20px">Loop · local</div>
+<a href="Main.dc.html" style="padding: 10px 12px; border-radius: 8px; color: #1A1A1A; text-decoration: none">Sessions</a>
+<a href="Proposals.dc.html" style="padding: 10px 12px; border-radius: 8px; background: #EEF2FF; color: #1A1A1A; font-weight: 600; text-decoration: none">Proposals <span class="chip na">3</span></a>
+<a href="Trends.dc.html" style="padding: 10px 12px; border-radius: 8px; color: #1A1A1A; text-decoration: none">Trends</a>
+<a href="Rubrics.dc.html" style="padding: 10px 12px; border-radius: 8px; color: #1A1A1A; text-decoration: none">Rubrics</a>
+<a href="Settings.dc.html" style="padding: 10px 12px; border-radius: 8px; color: #1A1A1A; text-decoration: none">Settings</a>
+</nav>
+<main style="flex: 999 1 560px; min-width: 0; box-sizing: border-box; padding: 32px; display: flex; flex-direction: column; gap: 20px">
+<div style="display: flex; flex-direction: column; gap: 4px">
+<h1 style="margin: 0; font-size: 28px; font-weight: 700">Proposals</h1>
+<p style="margin: 0; font-size: 14px; color: #55554F">Drafted by the nightly improver from the last 24 h of failing grades. Nothing changes until you accept.</p>
+</div>
+<div style="display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start">
+<div style="flex: 1 1 280px; min-width: 0; display: flex; flex-direction: column; gap: 8px">
+<div role="tablist" style="display: flex; gap: 6px">
+<button role="tab" aria-selected="true" style="height: 36px; padding: 0 12px; border-radius: 999px; border: 1px solid #1D4ED8; background: #EEF2FF; font: inherit; font-size: 13px">Open (3)</button>
+<button role="tab" aria-selected="false" style="height: 36px; padding: 0 12px; border-radius: 999px; border: 1px solid #D4D4D0; background: #FFFFFF; font: inherit; font-size: 13px">Accepted</button>
+<button role="tab" aria-selected="false" style="height: 36px; padding: 0 12px; border-radius: 999px; border: 1px solid #D4D4D0; background: #FFFFFF; font: inherit; font-size: 13px">Rejected</button>
+</div>
+<a href="#" style="display: flex; flex-direction: column; gap: 6px; padding: 14px; background: #EEF2FF; border: 1px solid #1D4ED8; border-radius: 10px; color: #1A1A1A; text-decoration: none"><strong style="font-size: 14px">e2e-testing skill: find the dev-server port first</strong><span style="font-size: 12px; color: #55554F">12 sessions · efficiency, silent-workaround</span></a>
+<a href="#" style="display: flex; flex-direction: column; gap: 6px; padding: 14px; background: #FFFFFF; border: 1px solid #D4D4D0; border-radius: 10px; color: #1A1A1A; text-decoration: none"><strong style="font-size: 14px">changelog skill: prescribe wording and sections</strong><span style="font-size: 12px; color: #55554F">5 sessions · verbosity</span></a>
+<a href="#" style="display: flex; flex-direction: column; gap: 6px; padding: 14px; background: #FFFFFF; border: 1px solid #D4D4D0; border-radius: 10px; color: #1A1A1A; text-decoration: none"><strong style="font-size: 14px">settings.json: allow triage skill to spawn sub-agents</strong><span style="font-size: 12px; color: #55554F">4 sessions · efficiency</span></a>
+</div>
+<section aria-label="Proposal detail" style="flex: 3 1 480px; min-width: 0; background: #FFFFFF; border: 1px solid #D4D4D0; border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 16px">
+<div style="display: flex; flex-direction: column; gap: 6px">
+<h2 style="margin: 0; font-size: 20px; font-weight: 700">e2e-testing skill: find the dev-server port first</h2>
+<p style="margin: 0; font-size: 13px; color: #55554F">Branch <code>loop/e2e-port-discovery</code> · drafted today 06:04 · targets <code>skills/e2e-testing/SKILL.md</code></p>
+</div>
+<div style="display: flex; flex-direction: column; gap: 6px">
+<h3 style="margin: 0; font-size: 14px; font-weight: 600">Why</h3>
+<p style="margin: 0; font-size: 14px; line-height: 1.55">In 12 failing sessions the agent probed ports 3000–3010 before finding the server. The skill never says how the port is chosen. Reports did not mention it.</p>
+</div>
+<div style="display: flex; flex-direction: column; gap: 6px">
+<h3 style="margin: 0; font-size: 14px; font-weight: 600">Evidence</h3>
+<div style="display: flex; flex-wrap: wrap; gap: 6px">
+<a href="Session.dc.html" class="chip fail" style="text-decoration: none">Add OAuth to API service</a>
+<a href="Session.dc.html" class="chip fail" style="text-decoration: none">Fix flaky e2e login test</a>
+<a href="Session.dc.html" class="chip na" style="text-decoration: none">+ 10 more</a>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 6px">
+<h3 style="margin: 0; font-size: 14px; font-weight: 600">Diff</h3>
+<pre style="margin: 0; padding: 12px; background: #FAFAF8; border: 1px solid #E7E7E3; border-radius: 8px; overflow-x: auto; line-height: 1.6"><code class="ctx">  ## Running e2e tests</code><code class="del">- Start the dev server and run the suite.</code><code class="add">+ 1. Start the dev server with `npm run dev -- --port 0`.</code><code class="add">+ 2. Read the chosen port from `.dev-port` (written on start).</code><code class="add">+ 3. Run `PORT=$(cat .dev-port) npm run e2e`.</code><code class="add">+ If the server fails to start, stop and report it. Do not probe ports.</code></pre>
+</div>
+<p style="margin: 0; font-size: 13px; color: #55554F">Expected effect: efficiency and silent-workaround pass rates. Measured on Trends after merge.</p>
+<div style="display: flex; gap: 8px; flex-wrap: wrap">
+<button style="height: 44px; padding: 0 18px; border-radius: 8px; border: 0; background: #1D4ED8; color: #FFFFFF; font: inherit; font-size: 14px; font-weight: 600">Accept and merge</button>
+<button style="height: 44px; padding: 0 16px; border-radius: 8px; border: 1px solid #D4D4D0; background: #FFFFFF; font: inherit; font-size: 14px">Edit first</button>
+<button style="height: 44px; padding: 0 16px; border-radius: 8px; border: 1px solid #D4D4D0; background: #FFFFFF; font: inherit; font-size: 14px">Reject with reason…</button>
+</div>
+</section>
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":860}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

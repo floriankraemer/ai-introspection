@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sessions</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#1D4ED8}a:hover{color:#1E3A8A}
+.chip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid}
+.pass{color:#067647;background:#ECFDF3;border-color:#ABEFC6}
+.fail{color:#B42318;background:#FEF3F2;border-color:#FECDCA}
+.na{color:#55554F;background:#F2F2EF;border-color:#D4D4D0}
+th{text-align:left;font-size:12px;font-weight:600;color:#55554F;padding:10px 12px;border-bottom:1px solid #D4D4D0;white-space:nowrap}
+td{padding:12px;border-bottom:1px solid #E7E7E3;font-size:14px;white-space:nowrap}
+</style>
+</helmet>
+<div style="display: flex; flex-wrap: wrap; min-height: 860px; background: #F6F6F4; font-family: Inter, system-ui, sans-serif; color: #1A1A1A">
+<nav aria-label="Main" style="flex: 1 1 220px; box-sizing: border-box; padding: 24px 16px; background: #FFFFFF; border-right: 1px solid #D4D4D0; display: flex; flex-direction: column; gap: 4px">
+<div style="font-size: 16px; font-weight: 700; padding: 0 12px 20px">Loop · local</div>
+<a href="Main.dc.html" style="padding: 10px 12px; border-radius: 8px; background: #EEF2FF; color: #1A1A1A; font-weight: 600; text-decoration: none">Sessions</a>
+<a href="Proposals.dc.html" style="padding: 10px 12px; border-radius: 8px; color: #1A1A1A; text-decoration: none">Proposals <span class="chip na">3</span></a>
+<a href="Trends.dc.html" style="padding: 10px 12px; border-radius: 8px; color: #1A1A1A; text-decoration: none">Trends</a>
+<a href="Rubrics.dc.html" style="padding: 10px 12px; border-radius: 8px; color: #1A1A1A; text-decoration: none">Rubrics</a>
+<a href="Settings.dc.html" style="padding: 10px 12px; border-radius: 8px; color: #1A1A1A; text-decoration: none">Settings</a>
+</nav>
+<main style="flex: 999 1 560px; min-width: 0; box-sizing: border-box; padding: 32px; display: flex; flex-direction: column; gap: 24px">
+<div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 16px">
+<div style="display: flex; flex-direction: column; gap: 4px">
+<h1 style="margin: 0; font-size: 28px; font-weight: 700">Sessions</h1>
+<p style="margin: 0; font-size: 14px; color: #55554F">Last 7 days · 48 sessions collected · 31 graded</p>
+</div>
+<div style="display: flex; gap: 8px; flex-wrap: wrap">
+<button style="height: 44px; padding: 0 16px; border-radius: 8px; border: 1px solid #D4D4D0; background: #FFFFFF; font: inherit; font-size: 14px">Import history</button>
+<button style="height: 44px; padding: 0 16px; border-radius: 8px; border: 0; background: #1D4ED8; color: #FFFFFF; font: inherit; font-size: 14px; font-weight: 600">Grade selected</button>
+</div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px">
+<div style="background: #FFFFFF; border: 1px solid #D4D4D0; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 6px"><span style="font-size: 13px; color: #55554F">Efficiency · pass rate</span><span style="font-size: 26px; font-weight: 700">58%</span><span style="font-size: 12px; color: #B42318">below 70% target</span></div>
+<div style="background: #FFFFFF; border: 1px solid #D4D4D0; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 6px"><span style="font-size: 13px; color: #55554F">Redundant tests · pass rate</span><span style="font-size: 26px; font-weight: 700">71%</span><span style="font-size: 12px; color: #55554F">on target</span></div>
+<div style="background: #FFFFFF; border: 1px solid #D4D4D0; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 6px"><span style="font-size: 13px; color: #55554F">Verbosity · pass rate</span><span style="font-size: 26px; font-weight: 700">84%</span><span style="font-size: 12px; color: #55554F">on target</span></div>
+<div style="background: #FFFFFF; border: 1px solid #D4D4D0; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 6px"><span style="font-size: 13px; color: #55554F">Silent workaround · pass rate</span><span style="font-size: 26px; font-weight: 700">66%</span><span style="font-size: 12px; color: #B42318">below 80% target</span></div>
+</div>
+<div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end">
+<label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #55554F; flex: 1 1 260px">Search
+<input type="search" placeholder="Prompt, repo, branch…" style="height: 40px; padding: 0 12px; border: 1px solid #D4D4D0; border-radius: 8px; font: inherit; font-size: 14px"></label>
+<label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #55554F">Agent
+<select style="height: 40px; padding: 0 12px; border: 1px solid #D4D4D0; border-radius: 8px; font: inherit; font-size: 14px; background: #FFFFFF"><option>All agents</option><option>Claude Code</option><option>Codex</option></select></label>
+<label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #55554F">Result
+<select style="height: 40px; padding: 0 12px; border: 1px solid #D4D4D0; border-radius: 8px; font: inherit; font-size: 14px; background: #FFFFFF"><option>Failed any rubric</option><option>All</option><option>Not graded</option></select></label>
+</div>
+<div style="background: #FFFFFF; border: 1px solid #D4D4D0; border-radius: 12px; overflow-x: auto">
+<table style="width: 100%; border-collapse: collapse">
+<thead><tr><th>Session</th><th>Agent</th><th>Repo</th><th>When</th><th>Tool errors</th><th>Efficiency</th><th>Tests</th><th>Verbosity</th><th>Workaround</th></tr></thead>
+<tbody>
+<tr><td><a href="Session.dc.html" style="font-weight: 600">Add OAuth to API service</a></td><td>Claude Code</td><td>api-service</td><td>2 h ago</td><td style="color: #B42318; font-weight: 600">14</td><td><span class="chip fail">Fail</span></td><td><span class="chip fail">Fail</span></td><td><span class="chip pass">Pass</span></td><td><span class="chip fail">Fail</span></td></tr>
+<tr><td><a href="Session.dc.html" style="font-weight: 600">Fix flaky e2e login test</a></td><td>Codex</td><td>web-app</td><td>5 h ago</td><td style="color: #B42318; font-weight: 600">9</td><td><span class="chip fail">Fail</span></td><td><span class="chip pass">Pass</span></td><td><span class="chip pass">Pass</span></td><td><span class="chip pass">Pass</span></td></tr>
+<tr><td><a href="Session.dc.html" style="font-weight: 600">Write changelog for 0.4</a></td><td>Claude Code</td><td>docs-site</td><td>Yesterday</td><td>0</td><td><span class="chip pass">Pass</span></td><td><span class="chip na">n/a</span></td><td><span class="chip fail">Fail</span></td><td><span class="chip pass">Pass</span></td></tr>
+<tr><td><a href="Session.dc.html" style="font-weight: 600">Spawn triage sub-agents</a></td><td>Claude Code</td><td>infra</td><td>2 days ago</td><td style="color: #B42318; font-weight: 600">11</td><td><span class="chip fail">Fail</span></td><td><span class="chip na">n/a</span></td><td><span class="chip pass">Pass</span></td><td><span class="chip fail">Fail</span></td></tr>
+<tr><td><a href="Session.dc.html" style="font-weight: 600">Refactor settings panel</a></td><td>Claude Code</td><td>web-app</td><td>2 days ago</td><td>2</td><td><span class="chip pass">Pass</span></td><td><span class="chip pass">Pass</span></td><td><span class="chip pass">Pass</span></td><td><span class="chip pass">Pass</span></td></tr>
+<tr><td><a href="Session.dc.html" style="font-weight: 600">Bump dependencies</a></td><td>Codex</td><td>api-service</td><td>3 days ago</td><td>0</td><td colspan="4" style="color: #55554F">Not graded · not flagged, outside 20% sample</td></tr>
+</tbody>
+</table>
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":860}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

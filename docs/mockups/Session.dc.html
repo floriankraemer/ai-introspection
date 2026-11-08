@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Session detail</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#1D4ED8}a:hover{color:#1E3A8A}
+.chip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid}
+.pass{color:#067647;background:#ECFDF3;border-color:#ABEFC6}
+.fail{color:#B42318;background:#FEF3F2;border-color:#FECDCA}
+.na{color:#55554F;background:#F2F2EF;border-color:#D4D4D0}
+code{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:13px}
+</style>
+</helmet>
+<div style="display: flex; flex-wrap: wrap; min-height: 860px; background: #F6F6F4; font-family: Inter, system-ui, sans-serif; color: #1A1A1A">
+<nav aria-label="Main" style="flex: 1 1 220px; box-sizing: border-box; padding: 24px 16px; background: #FFFFFF; border-right: 1px solid #D4D4D0; display: flex; flex-direction: column; gap: 4px">
+<div style="font-size: 16px; font-weight: 700; padding: 0 12px 20px">Loop · local</div>
+<a href="Main.dc.html" style="padding: 10px 12px; border-radius: 8px; background: #EEF2FF; color: #1A1A1A; font-weight: 600; text-decoration: none">Sessions</a>
+<a href="Proposals.dc.html" style="padding: 10px 12px; border-radius: 8px; color: #1A1A1A; text-decoration: none">Proposals <span class="chip na">3</span></a>
+<a href="Trends.dc.html" style="padding: 10px 12px; border-radius: 8px; color: #1A1A1A; text-decoration: none">Trends</a>
+<a href="Rubrics.dc.html" style="padding: 10px 12px; border-radius: 8px; color: #1A1A1A; text-decoration: none">Rubrics</a>
+<a href="Settings.dc.html" style="padding: 10px 12px; border-radius: 8px; color: #1A1A1A; text-decoration: none">Settings</a>
+</nav>
+<main style="flex: 999 1 560px; min-width: 0; box-sizing: border-box; padding: 32px; display: flex; flex-direction: column; gap: 20px">
+<a href="Main.dc.html" style="font-size: 13px">← Sessions</a>
+<div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 16px">
+<div style="display: flex; flex-direction: column; gap: 6px">
+<h1 style="margin: 0; font-size: 26px; font-weight: 700">Add OAuth to API service</h1>
+<p style="margin: 0; font-size: 14px; color: #55554F">Claude Code · api-service · feat/oauth · 41 min · 312k tokens · <a href="#">PR #128 merged</a></p>
+</div>
+<div style="display: flex; gap: 8px; flex-wrap: wrap">
+<button style="height: 44px; padding: 0 16px; border-radius: 8px; border: 1px solid #D4D4D0; background: #FFFFFF; font: inherit; font-size: 14px">Open raw JSONL</button>
+<button style="height: 44px; padding: 0 16px; border-radius: 8px; border: 1px solid #D4D4D0; background: #FFFFFF; font: inherit; font-size: 14px">Re-grade</button>
+</div>
+</div>
+<div style="display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start">
+<section aria-label="Trace" style="flex: 3 1 480px; min-width: 0; background: #FFFFFF; border: 1px solid #D4D4D0; border-radius: 12px; display: flex; flex-direction: column">
+<div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid #E7E7E3">
+<h2 style="margin: 0; font-size: 16px; font-weight: 600">Trace · 186 events</h2>
+<div style="display: flex; gap: 6px; flex-wrap: wrap">
+<button style="height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid #1D4ED8; background: #EEF2FF; font: inherit; font-size: 13px">All</button>
+<button style="height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid #D4D4D0; background: #FFFFFF; font: inherit; font-size: 13px">Errors (14)</button>
+<button style="height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid #D4D4D0; background: #FFFFFF; font: inherit; font-size: 13px">Evidence only</button>
+</div>
+</div>
+<ol style="list-style: none; margin: 0; padding: 8px 0; display: flex; flex-direction: column">
+<li style="display: grid; grid-template-columns: 56px 92px minmax(0, 1fr); gap: 12px; padding: 10px 16px; font-size: 14px"><span style="color: #55554F">00:00</span><span class="chip na" style="justify-self: start">user</span><span>Add OAuth login to the API, follow our e2e testing skill.</span></li>
+<li style="display: grid; grid-template-columns: 56px 92px minmax(0, 1fr); gap: 12px; padding: 10px 16px; font-size: 14px"><span style="color: #55554F">00:03</span><span class="chip na" style="justify-self: start">skill</span><span>Loaded <code>e2e-testing/SKILL.md</code></span></li>
+<li style="display: grid; grid-template-columns: 56px 92px minmax(0, 1fr); gap: 12px; padding: 10px 16px; font-size: 14px"><span style="color: #55554F">12:40</span><span class="chip na" style="justify-self: start">edit</span><span>8 files changed, +412 −37</span></li>
+<li style="display: grid; grid-template-columns: 56px 92px minmax(0, 1fr); gap: 12px; padding: 10px 16px; font-size: 14px; background: #FEF3F2; border-left: 3px solid #B42318"><span style="color: #55554F">13:02</span><span class="chip fail" style="justify-self: start">bash ✕</span><span><code>curl localhost:3000/health</code> → connection refused</span></li>
+<li style="display: grid; grid-template-columns: 56px 92px minmax(0, 1fr); gap: 12px; padding: 10px 16px; font-size: 14px; background: #FEF3F2; border-left: 3px solid #B42318"><span style="color: #55554F">13:20</span><span class="chip fail" style="justify-self: start">bash ✕</span><span><code>curl localhost:3001/health</code> → connection refused</span></li>
+<li style="display: grid; grid-template-columns: 56px 92px minmax(0, 1fr); gap: 12px; padding: 10px 16px; font-size: 14px; color: #55554F"><span>13:24</span><span></span><span>… 9 more failed port probes (collapsed)</span></li>
+<li style="display: grid; grid-template-columns: 56px 92px minmax(0, 1fr); gap: 12px; padding: 10px 16px; font-size: 14px"><span style="color: #55554F">19:51</span><span class="chip na" style="justify-self: start">bash</span><span><code>lsof -i -P | grep LISTEN</code> → found :4173</span></li>
+<li style="display: grid; grid-template-columns: 56px 92px minmax(0, 1fr); gap: 12px; padding: 10px 16px; font-size: 14px"><span style="color: #55554F">22:10</span><span class="chip na" style="justify-self: start">bash</span><span><code>npm test</code> → 46 new unit tests passed</span></li>
+<li style="display: grid; grid-template-columns: 56px 92px minmax(0, 1fr); gap: 12px; padding: 10px 16px; font-size: 14px; background: #FEF3F2; border-left: 3px solid #B42318"><span style="color: #55554F">40:58</span><span class="chip na" style="justify-self: start">assistant</span><span>“Done. OAuth works and all tests pass.” (no mention of port issue)</span></li>
+</ol>
+</section>
+<aside aria-label="Grades" style="flex: 2 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 16px; font-weight: 600">Grades · judge: claude-sonnet · rubrics v3</h2>
+<div style="background: #FFFFFF; border: 1px solid #D4D4D0; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; justify-content: space-between; align-items: center"><strong style="font-size: 15px">Efficiency</strong><span class="chip fail">0.2 · Fail</span></div>
+<p style="margin: 0; font-size: 14px; line-height: 1.5">Spent ~7 min probing ports. The e2e skill gives no way to find the dev-server port.</p>
+<a href="#" style="font-size: 13px">Show 12 evidence events</a>
+</div>
+<div style="background: #FFFFFF; border: 1px solid #D4D4D0; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; justify-content: space-between; align-items: center"><strong style="font-size: 15px">Silent workaround</strong><span class="chip fail">Fail</span></div>
+<p style="margin: 0; font-size: 14px; line-height: 1.5">11 tool errors were routed around; final summary reports success without mentioning them.</p>
+<a href="#" style="font-size: 13px">Show 2 evidence events</a>
+</div>
+<div style="background: #FFFFFF; border: 1px solid #D4D4D0; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; justify-content: space-between; align-items: center"><strong style="font-size: 15px">Redundant tests</strong><span class="chip fail">0.4 · Fail</span></div>
+<p style="margin: 0; font-size: 14px; line-height: 1.5">46 unit tests; guidelines prefer a few end-to-end tests for auth flows.</p>
+</div>
+<div style="background: #FFFFFF; border: 1px solid #D4D4D0; border-radius: 12px; padding: 16px; display: flex; justify-content: space-between; align-items: center"><strong style="font-size: 15px">Verbosity</strong><span class="chip pass">0.8 · Pass</span></div>
+<div style="display: flex; gap: 8px; flex-wrap: wrap">
+<button style="height: 44px; padding: 0 14px; border-radius: 8px; border: 1px solid #D4D4D0; background: #FFFFFF; font: inherit; font-size: 14px">Judge was wrong…</button>
+<button style="height: 44px; padding: 0 14px; border-radius: 8px; border: 1px solid #D4D4D0; background: #FFFFFF; font: inherit; font-size: 14px">Add to calibration set</button>
+</div>
+</aside>
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":860}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

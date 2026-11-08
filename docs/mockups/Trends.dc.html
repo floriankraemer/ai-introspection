@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Trends</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#1D4ED8}a:hover{color:#1E3A8A}
+.chip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid}
+.na{color:#55554F;background:#F2F2EF;border-color:#D4D4D0}
+th{text-align:left;font-size:12px;font-weight:600;color:#55554F;padding:10px 12px;border-bottom:1px solid #D4D4D0;white-space:nowrap}
+td{padding:12px;border-bottom:1px solid #E7E7E3;font-size:14px}
+</style>
+</helmet>
+<div style="display: flex; flex-wrap: wrap; min-height: 860px; background: #F6F6F4; font-family: Inter, system-ui, sans-serif; color: #1A1A1A">
+<nav aria-label="Main" style="flex: 1 1 220px; box-sizing: border-box; padding: 24px 16px; background: #FFFFFF; border-right: 1px solid #D4D4D0; display: flex; flex-direction: column; gap: 4px">
+<div style="font-size: 16px; font-weight: 700; padding: 0 12px 20px">Loop · local</div>
+<a href="Main.dc.html" style="padding: 10px 12px; border-radius: 8px; color: #1A1A1A; text-decoration: none">Sessions</a>
+<a href="Proposals.dc.html" style="padding: 10px 12px; border-radius: 8px; color: #1A1A1A; text-decoration: none">Proposals <span class="chip na">3</span></a>
+<a href="Trends.dc.html" style="padding: 10px 12px; border-radius: 8px; background: #EEF2FF; color: #1A1A1A; font-weight: 600; text-decoration: none">Trends</a>
+<a href="Rubrics.dc.html" style="padding: 10px 12px; border-radius: 8px; color: #1A1A1A; text-decoration: none">Rubrics</a>
+<a href="Settings.dc.html" style="padding: 10px 12px; border-radius: 8px; color: #1A1A1A; text-decoration: none">Settings</a>
+</nav>
+<main style="flex: 999 1 560px; min-width: 0; box-sizing: border-box; padding: 32px; display: flex; flex-direction: column; gap: 20px">
+<div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 16px">
+<div style="display: flex; flex-direction: column; gap: 4px">
+<h1 style="margin: 0; font-size: 28px; font-weight: 700">Trends</h1>
+<p style="margin: 0; font-size: 14px; color: #55554F">Weekly pass rate per rubric. Dashed markers = changes you merged.</p>
+</div>
+<label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #55554F">Range
+<select style="height: 40px; padding: 0 12px; border: 1px solid #D4D4D0; border-radius: 8px; font: inherit; font-size: 14px; background: #FFFFFF"><option>Last 8 weeks</option><option>Last 90 days</option></select></label>
+</div>
+<section aria-label="Pass rate chart" style="background: #FFFFFF; border: 1px solid #D4D4D0; border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 12px">
+<div style="display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px">
+<span style="display: flex; align-items: center; gap: 6px"><span aria-hidden="true" style="width: 16px; height: 3px; background: #1D4ED8"></span>Efficiency</span>
+<span style="display: flex; align-items: center; gap: 6px"><span aria-hidden="true" style="width: 16px; height: 3px; background: #C2410C"></span>Silent workaround</span>
+<span style="display: flex; align-items: center; gap: 6px; color: #55554F"><span aria-hidden="true" style="width: 16px; border-top: 2px dashed #8A8A85"></span>70% target</span>
+</div>
+<svg viewBox="0 0 800 290" role="img" aria-label="Efficiency and silent-workaround pass rates jump after the e2e port fix was merged" style="width: 100%; height: auto">
+<g stroke="#E7E7E3" stroke-width="1">
+<line x1="40" x2="780" y1="210" y2="210"></line><line x1="40" x2="780" y1="170" y2="170"></line><line x1="40" x2="780" y1="90" y2="90"></line><line x1="40" x2="780" y1="50" y2="50"></line>
+</g>
+<line x1="40" x2="780" y1="130" y2="130" stroke="#8A8A85" stroke-width="1.5" stroke-dasharray="6 5"></line>
+<g font-size="12" fill="#55554F" font-family="Inter, sans-serif">
+<text x="32" y="214" text-anchor="end">50%</text><text x="32" y="174" text-anchor="end">60%</text><text x="32" y="134" text-anchor="end">70%</text><text x="32" y="94" text-anchor="end">80%</text><text x="32" y="54" text-anchor="end">90%</text>
+<text x="60" y="276" text-anchor="middle">W38</text><text x="160" y="276" text-anchor="middle">W39</text><text x="260" y="276" text-anchor="middle">W40</text><text x="360" y="276" text-anchor="middle">W41</text><text x="460" y="276" text-anchor="middle">W42</text><text x="560" y="276" text-anchor="middle">W43</text><text x="660" y="276" text-anchor="middle">W44</text><text x="760" y="276" text-anchor="middle">W45</text>
+</g>
+<line x1="510" x2="510" y1="30" y2="250" stroke="#1A1A1A" stroke-width="1.25" stroke-dasharray="4 4"></line>
+<text x="518" y="40" font-size="12" font-weight="600" fill="#1A1A1A" font-family="Inter, sans-serif">Merged: e2e port discovery</text>
+<polyline fill="none" stroke="#C2410C" stroke-width="2.5" points="60,170 160,162 260,178 360,158 460,146 560,94 660,86 760,82"></polyline>
+<polyline fill="none" stroke="#1D4ED8" stroke-width="2.5" points="60,202 160,190 260,210 360,194 460,178 560,122 660,110 760,98"></polyline>
+<g fill="#1D4ED8"><circle cx="460" cy="178" r="4"></circle><circle cx="760" cy="98" r="4"></circle></g>
+<g fill="#C2410C"><circle cx="460" cy="146" r="4"></circle><circle cx="760" cy="82" r="4"></circle></g>
+<g font-size="12" font-weight="600" font-family="Inter, sans-serif"><text x="452" y="196" text-anchor="end" fill="#1D4ED8">58%</text><text x="766" y="120" text-anchor="end" fill="#1D4ED8">78%</text></g>
+</svg>
+</section>
+<section aria-label="Change log" style="background: #FFFFFF; border: 1px solid #D4D4D0; border-radius: 12px; overflow-x: auto">
+<table style="width: 100%; border-collapse: collapse">
+<thead><tr><th>Merged</th><th>Change</th><th>Source</th><th>Rubric watched</th><th>7 days before → after</th></tr></thead>
+<tbody>
+<tr><td>Oct 20</td><td>e2e-testing: find dev-server port first</td><td><a href="Proposals.dc.html">Proposal</a></td><td>Efficiency</td><td style="font-weight: 600">58% → 72%</td></tr>
+<tr><td>Oct 2</td><td>CLAUDE.md: prefer e2e over unit tests for auth</td><td>Manual edit</td><td>Redundant tests</td><td style="font-weight: 600">64% → 71%</td></tr>
+<tr><td>Sep 24</td><td>Judge model changed; reference set re-graded</td><td>Settings</td><td>All</td><td style="color: #55554F">baseline reset</td></tr>
+</tbody>
+</table>
+</section>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":860}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

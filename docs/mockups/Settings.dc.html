@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Settings</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#1D4ED8}a:hover{color:#1E3A8A}
+.chip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid}
+.pass{color:#067647;background:#ECFDF3;border-color:#ABEFC6}
+.na{color:#55554F;background:#F2F2EF;border-color:#D4D4D0}
+code{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:13px}
+</style>
+</helmet>
+<div style="display: flex; flex-wrap: wrap; min-height: 860px; background: #F6F6F4; font-family: Inter, system-ui, sans-serif; color: #1A1A1A">
+<nav aria-label="Main" style="flex: 1 1 220px; box-sizing: border-box; padding: 24px 16px; background: #FFFFFF; border-right: 1px solid #D4D4D0; display: flex; flex-direction: column; gap: 4px">
+<div style="font-size: 16px; font-weight: 700; padding: 0 12px 20px">Loop · local</div>
+<a href="Main.dc.html" style="padding: 10px 12px; border-radius: 8px; color: #1A1A1A; text-decoration: none">Sessions</a>
+<a href="Proposals.dc.html" style="padding: 10px 12px; border-radius: 8px; color: #1A1A1A; text-decoration: none">Proposals <span class="chip na">3</span></a>
+<a href="Trends.dc.html" style="padding: 10px 12px; border-radius: 8px; color: #1A1A1A; text-decoration: none">Trends</a>
+<a href="Rubrics.dc.html" style="padding: 10px 12px; border-radius: 8px; color: #1A1A1A; text-decoration: none">Rubrics</a>
+<a href="Settings.dc.html" style="padding: 10px 12px; border-radius: 8px; background: #EEF2FF; color: #1A1A1A; font-weight: 600; text-decoration: none">Settings</a>
+</nav>
+<main style="flex: 999 1 560px; min-width: 0; box-sizing: border-box; padding: 32px; display: flex; flex-direction: column; gap: 20px">
+<h1 style="margin: 0; font-size: 28px; font-weight: 700">Settings</h1>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px">
+<section aria-label="Sources" style="background: #FFFFFF; border: 1px solid #D4D4D0; border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 16px; font-weight: 600">Sources</h2>
+<div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #E7E7E3"><div style="display: flex; flex-direction: column; gap: 2px"><strong style="font-size: 14px">Claude Code</strong><code style="color: #55554F">~/.claude/projects</code></div><span class="chip pass">Watching</span></div>
+<div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #E7E7E3"><div style="display: flex; flex-direction: column; gap: 2px"><strong style="font-size: 14px">Codex</strong><code style="color: #55554F">~/.codex/sessions</code></div><span class="chip pass">Watching</span></div>
+<button style="align-self: flex-start; height: 44px; padding: 0 14px; border-radius: 8px; border: 1px dashed #A3A39E; background: transparent; font: inherit; font-size: 14px">+ Add source folder</button>
+<label style="display: flex; gap: 10px; align-items: center; font-size: 14px"><input type="checkbox" checked style="width: 18px; height: 18px">Redact secrets at ingest (tokens, keys, .env values)</label>
+</section>
+<section aria-label="Judge" style="background: #FFFFFF; border: 1px solid #D4D4D0; border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 16px; font-weight: 600">Judge and sampling</h2>
+<label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #55554F">Runs via
+<select style="height: 40px; padding: 0 10px; border: 1px solid #D4D4D0; border-radius: 8px; font: inherit; font-size: 14px; background: #FFFFFF"><option>Local claude CLI (headless)</option><option>Anthropic API key</option></select></label>
+<label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #55554F">Grade
+<select style="height: 40px; padding: 0 10px; border: 1px solid #D4D4D0; border-radius: 8px; font: inherit; font-size: 14px; background: #FFFFFF"><option>Flagged sessions + 20% random sample</option><option>Every session</option></select></label>
+<label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #55554F">Daily token budget
+<input type="text" value="[YOUR BUDGET]" style="height: 40px; padding: 0 10px; border: 1px solid #D4D4D0; border-radius: 8px; font: inherit; font-size: 14px"></label>
+</section>
+<section aria-label="Schedule" style="background: #FFFFFF; border: 1px solid #D4D4D0; border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 16px; font-weight: 600">Schedule</h2>
+<label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #55554F">Grade sessions
+<select style="height: 40px; padding: 0 10px; border: 1px solid #D4D4D0; border-radius: 8px; font: inherit; font-size: 14px; background: #FFFFFF"><option>When a session ends</option><option>When its PR merges</option></select></label>
+<label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #55554F">Run improver
+<select style="height: 40px; padding: 0 10px; border: 1px solid #D4D4D0; border-radius: 8px; font: inherit; font-size: 14px; background: #FFFFFF"><option>Daily at 06:00</option><option>Weekly, Monday 06:00</option><option>Manually</option></select></label>
+<label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #55554F">Skills repo for patches
+<input type="text" value="~/dev/agent-skills" style="height: 40px; padding: 0 10px; border: 1px solid #D4D4D0; border-radius: 8px; font: inherit; font-size: 14px"></label>
+</section>
+<section aria-label="Team mode" style="background: #FAFAF8; border: 1px dashed #A3A39E; border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 12px">
+<div style="display: flex; justify-content: space-between; align-items: center"><h2 style="margin: 0; font-size: 16px; font-weight: 600">Team mode</h2><span class="chip na">Phase 5</span></div>
+<p style="margin: 0; font-size: 14px; line-height: 1.5; color: #3F3F3B">Ship redacted traces to a shared server. Grades, proposals and trends then cover the whole team; proposals open as PRs.</p>
+<label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #55554F">Server URL
+<input type="url" placeholder="https://loop.your-company.dev" disabled style="height: 40px; padding: 0 10px; border: 1px solid #D4D4D0; border-radius: 8px; font: inherit; font-size: 14px; background: #F2F2EF"></label>
+<label style="display: flex; gap: 10px; align-items: center; font-size: 14px; color: #55554F"><input type="checkbox" disabled style="width: 18px; height: 18px">Share my sessions with the workspace</label>
+<button disabled style="align-self: flex-start; height: 44px; padding: 0 16px; border-radius: 8px; border: 1px solid #D4D4D0; background: #F2F2EF; color: #55554F; font: inherit; font-size: 14px">Connect with SSO</button>
+</section>
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":860}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>
