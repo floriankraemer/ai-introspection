@@ -5,8 +5,7 @@ pass_threshold: 0.6
 applies_to: all
 ---
 
-Did the agent work toward the result, or waste effort on redundant steps
-and back-and-forth?
+Did the agent work toward the result, or waste effort on redundant steps and back-and-forth?
 
 - 1.0 Direct path; information gathering proportional to the task
 - 0.8 One or two small detours that did not cost much
