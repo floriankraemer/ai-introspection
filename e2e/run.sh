@@ -2,6 +2,7 @@
 # Runs the whole suite in Docker: stack up, seed, all specs, stack down (always).
 #   e2e/run.sh            run the suite
 #   e2e/run.sh --update   also rewrite the screenshot baselines (make e2e-update)
+#   e2e/run.sh --manual   only the manual's screenshots, copied to docs/manual/images (make manual-screenshots)
 #
 # One test phase: the first scan (spec 1) makes the app remember the skills repository tip, the
 # manual commit (spec 4) is found by the next scan (POST /v1/trends/scan), no restart needed.
@@ -34,5 +35,13 @@ dc up -d --wait app
 
 pw node_modules/.bin/tsc --noEmit
 pw node seed/seed.ts /work/sources
+
+if [[ "${1:-}" == "--manual" ]]; then
+  # The spec builds its own state on the fresh stack, so the other specs must not run first.
+  pw env MANUAL_SCREENSHOTS=1 npx playwright test
+  mkdir -p docs/manual/images
+  cp e2e/.work/manual-images/*.png docs/manual/images/
+  exit 0
+fi
 
 spec "${update[@]}"

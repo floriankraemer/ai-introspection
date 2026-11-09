@@ -6,7 +6,7 @@ export GID ?= $(shell id -g)
 COMPOSE := docker compose -f compose.dev.yaml
 RUN := $(COMPOSE) run --rm --build dev
 
-.PHONY: mount-points install lint test test-pg build up open doctor claude-login down dev shell e2e e2e-update
+.PHONY: mount-points install lint test test-pg build up open doctor claude-login down dev shell e2e e2e-update manual-screenshots
 
 # Host folders mounted into the user stack. Same defaults as compose.yaml; the shell environment
 # wins over .env, as it does for Compose.
@@ -71,3 +71,7 @@ e2e:
 # Same run, and rewrites the screenshot baselines in e2e/__screenshots (Linux fonts, from the container).
 e2e-update:
 	e2e/run.sh --update
+
+# Regenerates the PNGs of the user manual (docs/manual/images) from a seeded throwaway stack.
+manual-screenshots:
+	e2e/run.sh --manual

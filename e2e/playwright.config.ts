@@ -4,6 +4,10 @@ import { defineConfig, devices } from '@playwright/test';
 // (see run.sh for the phases).
 export default defineConfig({
   testDir: 'tests',
+  // The manual's screenshots build their own state on a fresh stack: `make manual-screenshots` only.
+  ...(process.env.MANUAL_SCREENSHOTS
+    ? { testMatch: 'manual-screenshots.spec.ts' }
+    : { testIgnore: 'manual-screenshots.spec.ts' }),
   snapshotDir: '__screenshots',
   snapshotPathTemplate: '{snapshotDir}/{arg}{ext}',
   outputDir: '/work/results',
