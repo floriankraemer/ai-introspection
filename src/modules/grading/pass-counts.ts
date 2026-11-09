@@ -23,7 +23,10 @@ export interface PassCountQuery {
   slotSeconds?: number;
 }
 
-/** The newest `ok` grade of each session and rubric name among sessions that started in the range. */
+/**
+ * The newest `ok` grade of each session and rubric name among sessions that started in the range.
+ * Reference re-grades are left out: they re-judge old sessions with today's rubric and judge, which would rewrite past buckets.
+ */
 function newestOk(
   workspaceId: string,
   from: Date,
@@ -41,7 +44,7 @@ function newestOk(
     cross join grade g
     cross join rubric r
     where s.workspace_id = ${workspaceId} and g.workspace_id = ${workspaceId}
-      and g.session_id = s.id and r.id = g.rubric_id and g.status = 'ok'
+      and g.session_id = s.id and r.id = g.rubric_id and g.status = 'ok' and g.origin <> 'reference'
       and s.started_at >= ${from.toISOString()} ${upper} ${only}
   )`;
 }
@@ -129,6 +132,7 @@ export async function gradedSessionCount(db: Db, workspaceId: string, from: Date
     .select((eb) => eb.fn.count<number>('grade.session_id').distinct().as('n'))
     .where('grade.workspace_id', '=', workspaceId)
     .where('grade.status', '=', 'ok')
+    .where('grade.origin', '<>', 'reference')
     .where('session.started_at', '>=', from.toISOString())
     .executeTakeFirstOrThrow();
   return row.n;

@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment -- vitest asymmetric matchers are typed any */
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -17,6 +17,7 @@ import { createIngest } from '../ingest/index.js';
 import { copyStarterRubrics, createRubrics, type RubricStore } from '../rubrics/index.js';
 import { createSecretStore, createSettings } from '../settings/index.js';
 import { createTrends, type Trends } from './index.js';
+import { MAX_COMMITS_PER_SCAN } from './scan.js';
 
 const git = (cwd: string, ...args: string[]): string =>
   execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], {
@@ -32,12 +33,13 @@ export function trendsSuite(name: string, make: TestDbFactory): void {
     let dir: string;
     let skills: string;
     let clock: Date;
-    let build: (zone: string) => void;
+    let build: (zone: string, maxCommits?: number) => void;
     let judge: Judge;
     let rubrics: RubricStore;
     let trends: Trends;
     let jobs: ReturnType<typeof createJobQueue>;
     let settings: ReturnType<typeof createSettings>;
+    let skillRepos: ReturnType<typeof createSkillRepos>;
     let rubricIds: Map<string, string>;
 
     async function session(startedAt: string, extra: { reference?: boolean } = {}) {
@@ -69,6 +71,7 @@ export function trendsSuite(name: string, make: TestDbFactory): void {
         version?: string;
         at?: string;
         judge?: string;
+        origin?: 'standard' | 'reference';
       } = {},
     ) {
       const real = (await rubrics.list()).rubrics.find((r) => r.name === rubric);
@@ -111,6 +114,7 @@ export function trendsSuite(name: string, make: TestDbFactory): void {
           transport: 'fake',
           status: o.status ?? 'ok',
           graded_at: o.at ?? clock.toISOString(),
+          origin: o.origin ?? 'standard',
         })
         .execute();
     }
@@ -119,6 +123,22 @@ export function trendsSuite(name: string, make: TestDbFactory): void {
     async function batch(rubric: string, startedAt: string, outcomes: boolean[]) {
       for (const passed of outcomes) await grade(await session(startedAt), rubric, passed);
     }
+
+    const warningOf = () =>
+      t.handle.db
+        .selectFrom('skill_repo')
+        .select(['scan_warning', 'last_seen_sha'])
+        .executeTakeFirstOrThrow();
+    const skillRepoRows = () => skillRepos.rows();
+    const events = (kind: string) =>
+      t.handle.db
+        .selectFrom('change_event')
+        .selectAll()
+        .where('kind', '=', kind as 'judge_changed')
+        .orderBy('at')
+        .execute();
+    const batches = async () =>
+      (await jobs.list({ limit: 100 })).filter((j) => j.kind === 'grade_batch');
 
     const bucketOf = async (weeks: number, size: 'week' | 'day', start: string) =>
       (await trends.series(weeks, size)).buckets.find((b) => b.start === start);
@@ -150,7 +170,7 @@ export function trendsSuite(name: string, make: TestDbFactory): void {
         queue: jobs,
         pollMode: false,
       });
-      const skillRepos = createSkillRepos(t.handle.db, LOCAL_WORKSPACE_ID);
+      skillRepos = createSkillRepos(t.handle.db, LOCAL_WORKSPACE_ID);
       await skillRepos.putGlobal(skills);
       rubrics = createRubrics({
         db: t.handle.db,
@@ -170,7 +190,7 @@ export function trendsSuite(name: string, make: TestDbFactory): void {
         judges: { current: () => Promise.resolve(judge) },
         timeZone: 'UTC',
       });
-      build = (zone) => {
+      build = (zone, maxCommits) => {
         trends = createTrends({
           db: t.handle.db,
           workspaceId: LOCAL_WORKSPACE_ID,
@@ -182,6 +202,7 @@ export function trendsSuite(name: string, make: TestDbFactory): void {
           skillRepos,
           timeZone: zone,
           now: () => clock,
+          ...(maxCommits !== undefined && { maxCommits }),
         });
       };
       build('UTC');
@@ -435,25 +456,121 @@ export function trendsSuite(name: string, make: TestDbFactory): void {
         ]);
       });
 
-      it('does not follow a history rewrite: it only remembers the new tip', async () => {
+      it('does not follow a history rewrite: it remembers the new tip and warns which span is not tracked', async () => {
         await trends.scan();
         writeFileSync(join(skills, 'CLAUDE.md'), '# Global\n- a\n');
         git(skills, 'commit', '-qam', 'edit');
         await trends.scan();
+        const before = git(skills, 'rev-parse', 'HEAD');
         git(skills, 'reset', '-q', '--hard', 'HEAD~1');
         writeFileSync(join(skills, 'CLAUDE.md'), '# Global\n- b\n');
         git(skills, 'commit', '-qam', 'rewritten');
         expect((await trends.scan()).manualEdits).toBe(0);
+        const repo = await warningOf();
+        expect(repo.scan_warning).toBe(
+          `History rewritten on ${skills}; edits between ${before.slice(0, 8)} and ${git(skills, 'rev-parse', '--short=8', 'HEAD')} are not tracked`,
+        );
+        expect(repo.last_seen_sha).toBe(git(skills, 'rev-parse', 'HEAD'));
+      });
+
+      it('skips a commit it cannot read, warns, and moves on instead of blocking the repository', async () => {
+        await trends.scan();
+        writeFileSync(join(skills, 'CLAUDE.md'), '# Global\n- a\n');
+        git(skills, 'commit', '-qam', 'bad one');
+        const tree = git(skills, 'rev-parse', 'HEAD^{tree}');
+        writeFileSync(join(skills, 'CLAUDE.md'), '# Global\n- b\n');
+        git(skills, 'commit', '-qam', 'bad two (its parent tree is gone)');
+        writeFileSync(join(skills, 'CLAUDE.md'), '# Global\n- c\n');
+        git(skills, 'commit', '-qam', 'good');
+        rmSync(join(skills, '.git', 'objects', tree.slice(0, 2), tree.slice(2)));
+        expect((await trends.scan()).manualEdits).toBe(1);
+        const repo = await warningOf();
+        expect(repo.scan_warning).toMatch(/Skipped 2 unreadable commit\(s\)/);
+        expect(repo.last_seen_sha).toBe(git(skills, 'rev-parse', 'HEAD'));
+        writeFileSync(join(skills, 'CLAUDE.md'), '# Global\n- d\n');
+        git(skills, 'commit', '-qam', 'next');
+        expect((await trends.scan()).manualEdits).toBe(1);
+        expect((await warningOf()).scan_warning).toBeNull();
+      });
+
+      it('looks at a bounded number of commits per scan (500 by default) and continues with the rest next time', async () => {
+        expect(MAX_COMMITS_PER_SCAN).toBe(500);
+        build('UTC', 5);
+        await trends.scan();
+        const base = git(skills, 'rev-parse', 'HEAD');
+        // One fast-import stream makes the commits in a moment.
+        const stream = Array.from(
+          { length: 7 },
+          (_, i) =>
+            `commit refs/heads/main\ncommitter t <t@t> ${String(1_700_000_000 + i)} +0000\ndata 3\nc${String(i % 10)}\n${i === 0 ? `from ${base}\n` : ''}M 100644 inline CLAUDE.md\ndata 2\n${String(i % 10)}\n\n`,
+        ).join('');
+        execFileSync('git', ['fast-import', '--quiet'], { cwd: skills, input: stream });
+        const head = git(skills, 'rev-parse', 'HEAD');
+        expect((await trends.scan()).manualEdits).toBe(5);
+        expect((await warningOf()).last_seen_sha).not.toBe(head);
+        expect((await trends.scan()).manualEdits).toBe(2);
+        expect((await warningOf()).last_seen_sha).toBe(head);
+      });
+
+      it('does not replay commits made while a repository was off: enabling it starts from the tip', async () => {
+        await trends.scan();
+        const [repo] = await skillRepoRows();
+        await skillRepos.update(repo?.id ?? '', { enabled: false });
+        writeFileSync(join(skills, 'CLAUDE.md'), '# Global\n- while off\n');
+        git(skills, 'commit', '-qam', 'edit while off');
+        expect((await trends.scan()).manualEdits).toBe(0);
+        // Still the old tip while it is off.
+        expect((await warningOf()).last_seen_sha).not.toBe(git(skills, 'rev-parse', 'HEAD'));
+        await skillRepos.update(repo?.id ?? '', { enabled: true });
+        expect((await warningOf()).last_seen_sha).toBe(git(skills, 'rev-parse', 'HEAD'));
+        expect((await trends.scan()).manualEdits).toBe(0);
+        writeFileSync(join(skills, 'CLAUDE.md'), '# Global\n- after\n');
+        git(skills, 'commit', '-qam', 'edit after');
+        expect((await trends.scan()).manualEdits).toBe(1);
+      });
+
+      it('treats the head and merge of a pull request as ours before the poller has marked it accepted, and the accepted event is the only one', async () => {
+        await trends.scan();
+        git(skills, 'checkout', '-qb', 'introspect/pr-1');
+        writeFileSync(join(skills, 'AGENTS.md'), 'pr\n');
+        git(skills, 'add', '-A');
+        git(skills, 'commit', '-qm', 'pr change');
+        const prHead = git(skills, 'rev-parse', 'HEAD');
+        git(skills, 'checkout', '-q', 'main');
+        const id = newId();
+        await t.handle.db
+          .insertInto('proposal')
+          .values({
+            id,
+            workspace_id: LOCAL_WORKSPACE_ID,
+            title: 'pr',
+            target_path: 'AGENTS.md',
+            diff: '',
+            rationale: 'r',
+            branch: 'introspect/pr-1',
+            head_sha: prHead,
+            pr_url: 'https://github.com/x/y/pull/1',
+            status: 'open', // GitHub merged it, the poller has not looked yet
+            created_at: clock.toISOString(),
+          })
+          .execute();
+        git(
+          skills,
+          'merge',
+          '--no-ff',
+          '-m',
+          'Merge pull request #1 from x/introspect/pr-1',
+          'introspect/pr-1',
+        );
+        expect((await trends.scan()).manualEdits).toBe(0);
+        expect(await t.handle.db.selectFrom('change_event').select('id').execute()).toHaveLength(0);
       });
 
       it('records a new rubric version as a rubric change with a baseline reset, queues one re-grade of the reference set, and not again', async () => {
         const member = await session('2026-11-10T10:00:00.000Z', { reference: true });
         expect((await trends.scan()).rubricChanges).toBe(0);
         const file = join(skills, 'rubrics', 'verbosity.md');
-        writeFileSync(
-          file,
-          `${(await import('node:fs')).readFileSync(file, 'utf8')}\nAlso count filler words.\n`,
-        );
+        writeFileSync(file, `${readFileSync(file, 'utf8')}\nAlso count filler words.\n`);
         git(skills, 'commit', '-qam', 'tune verbosity');
         clock = at('2026-11-11T13:00:00.000Z');
         expect((await trends.scan()).rubricChanges).toBe(1);
@@ -474,7 +591,51 @@ export function trendsSuite(name: string, make: TestDbFactory): void {
         ]);
         const batches = (await jobs.list({ limit: 50 })).filter((j) => j.kind === 'grade_batch');
         expect(batches).toHaveLength(1);
-        expect(batches[0]?.payload).toMatchObject({ sessionIds: [member], force: true });
+        expect(batches[0]?.payload).toMatchObject({
+          sessionIds: [member],
+          force: true,
+          origin: 'reference',
+          rubrics: ['verbosity'],
+        });
+      });
+
+      it('queues one re-grade for all triggers of a scan: the union of the changed rubrics, or every rubric after a judge change', async () => {
+        await session('2026-11-10T10:00:00.000Z', { reference: true });
+        await trends.scan();
+        for (const name of ['verbosity', 'efficiency']) {
+          const file = join(skills, 'rubrics', `${name}.md`);
+          writeFileSync(file, `${readFileSync(file, 'utf8')}\nAlso count filler words.\n`);
+        }
+        git(skills, 'commit', '-qam', 'tune two rubrics');
+        clock = at('2026-11-11T13:00:00.000Z');
+        expect((await trends.scan()).rubricChanges).toBe(2);
+        let batches = (await jobs.list({ limit: 50 })).filter((j) => j.kind === 'grade_batch');
+        expect(batches).toHaveLength(1);
+        expect(batches[0]?.payload).toMatchObject({ rubrics: ['efficiency', 'verbosity'] });
+
+        const file = join(skills, 'rubrics', 'silent-workaround.md');
+        writeFileSync(file, `${readFileSync(file, 'utf8')}\nMore.\n`);
+        git(skills, 'commit', '-qam', 'tune a third');
+        judge = createFakeJudge(undefined, 'judge-b');
+        clock = at('2026-11-11T14:00:00.000Z');
+        expect(await trends.scan()).toMatchObject({ rubricChanges: 1, judgeChanges: 1 });
+        batches = (await jobs.list({ limit: 50 })).filter((j) => j.kind === 'grade_batch');
+        expect(batches).toHaveLength(2); // one more job, not two
+        const latest = batches.find((j) => !('rubrics' in (j.payload as object)));
+        expect(latest?.payload).not.toHaveProperty('rubrics'); // a judge change re-grades every rubric
+      });
+
+      it('does not re-grade for rubric versions that were there before the first scan (backfill)', async () => {
+        await session('2026-11-10T10:00:00.000Z', { reference: true });
+        await rubrics.list(); // version 1
+        const file = join(skills, 'rubrics', 'verbosity.md');
+        writeFileSync(file, `${readFileSync(file, 'utf8')}\nAlso count filler words.\n`);
+        git(skills, 'commit', '-qam', 'tune verbosity before trends existed');
+        await rubrics.list();
+        expect((await trends.scan()).rubricChanges).toBe(1); // still recorded, with its original time
+        expect(
+          (await jobs.list({ limit: 50 })).filter((j) => j.kind === 'grade_batch'),
+        ).toHaveLength(0);
       });
 
       it('records a judge model change once and re-grades the reference set once', async () => {
@@ -494,6 +655,57 @@ export function trendsSuite(name: string, make: TestDbFactory): void {
         expect(
           (await jobs.list({ limit: 50 })).filter((j) => j.kind === 'grade_batch'),
         ).toHaveLength(1);
+      });
+
+      it('records a switch from the settings hook at once, dated by the switch, and the scan does not record it again', async () => {
+        await session('2026-11-10T10:00:00.000Z', { reference: true });
+        await trends.scan(); // remembers the judge model in use
+        clock = at('2026-11-11T13:00:00.000Z');
+        judge = createFakeJudge(undefined, 'judge-b');
+        expect(await trends.noteJudge()).toBe(1);
+        expect(await trends.noteJudge()).toBe(0);
+        expect((await trends.scan()).judgeChanges).toBe(0);
+        expect(await events('judge_changed')).toEqual([
+          expect.objectContaining({
+            at: '2026-11-11T13:00:00.000Z',
+            ref: 'judge-1',
+            description: 'Judge model changed from fake-judge to judge-b',
+          }),
+        ]);
+        expect((await trends.series(4, 'week')).baselineResets[0]?.at).toBe(
+          '2026-11-11T13:00:00.000Z',
+        );
+        expect(await batches()).toHaveLength(1);
+      });
+
+      it('finds a switch the hook missed even when the new model has graded before the scan, dated by its first grade', async () => {
+        await trends.scan();
+        clock = at('2026-11-11T13:00:00.000Z');
+        judge = createFakeJudge(undefined, 'judge-b');
+        const s = await session('2026-11-10T10:00:00.000Z');
+        await grade(s, 'efficiency', true, { judge: 'judge-b', at: '2026-11-11T12:30:00.000Z' });
+        await grade(s, 'verbosity', true, { judge: 'judge-b', at: '2026-11-11T12:40:00.000Z' });
+        expect((await trends.scan()).judgeChanges).toBe(1);
+        expect((await events('judge_changed')).map((e) => e.at)).toEqual([
+          '2026-11-11T12:30:00.000Z',
+        ]);
+      });
+
+      it('records A to B to A to B as three events, each with its own re-grade', async () => {
+        await session('2026-11-10T10:00:00.000Z', { reference: true });
+        await trends.scan();
+        for (const model of ['judge-b', 'fake-judge', 'judge-b']) {
+          clock = new Date(clock.getTime() + 3_600_000);
+          judge = createFakeJudge(undefined, model);
+          await trends.noteJudge();
+        }
+        expect((await events('judge_changed')).map((e) => [e.ref, e.description])).toEqual([
+          ['judge-1', 'Judge model changed from fake-judge to judge-b'],
+          ['judge-2', 'Judge model changed from judge-b to fake-judge'],
+          ['judge-3', 'Judge model changed from fake-judge to judge-b'],
+        ]);
+        // The key is the switch, not the pair of models: the second A to B is not swallowed by the first.
+        expect(await batches()).toHaveLength(3);
       });
 
       it('queues nothing automatically when the reference set is empty', async () => {
@@ -593,12 +805,13 @@ export function trendsSuite(name: string, make: TestDbFactory): void {
 
       it('is too early with fewer than trends.min_graded sessions after the change, and obeys the setting', async () => {
         await merged('2026-11-05T12:00:00.000Z', ['efficiency']);
-        await batch('efficiency', '2026-11-01T10:00:00.000Z', [false, false, false, false]);
-        await batch('efficiency', '2026-11-07T10:00:00.000Z', [true, true, true, true, true]);
+        await batch('efficiency', '2026-11-01T10:00:00.000Z', [false, false, false, false, false]);
+        await batch('efficiency', '2026-11-07T10:00:00.000Z', [true, true, true, true]);
         expect((await trends.changes())[0]).toMatchObject({
           verdict: 'too_early',
-          after: { graded: 5 },
+          after: { graded: 4 },
         });
+        await batch('efficiency', '2026-11-07T11:00:00.000Z', [true]);
         await settings.update({ 'trends.min_graded': 5 });
         expect((await trends.changes())[0]?.verdict).toBe('improved');
       });
@@ -620,11 +833,97 @@ export function trendsSuite(name: string, make: TestDbFactory): void {
         expect((await trends.changes())[0]?.before).toMatchObject({ graded: 1, window: 2 });
       });
 
-      it('pools all rubrics for a change that names none', async () => {
+      it('compares every current rubric separately for a change that names none, never pooled', async () => {
         await merged('2026-11-05T12:00:00.000Z', []);
         await batch('efficiency', '2026-11-04T10:00:00.000Z', [true]);
         await batch('verbosity', '2026-11-04T10:00:00.000Z', [false]);
-        expect((await trends.changes())[0]?.before).toMatchObject({ graded: 2, passRate: 0.5 });
+        const [c] = await trends.changes();
+        expect(c?.perRubric.map((r) => r.rubric)).toEqual([
+          'efficiency',
+          'redundant-tests',
+          'silent-workaround',
+          'verbosity',
+        ]);
+        expect(c?.perRubric.find((r) => r.rubric === 'efficiency')?.before).toEqual({
+          graded: 1,
+          passRate: 1,
+        });
+        expect(c?.perRubric.find((r) => r.rubric === 'verbosity')?.before).toEqual({
+          graded: 1,
+          passRate: 0,
+        });
+      });
+
+      it('is too early when the sample before the change is too small, however good the after side', async () => {
+        await merged('2026-11-05T12:00:00.000Z', ['efficiency']);
+        await batch('efficiency', '2026-11-02T10:00:00.000Z', [false, false, false]);
+        await batch('efficiency', '2026-11-08T10:00:00.000Z', Array<boolean>(10).fill(true));
+        expect((await trends.changes())[0]).toMatchObject({ verdict: 'too_early' });
+      });
+
+      it('calls 7/10 against 10/10 no change (Fisher, p = 0.21)', async () => {
+        await merged('2026-11-05T12:00:00.000Z', ['efficiency']);
+        await batch('efficiency', '2026-11-02T10:00:00.000Z', [
+          ...Array<boolean>(7).fill(true),
+          ...Array<boolean>(3).fill(false),
+        ]);
+        await batch('efficiency', '2026-11-08T10:00:00.000Z', Array<boolean>(10).fill(true));
+        const [c] = await trends.changes();
+        expect(c).toMatchObject({ verdict: 'no_change' });
+        expect(c?.perRubric[0]?.pValue).toBeCloseTo(0.2105, 3);
+      });
+
+      it('counts sessions, not session x rubric pairs: three rubrics do not triple the sample', async () => {
+        await settings.update({ 'trends.min_graded': 5 });
+        await merged('2026-11-05T12:00:00.000Z', ['efficiency', 'verbosity', 'redundant-tests']);
+        for (const rubric of ['efficiency', 'verbosity', 'redundant-tests']) {
+          await batch(rubric, '2026-11-02T10:00:00.000Z', [true, true, false, false, false]);
+          await batch(rubric, '2026-11-08T10:00:00.000Z', [true, true, true, true, false]);
+        }
+        const [c] = await trends.changes();
+        // Pooled over the three rubrics (6/15 against 12/15 pairs) that would read as improved.
+        expect(c?.verdict).toBe('no_change');
+        expect(c?.perRubric.every((r) => r.before.graded === 5 && r.after.graded === 5)).toBe(true);
+      }, 20_000);
+
+      it('applies Holm over the rubrics: a p of 0.07 wins alone and loses next to a second rubric', async () => {
+        await merged('2026-11-05T12:00:00.000Z', ['efficiency']);
+        await batch('efficiency', '2026-11-02T10:00:00.000Z', [
+          ...Array<boolean>(3).fill(true),
+          ...Array<boolean>(7).fill(false),
+        ]);
+        await batch('efficiency', '2026-11-08T10:00:00.000Z', [
+          ...Array<boolean>(8).fill(true),
+          ...Array<boolean>(2).fill(false),
+        ]);
+        expect((await trends.changes())[0]).toMatchObject({ verdict: 'improved' });
+        await t.handle.db.deleteFrom('change_event').execute();
+        await merged('2026-11-05T12:00:00.000Z', ['efficiency', 'verbosity']);
+        await batch('verbosity', '2026-11-02T10:00:00.000Z', Array<boolean>(10).fill(true));
+        await batch('verbosity', '2026-11-08T10:00:00.000Z', Array<boolean>(10).fill(true));
+        const [c] = await trends.changes();
+        expect(c?.verdict).toBe('no_change');
+        expect(c?.perRubric.map((r) => [r.rubric, r.verdict])).toEqual([
+          ['efficiency', 'no_change'],
+          ['verbosity', 'no_change'],
+        ]);
+      });
+
+      it('shows the rubric with the smallest p-value at the top level, and every rubric under perRubric', async () => {
+        await merged('2026-11-05T12:00:00.000Z', ['efficiency', 'verbosity']);
+        await batch('efficiency', '2026-11-02T10:00:00.000Z', Array<boolean>(10).fill(true));
+        await batch('efficiency', '2026-11-08T10:00:00.000Z', Array<boolean>(10).fill(true));
+        await batch('verbosity', '2026-11-02T10:00:00.000Z', Array<boolean>(10).fill(false));
+        await batch('verbosity', '2026-11-08T10:00:00.000Z', Array<boolean>(10).fill(true));
+        const [c] = await trends.changes();
+        expect(c?.verdict).toBe('improved');
+        expect(c?.before).toMatchObject({ graded: 10, passRate: 0 });
+        expect(c?.after).toMatchObject({ graded: 10, passRate: 1 });
+        expect(c?.perRubric.map((r) => [r.rubric, r.verdict])).toEqual([
+          ['efficiency', 'no_change'],
+          ['verbosity', 'improved'],
+        ]);
+        expect(c?.perRubric[0]?.pValue).toBeCloseTo(1, 5);
       });
 
       it('never compares across a baseline reset of the rubric: the before side stops at the reset', async () => {
@@ -666,6 +965,53 @@ export function trendsSuite(name: string, make: TestDbFactory): void {
       });
     });
 
+    describe('reference re-grades', () => {
+      it('leave past buckets unchanged: only standard grades count', async () => {
+        const id = await session('2026-11-03T10:00:00.000Z', { reference: true });
+        await grade(id, 'efficiency', true, { at: '2026-11-03T11:00:00.000Z' });
+        const week = '2026-11-02T00:00:00.000Z';
+        const before = await bucketOf(4, 'week', week);
+        expect(before?.rubrics.efficiency).toEqual({ passRate: 1, graded: 1, passed: 1 });
+        // Today's judge and rubric version fail it; that must not rewrite the week it belongs to.
+        await grade(id, 'efficiency', false, {
+          version: 'v2',
+          judge: 'judge-b',
+          origin: 'reference',
+        });
+        expect(await bucketOf(4, 'week', week)).toEqual(before);
+        expect(
+          (await trends.summary(14)).rubrics.find((r) => r.name === 'efficiency'),
+        ).toMatchObject({
+          passRate: 1,
+        });
+      });
+
+      it('leave change windows unchanged too', async () => {
+        const id = await session('2026-11-03T10:00:00.000Z', { reference: true });
+        await grade(id, 'efficiency', true, { at: '2026-11-03T11:00:00.000Z' });
+        await t.handle.db
+          .insertInto('change_event')
+          .values({
+            id: newId(),
+            workspace_id: LOCAL_WORKSPACE_ID,
+            at: '2026-11-05T12:00:00.000Z',
+            kind: 'proposal_merged',
+            proposal_id: null,
+            repo_id: null,
+            description: 'x',
+            files: '[]',
+            rubric_names: toJson(['efficiency']),
+            ref: null,
+          })
+          .execute();
+        await grade(id, 'efficiency', false, { version: 'v2', origin: 'reference' });
+        expect((await trends.changes())[0]?.perRubric[0]?.before).toEqual({
+          graded: 1,
+          passRate: 1,
+        });
+      });
+    });
+
     describe('reference set', () => {
       it('adds, pins and removes sessions, and lists members with their grades', async () => {
         const id = await session('2026-11-10T10:00:00.000Z');
@@ -703,6 +1049,34 @@ export function trendsSuite(name: string, make: TestDbFactory): void {
         await expect(trends.reference.set(newId(), true)).rejects.toBeInstanceOf(NotFoundError);
       });
 
+      it.skipIf(name !== 'postgres')(
+        'lets exactly one of two concurrent adds take the last place',
+        async () => {
+          for (let i = 0; i < trends.reference.target - 1; i += 1)
+            await trends.reference.set(await session('2026-11-10T10:00:00.000Z'), true);
+          const ingestOn = (db: typeof t.handle.db) =>
+            createIngest({
+              db,
+              workspaceId: LOCAL_WORKSPACE_ID,
+              userId: LOCAL_USER_ID,
+              dataDir: join(dir, 'data'),
+              settings,
+              queue: jobs,
+              pollMode: false,
+            });
+          const first = ingestOn(t.handle.db);
+          const other = ingestOn(t.open().db);
+          const a = await session('2026-11-10T10:00:00.000Z');
+          const b = await session('2026-11-10T10:00:00.000Z');
+          const results = await Promise.all([
+            first.setReference(a, true, trends.reference.target),
+            other.setReference(b, true, trends.reference.target),
+          ]);
+          expect(results.sort()).toEqual(['full', 'ok']);
+          expect(await trends.reference.list()).toHaveLength(trends.reference.target);
+        },
+      );
+
       it('queues a forced re-grade of exactly the members on demand, and refuses when empty', async () => {
         await expect(trends.reference.regrade()).rejects.toBeInstanceOf(ConflictError);
         const a = await session('2026-11-10T10:00:00.000Z');
@@ -711,7 +1085,11 @@ export function trendsSuite(name: string, make: TestDbFactory): void {
         const id = await trends.reference.regrade();
         const job = await jobs.get(id);
         expect(job).toMatchObject({ kind: 'grade_batch' });
-        expect(job?.payload).toMatchObject({ sessionIds: [a], force: true });
+        expect(job?.payload).toMatchObject({
+          sessionIds: [a],
+          force: true,
+          origin: 'reference',
+        });
         expect(dirname(skills)).toBe(dir);
       });
     });

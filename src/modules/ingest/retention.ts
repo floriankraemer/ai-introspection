@@ -1,3 +1,4 @@
+import { PostgresAdapter } from 'kysely';
 import type { Db } from '../../platform/db/schema.js';
 
 const DAY_MS = 86_400_000;
@@ -56,6 +57,15 @@ export async function setReference(
   max: number,
 ): Promise<'ok' | 'not_found' | 'full'> {
   return db.transaction().execute(async (tx) => {
+    // Two adds at once would both count 19 and both insert: the count and the update must not interleave, so they take a row lock.
+    // SQLite has one writer at a time and needs no lock.
+    if (member && tx.getExecutor().adapter instanceof PostgresAdapter)
+      await tx
+        .selectFrom('workspace')
+        .select('id')
+        .where('id', '=', workspaceId)
+        .forUpdate()
+        .execute();
     const row = await tx
       .selectFrom('session')
       .select('in_reference_set')

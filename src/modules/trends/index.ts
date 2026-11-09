@@ -10,9 +10,15 @@ import type { RubricStore } from '../rubrics/index.js';
 import type { SettingsService } from '../settings/index.js';
 import { bucketsFor, slotSecondsFor, type BucketSize } from './buckets.js';
 import { createChangeScan } from './scan.js';
-import { verdictOf, type ChangeVerdict, type Tally } from './verdict.js';
+import {
+  headline,
+  overallVerdict,
+  rubricVerdicts,
+  type ChangeVerdict,
+  type Tally,
+} from './verdict.js';
 
-export { verdictOf, type ChangeVerdict } from './verdict.js';
+export { rubricVerdicts, overallVerdict, type ChangeVerdict } from './verdict.js';
 export { bucketsFor } from './buckets.js';
 
 const DAY_MS = 86_400_000;
@@ -54,10 +60,28 @@ export interface WindowStats {
   window: number;
 }
 
+export interface RubricWindow {
+  passRate: number | null;
+  graded: number;
+}
+
+export interface RubricOutcome {
+  rubric: string;
+  before: RubricWindow;
+  after: RubricWindow;
+  /** After Holm correction over the change's rubrics. */
+  verdict: ChangeVerdict;
+  /** Two-sided p-value; null while the rubric has too few sessions on either side. */
+  pValue: number | null;
+}
+
 export interface TrendChange extends TrendMarker {
+  /** The windows of the rubric with the smallest p-value (see `perRubric` for all of them). */
   before: WindowStats;
   after: WindowStats;
+  /** Over all rubrics of the change, Holm-corrected. */
   verdict: ChangeVerdict;
+  perRubric: RubricOutcome[];
 }
 
 export interface TrendSummary {
@@ -94,6 +118,8 @@ export interface TrendsDeps {
   /** IANA time zone the trend buckets follow; default UTC. */
   timeZone?: string;
   now?: () => Date;
+  /** Commits the change scan examines per repository and run (default 500); tests lower it. */
+  maxCommits?: number;
 }
 
 const rate = (t: Tally): number | null => (t.graded === 0 ? null : t.passed / t.graded);
@@ -115,14 +141,20 @@ export function createTrends(deps: TrendsDeps) {
   }
 
   /**
-   * Re-grades the reference set with every current rubric. With a key the call is once-only (the
-   * automatic triggers); without one every call queues a new job (the button). Null when there is
-   * nothing to re-grade or the key was already used.
+   * Re-grades the reference set, with the named rubrics or all current ones. With a key the call is
+   * once-only (the automatic triggers); without one every call queues a new job (the button). Null
+   * when there is nothing to re-grade or the key was already used. The grades are marked as
+   * reference grades: they never count in trends, so past buckets stay as they were.
    */
-  async function regrade(key?: string): Promise<string | null> {
+  async function regrade(rubricNames?: readonly string[], key?: string): Promise<string | null> {
     const sessionIds = await referenceIds();
     if (sessionIds.length === 0) return null;
-    const input = { sessionIds, force: true };
+    const input = {
+      sessionIds,
+      force: true,
+      origin: 'reference' as const,
+      ...(rubricNames && { rubrics: rubricNames }),
+    };
     return key === undefined
       ? deps.grading.enqueueBatch(input)
       : deps.grading.enqueueBatchOnce(input, `reference-regrade:${key}`);
@@ -136,6 +168,7 @@ export function createTrends(deps: TrendsDeps) {
     judges: deps.judges,
     regrade,
     now,
+    ...(deps.maxCommits !== undefined && { maxCommits: deps.maxCommits }),
   });
 
   interface EventRow {
@@ -238,10 +271,12 @@ export function createTrends(deps: TrendsDeps) {
 
   /**
    * Each change against the sessions that started in the window before it and the window after it
-   * (`trends.window_days`, default 7), pooled over the rubrics the change was meant to move (all
-   * rubrics when none is known). A reset of a rubric inside either window cuts that rubric's side
-   * at the reset, so scores of two yardsticks are never compared. A rubric change itself has no
-   * "before": it is reported `too_early`, and its "after" is the new baseline.
+   * (`trends.window_days`, default 7), per rubric the change was meant to move (every current rubric
+   * when none is known): one count of distinct sessions per rubric, never pooled across rubrics. A
+   * reset of a rubric inside either window cuts that rubric's side at the reset, so scores of two
+   * yardsticks are never compared. A rubric change itself has no "before": it is `too_early`, and
+   * its "after" is the new baseline. The verdict follows `rubricVerdicts` and `overallVerdict`; the
+   * top-level `before` and `after` are those of the rubric with the smallest p-value.
    */
   async function changes(): Promise<TrendChange[]> {
     const settings = await deps.settings.get();
@@ -252,40 +287,59 @@ export function createTrends(deps: TrendsDeps) {
     const current = await currentRubricNames();
     const resets = resetsOf(all, current);
     const shown = all.filter(isMarker).slice(0, MAX_CHANGES);
+    const targetsOf = (e: EventRow): string[] => {
+      const named = arr(e.rubric_names);
+      return named.length > 0 ? named : current;
+    };
     const ranges: RangeCount[] = [];
     for (const e of shown) {
       const t = new Date(e.at).getTime();
-      const named = arr(e.rubric_names);
-      const targets = named.length > 0 ? named : current;
       const beforeFrom = t - windowMs;
       const afterTo = Math.min(t + windowMs, at.getTime());
       // Per rubric, the part of each window that lies on the same side of any reset of it.
-      for (const name of targets) {
+      for (const name of targetsOf(e)) {
         const marks = resets
           .filter((r) => r.rubric === name && r.at !== e.at)
           .map((r) => new Date(r.at).getTime());
         const cutBefore = Math.max(beforeFrom, ...marks.filter((m) => m <= t));
         const cutAfter = Math.min(afterTo, ...marks.filter((m) => m > t));
         ranges.push(
-          { key: `${e.id}:b`, rubric: name, from: new Date(cutBefore), to: new Date(t) },
-          { key: `${e.id}:a`, rubric: name, from: new Date(t), to: new Date(cutAfter) },
+          { key: `${e.id}:b:${name}`, rubric: name, from: new Date(cutBefore), to: new Date(t) },
+          { key: `${e.id}:a:${name}`, rubric: name, from: new Date(t), to: new Date(cutAfter) },
         );
       }
     }
     const totals = await deps.grading.passCountsInRanges(ranges);
-    const out: TrendChange[] = [];
-    for (const e of shown) {
-      const none = { graded: 0, passed: 0 };
-      const sum = { b: totals.get(`${e.id}:b`) ?? none, a: totals.get(`${e.id}:a`) ?? none };
-      const before = e.kind === 'rubric_changed' ? { graded: 0, passed: 0 } : sum.b;
-      out.push({
-        ...toMarker(e),
-        before: { passRate: rate(before), graded: before.graded, window: windowDays },
-        after: { passRate: rate(sum.a), graded: sum.a.graded, window: windowDays },
-        verdict: verdictOf(before, sum.a, settings['trends.min_graded']),
+    const none = { graded: 0, passed: 0 };
+    return shown.map((e) => {
+      const verdicts = rubricVerdicts(
+        targetsOf(e).map((rubric) => ({
+          rubric,
+          before: e.kind === 'rubric_changed' ? none : (totals.get(`${e.id}:b:${rubric}`) ?? none),
+          after: totals.get(`${e.id}:a:${rubric}`) ?? none,
+        })),
+        settings['trends.min_graded'],
+      );
+      const top = headline(verdicts);
+      const stats = (t: Tally): WindowStats => ({
+        passRate: rate(t),
+        graded: t.graded,
+        window: windowDays,
       });
-    }
-    return out;
+      return {
+        ...toMarker(e),
+        before: stats(top?.before ?? none),
+        after: stats(top?.after ?? none),
+        verdict: overallVerdict(verdicts),
+        perRubric: verdicts.map((v) => ({
+          rubric: v.rubric,
+          before: { passRate: rate(v.before), graded: v.before.graded },
+          after: { passRate: rate(v.after), graded: v.after.graded },
+          verdict: v.verdict,
+          pValue: v.pValue,
+        })),
+      };
+    });
   }
 
   const handlers: Record<string, JobHandler> = {
@@ -317,6 +371,9 @@ export function createTrends(deps: TrendsDeps) {
 
     /** Looks for manual edits, rubric versions and judge changes now (the schedule does it every 15 minutes). */
     scan: () => scan.run(),
+
+    /** Records a judge model switch at once; call it after the settings changed. */
+    noteJudge: () => scan.noteJudge(),
 
     reference: {
       target: REFERENCE_TARGET_SIZE,

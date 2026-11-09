@@ -241,6 +241,35 @@ export function createProposals(deps: ImprovementDeps, locks: KeyedMutex) {
     return repo.acceptMode ?? (await deps.settings.get())['proposals.accept_mode'];
   }
 
+  /**
+   * Manual-edit events the change scan recorded for this proposal's own commit before the proposal
+   * was marked accepted (a pull request merged on GitHub is seen by the scan first): the head, or a
+   * merge commit that has it as a parent. The proposal's event replaces them, so a change is never counted twice.
+   */
+  async function ownManualEditIds(
+    p: ProposalDto,
+    repo: SkillRepoRow,
+    mergeCommit: string | null,
+  ): Promise<string[]> {
+    const events = await db
+      .selectFrom('change_event')
+      .select(['id', 'ref'])
+      .where('workspace_id', '=', workspaceId)
+      .where('kind', '=', 'manual_edit')
+      .where('repo_id', '=', repo.id)
+      .execute();
+    const ids: string[] = [];
+    for (const e of events) {
+      const sha = e.ref?.slice(repo.id.length + 1) ?? '';
+      const parents = await git(repo.path, ['rev-list', '--parents', '-n', '1', sha])
+        .then((out) => out.split(' ').slice(1))
+        .catch((): string[] => []);
+      if (sha === p.headSha || sha === mergeCommit || (p.headSha && parents.includes(p.headSha)))
+        ids.push(e.id);
+    }
+    return ids;
+  }
+
   /** Records the accepted proposal and its change event in one transaction (Phase 4 trends read the event). */
   async function markAccepted(
     p: ProposalDto,
@@ -249,6 +278,7 @@ export function createProposals(deps: ImprovementDeps, locks: KeyedMutex) {
     at: Date,
     mergeCommit: string | null,
   ): Promise<void> {
+    const superseded = await ownManualEditIds(p, repo, mergeCommit);
     await db.transaction().execute(async (tx) => {
       const changed = await tx
         .updateTable('proposal')
@@ -262,6 +292,8 @@ export function createProposals(deps: ImprovementDeps, locks: KeyedMutex) {
         .where('status', 'in', ['open', 'conflict'])
         .executeTakeFirst();
       if (Number(changed.numUpdatedRows) === 0) return;
+      if (superseded.length > 0)
+        await tx.deleteFrom('change_event').where('id', 'in', superseded).execute();
       await tx
         .insertInto('change_event')
         .values({

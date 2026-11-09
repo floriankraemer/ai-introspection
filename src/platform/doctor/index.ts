@@ -25,6 +25,8 @@ export interface DoctorInput {
   sources: { agent: string; path: string; enabled: boolean }[];
   /** Registered skills repositories (global and project). */
   repos: { kind: 'global' | 'project'; path: string; hasRubrics: boolean }[];
+  /** Problems the trends change scan had with a repository (rewritten history, unreadable commits). */
+  scanWarnings: { path: string; warning: string }[];
   /** Parse errors of rubric files in the global skills repository. */
   rubricProblems: string[];
   judge: {
@@ -314,6 +316,19 @@ export function checkRubrics({ rubricProblems, repos }: DoctorInput): DoctorChec
   ];
 }
 
+export function checkChangeScan({ scanWarnings }: DoctorInput): DoctorCheck[] {
+  if (scanWarnings.length === 0) return [];
+  return [
+    problem(
+      'warn',
+      'change-scan',
+      'Change tracking',
+      scanWarnings.map((w) => w.warning).join('; '),
+      'Edits in the span named above do not appear in the Trends change log. The warning goes away after the next scan that finds new commits; nothing else needs fixing unless the repository is damaged (`git fsck`).',
+    ),
+  ];
+}
+
 export function checkOwnership({ repos, uid }: DoctorInput): DoctorCheck {
   const label = 'File ownership';
   if (uid === undefined) return ok('ownership', label, 'Not applicable on this platform');
@@ -348,6 +363,7 @@ export async function runDoctor(input: DoctorInput): Promise<DoctorReport> {
     await checkJudge(input),
     checkRedaction(input),
     ...checkRubrics(input),
+    ...checkChangeScan(input),
     checkOwnership(input),
   ];
   return { checks };

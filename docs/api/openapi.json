@@ -1792,6 +1792,75 @@
               "no_change",
               "too_early"
             ]
+          },
+          "perRubric": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "rubric": {
+                  "type": "string"
+                },
+                "before": {
+                  "type": "object",
+                  "properties": {
+                    "passRate": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "graded": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "passRate",
+                    "graded"
+                  ]
+                },
+                "after": {
+                  "type": "object",
+                  "properties": {
+                    "passRate": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "graded": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "passRate",
+                    "graded"
+                  ]
+                },
+                "verdict": {
+                  "type": "string",
+                  "enum": [
+                    "improved",
+                    "worse",
+                    "no_change",
+                    "too_early"
+                  ]
+                },
+                "pValue": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "rubric",
+                "before",
+                "after",
+                "verdict",
+                "pValue"
+              ]
+            }
           }
         },
         "required": [
@@ -1804,7 +1873,8 @@
           "rubrics",
           "before",
           "after",
-          "verdict"
+          "verdict",
+          "perRubric"
         ]
       },
       "ReferenceSet": {

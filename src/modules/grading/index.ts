@@ -93,6 +93,8 @@ export interface BatchInput {
   sessionIds: readonly string[];
   rubrics?: readonly string[];
   force: boolean;
+  /** `reference`: the grades are re-grades of the reference set and never count in trends. */
+  origin?: 'standard' | 'reference';
 }
 
 export interface GradeSelection {
@@ -284,7 +286,7 @@ export function createGrading(deps: GradingDeps) {
   async function gradeRubrics(
     c: GradeCandidate,
     list: readonly Rubric[],
-    opts: { force: boolean; since?: Date },
+    opts: { force: boolean; since?: Date; origin?: 'standard' | 'reference' },
     count: (o: 'graded' | 'skipped') => void,
   ): Promise<void> {
     for (const rubric of list) {
@@ -294,6 +296,7 @@ export function createGrading(deps: GradingDeps) {
         purpose: 'grade',
         force: opts.force,
         ...(opts.since && { skipIfGradedSince: opts.since }),
+        ...(opts.origin && { origin: opts.origin }),
       });
       count(outcome.kind === 'graded' ? 'graded' : 'skipped');
     }
@@ -315,6 +318,7 @@ export function createGrading(deps: GradingDeps) {
           sessionIds: string[];
           rubrics?: string[];
           force: boolean;
+          origin?: 'standard' | 'reference';
           requestedAt: string;
         };
         const { rubrics: current } = await rubrics.list();
@@ -334,7 +338,11 @@ export function createGrading(deps: GradingDeps) {
               await gradeRubrics(
                 c,
                 list,
-                { force: p.force, since: new Date(p.requestedAt) },
+                {
+                  force: p.force,
+                  since: new Date(p.requestedAt),
+                  ...(p.origin && { origin: p.origin }),
+                },
                 count,
               );
             } else done += list.length;
@@ -375,6 +383,7 @@ export function createGrading(deps: GradingDeps) {
         sessionIds: [...input.sessionIds],
         ...(input.rubrics && { rubrics: [...input.rubrics] }),
         force: input.force,
+        ...(input.origin && { origin: input.origin }),
         requestedAt: now().toISOString(),
       },
       maxAttempts: 3,

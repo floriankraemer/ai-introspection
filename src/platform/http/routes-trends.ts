@@ -60,13 +60,38 @@ const windowSchema = z.object({
   window: z.number().int(),
 });
 
+const verdictSchema = z.enum(['improved', 'worse', 'no_change', 'too_early']);
+
+const rubricWindowSchema = z.object({
+  passRate: z.number().nullable(),
+  /** Distinct sessions graded for this rubric in the window. */
+  graded: z.number().int(),
+});
+
 const changeSchema = z
   .object({
     ...markerShape,
+    /** The windows of the rubric with the smallest p-value (`perRubric` has them all). */
     before: windowSchema,
     after: windowSchema,
-    /** Two-proportion z-test at 90%; `too_early` until enough sessions were graded after the change. */
-    verdict: z.enum(['improved', 'worse', 'no_change', 'too_early']),
+    /**
+     * Over the change's rubrics, each tested on distinct sessions (Fisher's exact test below 30
+     * sessions per side, else a z-test; two-sided, 10%; Holm-corrected across rubrics). `worse` if any
+     * rubric is significantly worse, `improved` if at least one improved and none got worse,
+     * `too_early` until some rubric has `trends.min_graded` sessions on BOTH sides.
+     */
+    verdict: verdictSchema,
+    perRubric: z.array(
+      z.object({
+        rubric: z.string(),
+        before: rubricWindowSchema,
+        after: rubricWindowSchema,
+        /** After Holm correction over the change's rubrics. */
+        verdict: verdictSchema,
+        /** Two-sided p-value; null while a side has fewer than `trends.min_graded` sessions. */
+        pValue: z.number().nullable(),
+      }),
+    ),
   })
   .openapi('TrendChange');
 

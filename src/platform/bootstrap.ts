@@ -133,9 +133,13 @@ async function doctorReport(
   let repos: Awaited<ReturnType<typeof skillRepos.list>> = [];
   let sourceList: Awaited<ReturnType<typeof sources.list>> = [];
   let rubricProblems: string[] = [];
+  let scanWarnings: { path: string; warning: string }[] = [];
   try {
     await handle.db.selectFrom('setting').select('key').limit(1).execute();
     repos = await skillRepos.list();
+    scanWarnings = (await skillRepos.rows()).flatMap((r) =>
+      r.scanWarning === null ? [] : [{ path: r.path, warning: r.scanWarning }],
+    );
     sourceList = await sources.list();
     rubricProblems = (await parts.rubrics.list()).problems.map((p) => `${p.name}: ${p.error}`);
   } catch (e) {
@@ -150,6 +154,7 @@ async function doctorReport(
     db: dbError === undefined ? {} : { error: dbError },
     sources: sourceList,
     repos,
+    scanWarnings,
     rubricProblems,
     judge: {
       transport: current?.['judge.transport'] ?? 'api',
@@ -250,6 +255,10 @@ export async function startServer(config: Config): Promise<RunningServer> {
     judges,
     skillRepos,
     timeZone: config.timeZone,
+  });
+  // A judge switch gets the time it happened, not the time of the next scan.
+  settings.onUpdate(async (keys) => {
+    if (keys.some((k) => k.startsWith('judge.'))) await trends.noteJudge();
   });
   const worker = createWorker({
     queue,

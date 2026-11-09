@@ -164,6 +164,8 @@ export interface Schema {
     status: Generated<'ok' | 'refused' | 'invalid' | 'stale'>;
     llm_call_id: string | null;
     graded_at: Ts;
+    /** `reference`: a re-grade of the reference set; it never counts in trends, so history stays as it was. */
+    origin: Generated<'standard' | 'reference'>;
   };
   improver_run: {
     id: string;
@@ -191,6 +193,8 @@ export interface Schema {
     allow_executable: Bool;
     /** Tip of the default branch at the last change scan; null until the first scan. */
     last_seen_sha: string | null;
+    /** The last problem the change scan had here (rewritten history, unreadable commits); null when the last scan was clean. */
+    scan_warning: string | null;
   };
   cluster_outcome: {
     id: string;

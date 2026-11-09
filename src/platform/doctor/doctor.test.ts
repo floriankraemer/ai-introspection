@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  checkChangeScan,
   checkData,
   checkGh,
   checkGitIdentity,
@@ -43,6 +44,7 @@ function input(over: Partial<DoctorInput> = {}): DoctorInput {
     db: {},
     sources: [],
     repos: [],
+    scanWarnings: [],
     rubricProblems: [],
     judge: judge(),
     env: {},
@@ -197,6 +199,16 @@ describe('redaction check', () => {
       status: 'warn',
       detail: expect.stringContaining('never sent to a judge'),
     });
+  });
+});
+
+describe('change scan check', () => {
+  it('says nothing when the scan is clean and warns with the scan warning otherwise', () => {
+    expect(checkChangeScan(input())).toEqual([]);
+    const [c] = checkChangeScan(
+      input({ scanWarnings: [{ path: '/r', warning: 'History rewritten on /r' }] }),
+    );
+    expect(c).toMatchObject({ status: 'warn', detail: 'History rewritten on /r' });
   });
 });
 

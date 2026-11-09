@@ -5,7 +5,7 @@ import { newId } from '../../platform/db/ids.js';
 import { asBool, fromJson } from '../../platform/db/json.js';
 import type { Db } from '../../platform/db/schema.js';
 import { ConflictError, InvalidInputError } from '../../platform/errors.js';
-import { defaultBranch, initRepo, isGitRepoRoot } from '../../platform/git/index.js';
+import { defaultBranch, initRepo, isGitRepoRoot, revParse } from '../../platform/git/index.js';
 import { copyStarterRubrics, hasRubrics } from '../rubrics/index.js';
 
 export interface SkillRepoDto {
@@ -47,6 +47,8 @@ export interface SkillRepoRow {
   acceptMode: 'merge' | 'pr' | null;
   enabled: boolean;
   allowExecutable: boolean;
+  /** The last problem the trends change scan had with this repository; null when none. */
+  scanWarning: string | null;
 }
 
 export interface SkillReposOptions {
@@ -119,6 +121,7 @@ export function createSkillRepos(db: Db, workspaceId: string, options: SkillRepo
     accept_mode: string | null;
     enabled: boolean | number;
     allow_executable: boolean | number;
+    scan_warning: string | null;
   }): SkillRepoRow => ({
     id: r.id,
     kind: r.kind,
@@ -128,6 +131,7 @@ export function createSkillRepos(db: Db, workspaceId: string, options: SkillRepo
     acceptMode: r.accept_mode === 'merge' || r.accept_mode === 'pr' ? r.accept_mode : null,
     enabled: asBool(r.enabled),
     allowExecutable: asBool(r.allow_executable),
+    scanWarning: r.scan_warning,
   });
 
   return {
@@ -206,7 +210,13 @@ export function createSkillRepos(db: Db, workspaceId: string, options: SkillRepo
         allowExecutable?: boolean | undefined;
       },
     ): Promise<SkillRepoDto | null> {
+      // Commits made while a repository was off are not replayed as changes when it is turned on:
+      // the change scan starts again from the tip (the scan keeps last_seen_sha as it was while off).
+      const before = patch.enabled === true ? await this.row(id) : null;
+      const reenabled = before !== null && !before.enabled;
+      const tip = reenabled ? await this.tipOf(before) : null;
       const set = {
+        ...(reenabled && { last_seen_sha: tip, scan_warning: null }),
         ...(patch.enabled !== undefined && { enabled: patch.enabled }),
         ...(patch.acceptMode !== undefined && { accept_mode: patch.acceptMode }),
         ...(patch.allowExecutable !== undefined && { allow_executable: patch.allowExecutable }),
@@ -277,6 +287,13 @@ export function createSkillRepos(db: Db, workspaceId: string, options: SkillRepo
       const branch = await defaultBranch(repo.path);
       if (branch !== repo.defaultBranch) await this.rememberDefaultBranch(repo.id, branch);
       return branch;
+    },
+
+    /** The tip of the default branch, or null when git cannot say (the scan then starts from the next tip it sees). */
+    async tipOf(repo: SkillRepoRow): Promise<string | null> {
+      return revParse(repo.path, `refs/heads/${await this.refreshDefaultBranch(repo)}`).catch(
+        () => null,
+      );
     },
 
     async rememberDefaultBranch(id: string, branch: string): Promise<void> {

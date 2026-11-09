@@ -621,6 +621,38 @@ export function gradingSuite(name: string, make: TestDbFactory): void {
       });
     });
 
+    describe('reference re-grades', () => {
+      const runBatch = async (input: Parameters<typeof grading.enqueueBatch>[0]) => {
+        const id = await grading.enqueueBatch(input);
+        const job = await queue().get(id);
+        await grading.handlers[GRADE_BATCH_JOB]?.run({ id, payload: job?.payload } as never);
+      };
+      const rows = () =>
+        t.handle.db.selectFrom('grade').select(['id', 'origin', 'judge_model']).execute();
+
+      it('never replace a standard grade, are stored apart for a new judge model, and a standard grade replaces them', async () => {
+        await grading.gradeNow({ sessionIds: [claudeId], policy: false });
+        const standard = await rows();
+        expect(standard.every((r) => r.origin === 'standard')).toBe(true);
+
+        await runBatch({ sessionIds: [claudeId], force: true, origin: 'reference' });
+        expect(await rows()).toEqual(standard); // same key: the standard grade stands
+
+        activeJudge = { ...activeJudge, model: 'judge-b' };
+        await runBatch({ sessionIds: [claudeId], force: true, origin: 'reference' });
+        const after = await rows();
+        expect(after).toHaveLength(standard.length * 2);
+        expect(after.filter((r) => r.origin === 'reference').map((r) => r.judge_model)).toEqual(
+          Array<string>(standard.length).fill('judge-b'),
+        );
+
+        await grading.gradeNow({ sessionIds: [claudeId], policy: false });
+        const last = await rows();
+        expect(last).toHaveLength(after.length);
+        expect(last.every((r) => r.origin === 'standard')).toBe(true);
+      });
+    });
+
     describe('batch', () => {
       it('goes on after a session fails and reports each failure in the job progress', async () => {
         const claudeEvents = Number(

@@ -611,6 +611,43 @@ export function improvementSuite(name: string, make: TestDbFactory): void {
         expect(events[0]?.at).toMatch(/^2026-11-09T10:00:00/);
       });
 
+      it('replaces a manual edit the change scan recorded for the pull request merge: one event only', async () => {
+        const [p] = await open();
+        await improvement.proposals.accept(p?.id ?? '');
+        const pr = await improvement.proposals.get(p?.id ?? '');
+        git(
+          skills,
+          '-c',
+          'user.name=t',
+          '-c',
+          'user.email=t@t',
+          'merge',
+          '--no-ff',
+          '-m',
+          'Merge pull request #7 from x/y',
+          pr?.headSha ?? '',
+        );
+        const repoId = (await skillRepos.getGlobal())?.id ?? '';
+        await t.handle.db
+          .insertInto('change_event')
+          .values({
+            id: newId(),
+            workspace_id: LOCAL_WORKSPACE_ID,
+            at: '2026-11-09T09:59:00.000Z',
+            kind: 'manual_edit',
+            proposal_id: null,
+            repo_id: repoId,
+            description: 'Merge pull request #7 from x/y',
+            files: '[]',
+            rubric_names: '[]',
+            ref: `${repoId}:${git(skills, 'rev-parse', 'HEAD')}`,
+          })
+          .execute();
+        expect(await improvement.proposals.syncPullRequests()).toBe(1);
+        const events = await t.handle.db.selectFrom('change_event').select('kind').execute();
+        expect(events).toEqual([{ kind: 'proposal_merged' }]);
+      });
+
       it('answers 409 with a doctor-style fix when gh is not signed in', async () => {
         writeFileSync(join(bin, 'unauth'), '');
         const [p] = await open();

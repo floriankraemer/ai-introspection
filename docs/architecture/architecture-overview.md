@@ -291,28 +291,48 @@ A scan job (`trends_scan`, every 15 minutes and once at start) finds the rest, a
 - *Manual edits.*
   Per enabled repository the scan compares the tip of the default branch with `skill_repo.last_seen_sha`.
   Each new first-parent commit that touches a file in the repository's allow-list becomes a `manual_edit` event with those files.
-  Introspect's own commits are skipped: the merge commit of an accepted proposal (subject `Merge proposal: `, or its sha), and any merge whose parent is the head of an accepted proposal (a pull request merged in PR mode).
-  The first scan only remembers the tip; a history rewrite also only moves it.
+  Introspect's own commits are skipped: the merge commit of an accepted proposal (subject `Merge proposal: `, or its sha), the head of any proposal that has a branch or pull request, and any merge whose parent is such a head.
+  Any status counts: GitHub merges a pull request before the poller marks the proposal accepted, and that merge must not be read as a person's edit.
+  If a `manual_edit` for that commit was recorded anyway, accepting the proposal deletes it, so the change has exactly one event (`proposal_merged`).
+  The first scan only remembers the tip.
+  Enabling a repository again resets its tip (commits made while it was off are not replayed); while it is off the tip is left alone.
+  A scan looks at 500 commits per repository at most (oldest first, the rest in the next scan).
+  A commit it cannot read is skipped, and a history rewrite (the old tip is no ancestor of the new one) only moves the tip.
+  Both leave a `skill_repo.scan_warning` ("History rewritten on ...; edits between X and Y are not tracked"), which `introspect doctor` shows as `change-scan` until a later scan that finds new commits ends without a problem.
   The rubrics of the event are those of proposals made in the last 30 days for one of the same files; else none.
   A pull request squash-merged on GitHub looks like a manual edit.
 - *Rubric changes.*
   A second or later `rubric` row for the same name is a `rubric_changed` event, and a baseline reset for that rubric.
 - *Judge changes.*
-  When the newest grade names another model than the judge now in use, a `judge_changed` event is written: a baseline reset for every rubric.
-  Its key is the model pair, so going from A to B a second time is not recorded again.
+  The scan keeps a watermark, the setting row `trends.last_judge_model` (`{model, at, seq}`): the model the judge used last and since when.
+  A switch is found when the effective model differs from it, by the settings hook (a `PATCH /v1/settings` that touches a `judge.*` key; the event time is that moment) and, as a fallback, by the scan (the time is that of the first grade by the new model after the watermark, else now).
+  Each switch writes a `judge_changed` event (a baseline reset for every rubric) with the ref `judge-<seq>`, so A to B to A to B are three events, and its re-grade job is keyed by that ref, not by the model names.
+  Without a watermark it starts from the model of the newest grade.
 
-Both of the last two re-grade the reference set (below) once, through a keyed job.
+A rubric change and a judge change re-grade the reference set (below) once, through a keyed job.
+A rubric change re-grades only that rubric; a judge change re-grades all.
+Everything one scan finds goes into one job (the union of the rubrics, or all of them).
+The first scan after an upgrade (no `trends.last_scan_at` yet) records the rubric versions it finds but queues no re-grade: they are history.
 
 **Before and after.**
-Per change the log compares the graded sessions that started in the `trends.window_days` (default 7) before the change with those that started in the same span after it, pooled over the change's rubrics (all rubrics when none is known).
+Per change the log compares the graded sessions that started in the `trends.window_days` (default 7) before the change with those that started in the same span after it, separately for each rubric the change was meant to move (every current rubric when none is known).
+The unit is the distinct session: a session counts once per rubric (its newest `ok` grade) and rubrics are never pooled.
+Reference re-grades (`grade.origin = 'reference'`) are not counted anywhere, so re-judging old sessions with today's rubric and judge cannot rewrite past buckets or windows.
 A baseline reset of a rubric inside a window cuts that rubric's side of the window at the reset, so two yardsticks are never compared.
 A rubric change has no "before"; its verdict is `too_early`.
-The verdict is a pooled two-proportion z-test at 90% confidence (two-sided): `too_early` while fewer than `trends.min_graded` (default 10) sessions were graded after the change or none before it; else `improved` or `worse` when |z| is at least 1.645, otherwise `no_change`.
-The ceiling is power: with 10 sessions on each side only a gap of about 35 points is significant, so small real gains read as `no_change` until more sessions are graded.
+A rubric needs `trends.min_graded` (default 10) distinct sessions on BOTH sides; with fewer it is `too_early` and has no p-value.
+For the others the p-value is two-sided: Fisher's exact test when either side has fewer than 30 sessions, else the pooled z-test.
+The Holm step-down correction at 10% runs over the rubrics that passed the gate: the smallest p-value must be at most 0.10 / m, the next 0.10 / (m - 1), and so on.
+A rubric that passes is `improved` or `worse` by the direction of its rates, the others are `no_change`.
+The change is `worse` if any rubric is worse, else `improved` if any improved, else `no_change`; it is `too_early` when no rubric passed the gate.
+`perRubric` carries every rubric's before, after, verdict (after Holm) and p-value; the top-level `before` and `after` are those of the rubric with the smallest p-value.
+The ceiling is power: with 10 sessions on each side only a gap of 40 to 50 points is significant (6/10 against 10/10, 3/10 against 8/10; 7/10 against 10/10 is `no_change`), and each further rubric makes Holm stricter, so small real gains read as `no_change` until more sessions are graded.
 
 **Reference set.**
 Up to 20 sessions are marked as reference (`POST` and `DELETE /v1/sessions/{id}/reference`); members are pinned and a removal keeps the pin.
-`POST /v1/trends/reference-regrade` queues a forced re-grade of all members with every current rubric (a normal `grade_batch` job).
+`POST /v1/trends/reference-regrade` queues a forced re-grade of all members with every current rubric (a normal `grade_batch` job whose grades carry `origin = reference`).
+A reference grade never replaces a standard grade of the same session, rubric version and judge model, and a standard grade replaces a reference one.
+The 20-member cap is enforced under a row lock on Postgres (`SELECT ... FOR UPDATE` on the workspace), so two concurrent adds cannot both take the last place.
 The same job is queued once, by key, after a rubric version change or a judge model change, and not at all while the set is empty.
 
 ## 7. Data model
@@ -331,9 +351,9 @@ All IDs are UUIDs (sessions UUIDv5, others UUIDv7); every table carries `workspa
 | `signal` | ingest | session_id, failed_tool_calls, retries, repeated_commands, files_touched, tests_run, signal_version* | Computed at session end |
 | `rubric` | rubrics | id, name, version (blob SHA), ordinal*, commit_sha*, scale, pass_threshold, target_pass_rate*, applies_to*, body_md | Unique (workspace_id, name, version) |
 | `calibration_label`* | rubrics | id, rubric_name, session_id, user_id, label (pass / fail), note | Rubrics "You" column; "Judge was wrong" creates one |
-| `grade` | grading | id, session_id, rubric_id, rubric_version, score, passed, reason, evidence_event_ids, judge_model, transport*, status* (ok / refused / invalid), llm_call_id*, graded_at | Unique (session_id, rubric_version, judge_model); latest per rubric is current |
+| `grade` | grading | id, session_id, rubric_id, rubric_version, score, passed, reason, evidence_event_ids, judge_model, transport*, status* (ok / refused / invalid), llm_call_id*, graded_at | Unique (session_id, rubric_version, judge_model); latest per rubric is current; `origin`* (standard / reference): reference re-grades are not counted in trends |
 | `proposal` | improvement | id, run_id*, title*, target_repo_id*, target_path, branch*, base_sha*, head_sha*, diff, rationale, evidence_session_ids, rubric_names*, status, decided_by*, decided_at*, decision_note*, pr_url*, cluster_summary*, merge_commit* | Status: open / accepted / rejected / conflict / superseded / failed (diff refused) |
-| `skill_repo`* | improvement | id, kind (global / project), path, remote_url, default_branch, allow_list, accept_mode (override), enabled | One global row from Settings, project rows registered on first target |
+| `skill_repo`* | improvement | id, kind (global / project), path, remote_url, default_branch, allow_list, accept_mode (override), enabled, last_seen_sha*, scan_warning* | One global row from Settings, project rows registered on first target |
 | `improver_run`* | improvement | id, started_at, finished_at, status, clusters, proposals_created, summary*, error* | Settings shows last and next run; `summary` lists clusters, excluded untrusted rubrics and skipped sessions |
 | `change_event` | trends | id, at, kind* (proposal_merged / manual_edit / judge_changed / rubric_changed), proposal_id?, repo_id*, description, files, rubric_names*, ref* | Trend markers. Unique (workspace_id, kind, ref); `ref` is null for proposals. `skill_repo.last_seen_sha` is the scan's watermark |
 | `llm_call`* | platform/llm | id, at, purpose (grade / dry_run / cluster / improve), model, transport, tokens_in, cache_read_tokens, tokens_out, cost_estimate, ref_id | Budget ledger |

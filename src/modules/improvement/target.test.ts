@@ -11,6 +11,7 @@ const repo = (id: string, kind: 'global' | 'project', path: string): SkillRepoRo
   acceptMode: null,
   enabled: true,
   allowExecutable: false,
+  scanWarning: null,
 });
 
 describe('resolveTarget', () => {
