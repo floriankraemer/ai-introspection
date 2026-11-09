@@ -4,9 +4,10 @@ import { useEffect, useRef, useState } from 'react';
 import { useApi } from '../api/context.js';
 import { invalidateKeys, useImport, usePatchSettings } from '../api/queries.js';
 import type { DetectedSource, JudgeTransport, SkillRepo } from '../api/types.js';
+import { CliLogin } from '../components/CliLogin.js';
 import { FailingChecks } from '../components/HealthCheck.js';
 import { JudgeTest } from '../components/JudgeTest.js';
-import { Button, Card, ErrorState, Field, FIELD, Loading } from '../components/ui.js';
+import { Button, Card, ErrorState, Field, FIELD, Loading, ProgressBar } from '../components/ui.js';
 import { AGENT_LABEL, plural } from '../lib/format.js';
 
 const STEPS = ['Sources', 'Judge', 'Skills repo', 'Done'] as const;
@@ -129,6 +130,7 @@ function JudgeStep({ draft, set }: { draft: JudgeDraft; set: (d: JudgeDraft) => 
           </Field>
         </form>
       ) : null}
+      {draft.transport === 'cli' ? <CliLogin /> : null}
       <JudgeTest transport={draft.transport} apiKey={draft.apiKey.trim()} />
       <Field
         label="Daily token budget"
@@ -272,12 +274,7 @@ function DoneStep() {
           <p role="status" className="m-0 text-sm text-ink-soft">
             Importing your sessions{p ? `: ${String(p.done)} of ${String(p.total)}` : '…'}
           </p>
-          <progress
-            className="h-2 w-full accent-accent"
-            max={100}
-            value={pct}
-            aria-label="Import progress"
-          />
+          <ProgressBar value={p && p.total > 0 ? pct : null} label="Import progress" />
         </>
       )}
       <FailingChecks />
@@ -423,7 +420,7 @@ export function Setup() {
   ][step];
 
   return (
-    <div className="flex min-h-screen items-start justify-center bg-page px-4 py-12 text-ink">
+    <div className="flex min-h-screen items-center justify-center bg-page px-4 py-12 text-ink">
       <div className="flex w-full max-w-[640px] flex-col gap-6">
         <div className="flex flex-col gap-1">
           <div className="text-base font-bold">Introspect · local</div>

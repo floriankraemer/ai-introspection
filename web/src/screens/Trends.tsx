@@ -35,6 +35,7 @@ import {
   formatDayLocal,
   gradedTotal,
   LOW_SAMPLE,
+  overlapGroups,
   pct,
   rubricLabel,
   seriesColor,
@@ -175,6 +176,10 @@ function ChartCard({
   const hasReset = data.baselineResets.some((r) => shown.has(r.rubric));
   const hasTarget = series.some((s) => s.target !== null);
   const hollow = data.buckets.length <= 30;
+  const overlaps = overlapGroups(
+    data.buckets,
+    series.map((s) => s.name),
+  );
   return (
     <Card
       role="region"
@@ -252,6 +257,13 @@ function ChartCard({
         {hasReset
           ? 'A baseline reset means the rubric or the judge changed: pass rates before and after it are not like-for-like.'
           : null}
+        {overlaps.map((g) => (
+          <span key={g.join()}>
+            {' '}
+            {g.map(rubricLabel).join(', ')} have identical values, so their lines overlap: they
+            alternate as stripes.
+          </span>
+        ))}
       </p>
       <DataTable data={data} series={series} bucket={bucket} />
     </Card>

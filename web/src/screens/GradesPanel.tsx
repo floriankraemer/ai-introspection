@@ -2,10 +2,10 @@ import { Link } from '@tanstack/react-router';
 import { useState } from 'react';
 import type { GradeDetail } from '../api/types.js';
 import { LabelForm } from '../components/LabelForm.js';
-import { Card, Chip, EmptyState, VerdictChip } from '../components/ui.js';
+import { BTN, Card, Chip, EmptyState, VerdictChip } from '../components/ui.js';
 import { rubricLabel } from '../lib/trends.js';
 
-// Quiet inline action: text only, with padding so the touch target stays tall enough.
+// Evidence link: text only, with padding so the touch target stays tall enough.
 const QUIET = 'cursor-pointer border-0 bg-transparent px-0 py-2.5 text-[13px] leading-none';
 const TRANSPORT: Record<string, string> = { api: 'API', cli: 'claude CLI' };
 
@@ -51,7 +51,7 @@ function GradeCard({
             tone="warn"
             title="This rubric has not passed the 8 / 10 calibration gate, so the improver ignores it."
           >
-            untrusted
+            uncalibrated
           </Chip>
         )}
       </p>
@@ -92,7 +92,7 @@ function GradeCard({
               setSaved(false);
               setLabelling(true);
             }}
-            className={`${QUIET} text-muted hover:text-ink`}
+            className={BTN.small}
           >
             Judge was wrong…
           </button>
@@ -124,7 +124,8 @@ export function GradesPanel({
   const versions = [...new Set(grades.map((g) => g.rubricVersion))];
   return (
     <aside aria-label="Grades" className="flex min-w-0 flex-[2_1_320px] flex-col gap-3">
-      <h2 className="m-0 text-base font-semibold">
+      {/* Same height as the Trace header, so both titles sit on one line. */}
+      <h2 className="m-0 flex min-h-[61px] items-center px-4 text-base font-semibold">
         Grades
         {grades.length
           ? ` · judge: ${models.join(', ')}${versions.length === 1 ? ` · rubrics v${String(versions[0])}` : ''}`

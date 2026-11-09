@@ -10,10 +10,13 @@ import { renderApp } from '../test-utils.js';
 // The editor is a lazily loaded chunk and CodeMirror applies text asynchronously, so under load
 // both the element and its content can lag the default 1 s timeout.
 const SLOW = { timeout: 8000 };
-const editor = () => screen.findByRole('textbox', { name: 'Rubric body (markdown)' }, SLOW);
+// CodeMirror lives in a shadow root (to keep its styles inside the CSP), which queries do not enter.
+const content = () =>
+  screen.getByTestId('markdown-editor').shadowRoot?.querySelector('.cm-content');
+const editor = () => screen.findByTestId('markdown-editor', {}, SLOW);
 const editorHas = (text: string) =>
   waitFor(() => {
-    expect(screen.getByRole('textbox', { name: 'Rubric body (markdown)' })).toHaveTextContent(text);
+    expect(content()).toHaveTextContent(text);
   }, SLOW);
 
 describe('Rubrics', () => {

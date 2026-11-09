@@ -21,7 +21,7 @@ test('settings: health check and autosave', async ({ page }) => {
   // A checkbox saves at once and survives a reload.
   const redact = page.getByRole('checkbox', { name: /Redact secrets at ingest/ });
   await expect(redact).toBeChecked();
-  await redact.click();
+  await redact.uncheck();
   await expect(redact).not.toBeChecked();
   await expect(page.getByText('All changes saved.')).toBeVisible();
   await page.reload();
@@ -36,7 +36,7 @@ test('settings: health check and autosave', async ({ page }) => {
   await expect(page.getByLabel('Keep event payloads for (days)')).toHaveValue('120');
 
   // Put both back: the next spec takes screenshots of the default state.
-  await page.getByRole('checkbox', { name: /Redact secrets at ingest/ }).click();
+  await page.getByRole('checkbox', { name: /Redact secrets at ingest/ }).check();
   await expect(page.getByRole('checkbox', { name: /Redact secrets at ingest/ })).toBeChecked();
   await expect(page.getByText('All changes saved.')).toBeVisible();
   await page.getByLabel('Keep event payloads for (days)').fill('90');

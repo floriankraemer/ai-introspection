@@ -54,9 +54,9 @@ The same card holds:
 - **Extra redaction patterns**: one regular expression per line, up to 50.
 - **Keep event payloads for (days)**: default 90, minimum 7.
 
-## Judge and sampling
+## Judge and budget
 
-![The Judge and sampling card holds the transport, the API key, the sampling rule and the budget.](images/settings-judge.png)
+![The Judge and budget card holds the transport, the API key, the sampling rule and the budget.](images/settings-judge.png)
 
 | Field | Meaning |
 |---|---|

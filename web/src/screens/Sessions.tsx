@@ -10,6 +10,7 @@ import {
   ErrorState,
   Field,
   FIELD,
+  LinkButton,
   Loading,
   PageHeader,
   VerdictChip,
@@ -169,6 +170,11 @@ const RANGE_LABEL: Record<SessionRange, string> = {
   '30': '30 days',
   all: 'All time',
 };
+const RESULT_HINT: Record<SessionResultFilter, string> = {
+  failed_any: 'sessions that failed any rubric',
+  not_graded: 'sessions that are not graded',
+  all: 'all sessions',
+};
 const DAY_MS = 86_400_000;
 /** `days` for the summary API; 0 means all time. */
 const RANGE_DAYS: Record<SessionRange, number> = { '7': 7, '30': 30, all: 0 };
@@ -235,6 +241,8 @@ export function Sessions({
   };
   // Nothing in the chosen period is not the same as nothing collected: older sessions may exist.
   const noData = s.sessionsCollected === 0 && !filtered && items.length === 0;
+  // A short list under a narrowing filter: say what it hides, so the empty space is not a mystery.
+  const narrowed = result !== 'all' || range !== 'all';
 
   return (
     <div className="flex flex-col gap-6">
@@ -354,6 +362,19 @@ export function Sessions({
             </EmptyState>
           ) : (
             <>
+              {narrowed && items.length < 10 && !sessions.hasNextPage ? (
+                <p className="m-0 text-[13px] text-muted">
+                  Showing {RESULT_HINT[result]}
+                  {range === 'all' ? '' : ` in the last ${plural(RANGE_DAYS[range], 'day')}`} ·{' '}
+                  <LinkButton
+                    onClick={() => {
+                      onSearch({ result: 'all', range: 'all' });
+                    }}
+                  >
+                    Show all
+                  </LinkButton>
+                </p>
+              ) : null}
               <Card className="overflow-x-auto">
                 <table
                   className={`w-full table-fixed border-collapse ${names.length ? 'min-w-[58.5rem]' : 'min-w-[42.5rem]'}`}

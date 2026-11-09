@@ -95,7 +95,7 @@ describe('Session detail', () => {
     expect(screen.getByRole('link', { name: 'Back to Sessions' })).toBeInTheDocument();
   });
 
-  it('shows each grade with score, reason, judge model and the untrusted marker', async () => {
+  it('shows each grade with score, reason, judge model and the uncalibrated marker', async () => {
     renderApp('/sessions/sess-1');
     const grades = await screen.findByRole('complementary', { name: 'Grades' });
     expect(
@@ -105,7 +105,7 @@ describe('Session detail', () => {
     expect(within(grades).getByText(/Spent ~7 min probing ports/)).toBeInTheDocument();
     expect(within(grades).getAllByText(/claude-sonnet-5-5 · API/).length).toBeGreaterThan(0);
     // Efficiency (7 / 10) and Silent workaround (6 / 10) have not passed the gate; they carry the marker.
-    expect(within(grades).getAllByText('untrusted')).toHaveLength(2);
+    expect(within(grades).getAllByText('uncalibrated')).toHaveLength(2);
     expect(within(grades).getByText('0.8 · Pass')).toBeInTheDocument();
   });
 
@@ -149,14 +149,14 @@ describe('Session detail', () => {
     const user = userEvent.setup();
     renderApp('/sessions/sess-1');
     const grades = await screen.findByRole('complementary', { name: 'Grades' });
-    const before = (await within(grades).findAllByText('untrusted')).length;
+    const before = (await within(grades).findAllByText('uncalibrated')).length;
     const wrong = await within(grades).findAllByRole('button', { name: 'Judge was wrong…' });
     await user.click(wrong[0] ?? grades);
     // Efficiency is at 7 / 10; agreeing with the judge's Fail makes 8 / 10.
     await user.click(within(grades).getByLabelText('Fail'));
     await user.click(within(grades).getByRole('button', { name: 'Save label' }));
     await waitFor(() => {
-      expect(within(grades).getAllByText('untrusted')).toHaveLength(before - 1);
+      expect(within(grades).getAllByText('uncalibrated')).toHaveLength(before - 1);
     });
   });
 

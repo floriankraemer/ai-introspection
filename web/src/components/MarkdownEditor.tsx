@@ -64,8 +64,12 @@ export default function MarkdownEditor({
 
   useEffect(() => {
     if (!host.current) return;
+    // CodeMirror injects its styles as <style> elements, which the server's CSP (default-src 'self')
+    // blocks. In a shadow root it adopts a constructable stylesheet instead, which the CSP allows.
+    const root = host.current.shadowRoot ?? host.current.attachShadow({ mode: 'open' });
     const v = new EditorView({
-      parent: host.current,
+      parent: root,
+      root,
       state: EditorState.create({
         doc: value,
         extensions: [
@@ -97,5 +101,5 @@ export default function MarkdownEditor({
       v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: value } });
   }, [value]);
 
-  return <div ref={host} />;
+  return <div ref={host} data-testid="markdown-editor" />;
 }

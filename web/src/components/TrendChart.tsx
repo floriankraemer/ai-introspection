@@ -17,6 +17,7 @@ import {
   bucketTitle,
   formatDayLocal,
   LOW_SAMPLE,
+  overlapGroups,
   pct,
   rubricLabel,
   yAxis,
@@ -44,6 +45,10 @@ interface Pin {
 
 const HEIGHT = 320;
 const MARGIN = { top: 34, right: 24, bottom: 4, left: 0 };
+// Flags of pins that share a bucket stack upwards above the plot, one slot apart.
+const SLOT = 22;
+// Dash length of the stripes that tell identical, overlapping lines apart.
+const STRIPE = 6;
 const MAX_DOTS = 30;
 const POPOVER_W = 288;
 
@@ -132,6 +137,11 @@ export default function TrendChart({
   }));
   const dots = data.buckets.length <= MAX_DOTS;
   const pins = pinsOf(data, series);
+  const margin = { ...MARGIN, top: MARGIN.top + SLOT * Math.max(0, ...pins.map((p) => p.slot)) };
+  const stripes = overlapGroups(
+    data.buckets,
+    series.map((s) => s.name),
+  );
   const values = [
     ...series.flatMap((s) => data.buckets.map((b) => b.rubrics[s.name]?.passRate ?? null)),
     ...series.map((s) => s.target),
@@ -159,7 +169,7 @@ export default function TrendChart({
         height="100%"
         initialDimension={{ width: 800, height: HEIGHT }}
       >
-        <LineChart data={rows} margin={MARGIN}>
+        <LineChart data={rows} margin={margin}>
           <CartesianGrid vertical={false} stroke="var(--line-soft)" />
           <XAxis
             dataKey="start"
@@ -169,7 +179,7 @@ export default function TrendChart({
             tick={{ fill: 'var(--ink-muted)', fontSize: 12 }}
             tickMargin={8}
             minTickGap={16}
-            padding={{ left: 12, right: 12 }}
+            padding={{ left: 12, right: 36 }}
           />
           <YAxis
             domain={axis.domain}
@@ -223,7 +233,7 @@ export default function TrendChart({
                     <PinFlag
                       pin={pin}
                       x={vb?.x ?? 0}
-                      y={(vb?.y ?? MARGIN.top) - 14 + pin.slot * 14}
+                      y={(vb?.y ?? margin.top) - 14 - pin.slot * SLOT}
                       onOpen={open}
                       onClose={closeSoon}
                       onEscape={() => {
@@ -235,25 +245,36 @@ export default function TrendChart({
               }}
             />
           ))}
-          {series.map((s) => (
-            <Line
-              key={s.name}
-              dataKey={s.name}
-              name={rubricLabel(s.name)}
-              stroke={s.color}
-              strokeWidth={2}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              isAnimationActive={false}
-              dot={dots ? (p) => <Dot key={p.index} {...dotProps(p, s)} /> : false}
-              activeDot={{ r: 5, stroke: 'var(--surface)', strokeWidth: 2, fill: s.color }}
-              {...(single && {
-                label: (p: Parameters<typeof endProps>[0]) => (
-                  <EndLabel {...endProps(p, rows.length)} />
-                ),
-              })}
-            />
-          ))}
+          {series.map((s) => {
+            // Identical lines would hide each other: each gets every n-th stripe of the same dash.
+            const group = stripes.find((g) => g.includes(s.name));
+            const stripe = group
+              ? {
+                  strokeLinecap: 'butt' as const,
+                  strokeDasharray: `${String(STRIPE)} ${String(STRIPE * (group.length - 1))}`,
+                  strokeDashoffset: -group.indexOf(s.name) * STRIPE,
+                }
+              : { strokeLinecap: 'round' as const };
+            return (
+              <Line
+                key={s.name}
+                dataKey={s.name}
+                name={rubricLabel(s.name)}
+                stroke={s.color}
+                strokeWidth={2}
+                strokeLinejoin="round"
+                {...stripe}
+                isAnimationActive={false}
+                dot={dots ? (p) => <Dot key={p.index} {...dotProps(p, s)} /> : false}
+                activeDot={{ r: 5, stroke: 'var(--surface)', strokeWidth: 2, fill: s.color }}
+                {...(single && {
+                  label: (p: Parameters<typeof endProps>[0]) => (
+                    <EndLabel {...endProps(p, rows.length)} />
+                  ),
+                })}
+              />
+            );
+          })}
         </LineChart>
       </ResponsiveContainer>
       {active ? (

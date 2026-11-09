@@ -415,8 +415,8 @@ function Calibration({ detail }: { detail: RubricDetail }) {
       className="flex min-w-0 flex-[2_1_300px] flex-col gap-3 rounded-xl border border-line bg-surface p-4"
     >
       <h2 className="m-0 text-base font-semibold">Calibration</h2>
-      <div className="flex items-baseline gap-2">
-        <span className="text-[28px] leading-tight font-bold">
+      <div className="flex flex-wrap items-baseline gap-x-2">
+        <span className="text-[28px] leading-tight font-bold whitespace-nowrap">
           {agree} / {total < NEEDED ? NEEDED : total}
         </span>
         <span className="text-[13px] text-muted">judge agrees with your labels</span>
@@ -431,13 +431,16 @@ function Calibration({ detail }: { detail: RubricDetail }) {
             ? `Gate: label ${plural(NEEDED - total, 'more session')}, then ${String(GATE)} / ${String(NEEDED)} must agree before the improver may use this rubric.`
             : `Gate: needs ${String(GATE)} / ${String(NEEDED)} before the improver may use this rubric.`}
       </p>
+      <p className="m-0 text-xs text-muted">
+        Only labels on sessions graded with the current rubric version (v{detail.version}) count.
+      </p>
       {detail.calibration.length ? (
         <table className="w-full table-fixed border-collapse">
           <caption className="sr-only">Calibration labels</caption>
           <colgroup>
             <col />
-            <col className="w-[4.5rem]" />
-            <col className="w-[4.5rem]" />
+            <col className="w-16" />
+            <col className="w-16" />
           </colgroup>
           <thead>
             <tr>
@@ -449,11 +452,11 @@ function Calibration({ detail }: { detail: RubricDetail }) {
           <tbody>
             {rows.map((c) => (
               <tr key={c.sessionId} className={c.agrees === false ? 'row-disagree' : ''}>
-                <td className="truncate" title={titleText(c.title)}>
+                <td className="whitespace-normal" title={titleText(c.title)}>
                   <Link
                     to="/sessions/$sessionId"
                     params={{ sessionId: c.sessionId }}
-                    className="text-ink no-underline hover:underline"
+                    className="line-clamp-2 text-ink no-underline hover:underline"
                   >
                     {titleText(c.title)}
                   </Link>

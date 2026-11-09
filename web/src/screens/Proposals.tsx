@@ -111,7 +111,7 @@ function LastRun({ run }: { run: ImproverRun }) {
       ) : null}
       <NextRun className="!text-[13px]" />
       {run.untrustedRubrics.length > 0 ? (
-        <p className="m-0 text-warn">
+        <p className="m-0 rounded-lg border border-warn-line bg-warn-bg px-3 py-2.5 leading-normal text-warn">
           {run.untrustedRubrics
             .map((r) => `${rubricLabel(r)} needs calibration — excluded`)
             .join('; ')}

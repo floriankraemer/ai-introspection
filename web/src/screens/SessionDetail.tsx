@@ -157,7 +157,7 @@ function Trace({
       onClick={() => {
         onFilter(f);
       }}
-      className={`h-8 rounded-full border px-3 text-[13px] text-ink disabled:cursor-not-allowed disabled:opacity-60 ${filter === f ? 'border-accent bg-accent-soft' : 'border-line bg-surface hover:bg-sunken'}`}
+      className={`h-8 rounded-full border px-3 text-[13px] text-ink disabled:cursor-not-allowed disabled:border-line-soft disabled:bg-disabled disabled:text-disabled-ink ${filter === f ? 'border-accent bg-accent-soft' : 'border-line bg-surface hover:bg-sunken'}`}
     >
       {label}
     </button>
@@ -168,7 +168,7 @@ function Trace({
       aria-label="Trace"
       className="flex min-w-0 flex-[3_1_480px] flex-col rounded-xl border border-line bg-surface"
     >
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line-soft px-4 py-3.5">
+      <div className="flex min-h-[61px] flex-wrap items-center justify-between gap-3 border-b border-line-soft px-4 py-3.5">
         <h2 className="m-0 text-base font-semibold">Trace · {plural(eventCount, 'event')}</h2>
         <div className="flex flex-wrap gap-1.5">
           {tab('all', 'All')}

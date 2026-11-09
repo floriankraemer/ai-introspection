@@ -22,6 +22,8 @@
   --accent-hover: #1e3a8a;
   --accent-ink: #ffffff;
   --accent-soft: #eef2ff;
+  --disabled-bg: #e9e9e5;
+  --disabled-ink: #6b6b64;
   --pass-ink: #067647;
   --pass-bg: #ecfdf3;
   --pass-line: #abefc6;
@@ -57,6 +59,8 @@
   --accent-hover: #b0c2ff;
   --accent-ink: #0b1020;
   --accent-soft: #1e2547;
+  --disabled-bg: #2a2a2f;
+  --disabled-ink: #8f8f98;
   --pass-ink: #6ee7a8;
   --pass-bg: #0f2a1e;
   --pass-line: #1f5a3f;
@@ -93,6 +97,8 @@
     --accent-hover: #b0c2ff;
     --accent-ink: #0b1020;
     --accent-soft: #1e2547;
+    --disabled-bg: #2a2a2f;
+    --disabled-ink: #8f8f98;
     --pass-ink: #6ee7a8;
     --pass-bg: #0f2a1e;
     --pass-line: #1f5a3f;
@@ -130,6 +136,8 @@
   --color-accent-hover: var(--accent-hover);
   --color-accent-ink: var(--accent-ink);
   --color-accent-soft: var(--accent-soft);
+  --color-disabled: var(--disabled-bg);
+  --color-disabled-ink: var(--disabled-ink);
   --color-pass: var(--pass-ink);
   --color-pass-bg: var(--pass-bg);
   --color-pass-line: var(--pass-line);
@@ -194,4 +202,23 @@
 }
 .row-disagree > :first-child {
   box-shadow: inset 3px 0 0 var(--fail-ink);
+}
+
+/* Indeterminate progress: a bar sweeping across the track; static when motion is reduced. */
+@keyframes progress-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+.progress-indeterminate {
+  animation: progress-sweep 1.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .progress-indeterminate {
+    animation: none;
+    transform: none;
+  }
 }

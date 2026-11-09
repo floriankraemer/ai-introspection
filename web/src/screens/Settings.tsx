@@ -6,7 +6,6 @@ import {
   invalidateKeys,
   useAddProjectRepo,
   useBudget,
-  useDoctor,
   usePatchSettings,
   usePatchSkillRepo,
   useSettings,
@@ -23,6 +22,7 @@ import type {
 } from '../api/types.js';
 import { NextRun } from '../components/NextRun.js';
 import { HealthCheck } from '../components/HealthCheck.js';
+import { CliLogin } from '../components/CliLogin.js';
 import { JudgeTest } from '../components/JudgeTest.js';
 import {
   BTN,
@@ -39,7 +39,9 @@ import {
 type Writable = Omit<SettingsData, 'judge.api_key_set'>;
 type Patch = Partial<Writable>;
 
-const SECTION = 'flex flex-col gap-3 rounded-xl border border-line bg-surface p-[18px]';
+// break-inside-avoid + mb-5: the cards flow down two balanced CSS columns, so no row leaves a gap.
+const SECTION =
+  'mb-5 flex break-inside-avoid flex-col gap-3 rounded-xl border border-line bg-surface p-[18px]';
 const H2 = 'm-0 text-base font-semibold';
 
 const STATUS: Record<SourceStatus, [string, ChipTone]> = {
@@ -198,7 +200,7 @@ function PatternsSetting({
   );
 }
 
-function SourcesCard({ settings, save }: { settings: SettingsData; save: (p: Patch) => void }) {
+function SourcesCard() {
   const api = useApi();
   const qc = useQueryClient();
   const sources = useSources();
@@ -296,6 +298,14 @@ function SourcesCard({ settings, save }: { settings: SettingsData; save: (p: Pat
           + Add source folder
         </Button>
       )}
+    </section>
+  );
+}
+
+function RedactionCard({ settings, save }: { settings: SettingsData; save: (p: Patch) => void }) {
+  return (
+    <section aria-label="Redaction and retention" className={SECTION}>
+      <h2 className={H2}>Redaction and retention</h2>
       <label className="flex items-center gap-2.5 text-sm">
         <input
           type="checkbox"
@@ -326,47 +336,6 @@ function SourcesCard({ settings, save }: { settings: SettingsData; save: (p: Pat
   );
 }
 
-/** CLI transport: the login lives in the container, so show what the doctor found and how to log in. */
-function CliLogin() {
-  const doctor = useDoctor();
-  const check = doctor.data?.checks.find((c) => c.id === 'judge');
-  const ok = check?.status === 'ok';
-  return (
-    <div
-      aria-label="Claude login"
-      role="group"
-      className="flex flex-col gap-1.5 rounded-lg border border-line-soft bg-surface-alt p-3 text-sm"
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <strong>Claude login in the container</strong>
-        {doctor.isPending ? (
-          <span className="text-muted">Checking…</span>
-        ) : doctor.isError || !check ? (
-          <Chip>Unknown</Chip>
-        ) : (
-          <Chip tone={ok ? 'pass' : check.status === 'fail' ? 'fail' : 'warn'}>
-            {ok ? 'Logged in' : 'Not logged in'}
-          </Chip>
-        )}
-        <Button
-          className="ml-auto h-10"
-          disabled={doctor.isFetching}
-          onClick={() => void doctor.refetch()}
-        >
-          {doctor.isFetching ? 'Checking…' : 'Check again'}
-        </Button>
-      </div>
-      {check ? <p className="m-0 text-muted">{check.detail}</p> : null}
-      {ok ? null : (
-        <p className="m-0 text-ink-soft">
-          To log in, run <code>make claude-login</code> in your project folder, then press Check
-          again.
-        </p>
-      )}
-    </div>
-  );
-}
-
 function JudgeCard({ settings, save }: { settings: SettingsData; save: (p: Patch) => void }) {
   const api = useApi();
   const qc = useQueryClient();
@@ -381,7 +350,7 @@ function JudgeCard({ settings, save }: { settings: SettingsData; save: (p: Patch
   const mode = settings['budget.mode'];
   return (
     <section aria-label="Judge" className={SECTION}>
-      <h2 className={H2}>Judge and sampling</h2>
+      <h2 className={H2}>Judge and budget</h2>
       <Select
         label="Runs via"
         name="judge.transport"
@@ -641,7 +610,7 @@ function AddProject() {
         <Field label="Project repo path" className="flex-1">
           <input
             className={FIELD}
-            placeholder="~/projects/web-app"
+            placeholder="/repos/projects/<name>"
             value={path}
             onChange={(e) => {
               setPath(e.target.value);
@@ -653,7 +622,9 @@ function AddProject() {
         </Button>
       </div>
       <p className="m-0 text-xs text-muted">
-        The improver only changes .claude/**, CLAUDE.md and AGENTS.md in project repos.
+        A folder inside the mounted projects folder, for example{' '}
+        <code>/repos/projects/web-app</code>. The improver only changes .claude/**, CLAUDE.md and
+        AGENTS.md in project repos.
       </p>
       {add.isError ? (
         <p role="alert" className="m-0 text-[13px] text-fail">
@@ -665,8 +636,6 @@ function AddProject() {
 }
 
 function ScheduleCard({ settings, save }: { settings: SettingsData; save: (p: Patch) => void }) {
-  const repos = useSkillRepos();
-  const global = repos.data?.find((r) => r.kind === 'global');
   return (
     <section aria-label="Schedule" className={SECTION}>
       <h2 className={H2}>Schedule</h2>
@@ -692,6 +661,16 @@ function ScheduleCard({ settings, save }: { settings: SettingsData; save: (p: Pa
         ]}
       />
       <NextRun />
+    </section>
+  );
+}
+
+function ReposCard({ settings, save }: { settings: SettingsData; save: (p: Patch) => void }) {
+  const repos = useSkillRepos();
+  const global = repos.data?.find((r) => r.kind === 'global');
+  return (
+    <section aria-label="Skills repositories" className={SECTION}>
+      <h2 className={H2}>Skills repositories</h2>
       <div className="flex flex-col gap-1 text-xs text-muted">
         <span>Skills repo for patches</span>
         {repos.isPending ? (
@@ -767,7 +746,7 @@ function TeamCard() {
   return (
     <section
       aria-label="Team mode"
-      className="flex flex-col gap-3 rounded-xl border border-dashed border-line-dashed bg-surface-alt p-[18px]"
+      className="mb-5 flex break-inside-avoid flex-col gap-3 rounded-xl border border-dashed border-line-dashed bg-surface-alt p-[18px]"
     >
       <div className="flex items-center justify-between">
         <h2 className={H2}>Team mode</h2>
@@ -784,7 +763,7 @@ function TeamCard() {
         <input type="checkbox" className="size-[18px]" disabled />
         Share my sessions with the workspace
       </label>
-      <Button disabled className="self-start bg-sunken text-muted">
+      <Button disabled className="self-start">
         Connect with SSO
       </Button>
     </section>
@@ -794,10 +773,20 @@ function TeamCard() {
 export function Settings() {
   const q = useSettings();
   const patch = usePatchSettings();
+  const [pending, setPending] = useState<Patch>({});
   if (q.isPending) return <Loading label="Loading settings" />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
+  // Optimistic values live in component state, not the query cache: a controlled checkbox snaps back
+  // at the end of its click handler unless React state already holds the new value, and cache
+  // subscribers are only notified a tick later.
+  const settings = { ...q.data, ...pending };
   const save = (p: Patch) => {
-    patch.mutate(p);
+    setPending((x) => ({ ...x, ...p }));
+    const clear = () => {
+      setPending((x) => Object.fromEntries(Object.entries(x).filter(([k]) => !(k in p))));
+    };
+    // The hook writes the saved values into the cache first; a failure just drops the optimistic ones.
+    patch.mutateAsync(p).then(clear, clear);
   };
   return (
     <div className="flex flex-col gap-5">
@@ -821,11 +810,13 @@ export function Settings() {
         )}
       </p>
       <HealthCheck />
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-        <SourcesCard settings={q.data} save={save} />
-        <JudgeCard settings={q.data} save={save} />
-        <ScheduleCard settings={q.data} save={save} />
-        <TrendsCard settings={q.data} save={save} />
+      <div className="lg:columns-2 lg:gap-5">
+        <SourcesCard />
+        <RedactionCard settings={settings} save={save} />
+        <JudgeCard settings={settings} save={save} />
+        <ScheduleCard settings={settings} save={save} />
+        <ReposCard settings={settings} save={save} />
+        <TrendsCard settings={settings} save={save} />
         <TeamCard />
       </div>
     </div>

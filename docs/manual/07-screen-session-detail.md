@@ -53,7 +53,7 @@ Each card shows:
   The number is the score on the rubric scale.
   A score at or above the pass threshold passes.
 - the rubric version, the judge model and how it ran (**API** or **claude CLI**).
-- the chip **untrusted** if the rubric has not passed the calibration gate yet.
+- the chip **uncalibrated** if the rubric has not passed the calibration gate yet.
   Such a rubric still grades, but the improver ignores it.
   See [Writing and calibrating rubrics](12-writing-and-calibrating-rubrics.md).
 - the judge's reason in one paragraph.

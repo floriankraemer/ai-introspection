@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bucketOf, isoWeek, rubricLabel, yAxis } from './trends.js';
+import { bucketOf, isoWeek, overlapGroups, rubricLabel, yAxis } from './trends.js';
 
 describe('trends helpers', () => {
   it('labels rubrics and numbers ISO weeks', () => {
@@ -20,5 +20,13 @@ describe('trends helpers', () => {
       domain: [0.4, 1],
       ticks: [0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1],
     });
+  });
+  it('groups rubrics whose lines would hide each other', () => {
+    const p = (passRate: number) => ({ passRate, graded: 5 });
+    const buckets = [
+      { start: 'a', rubrics: { x: p(0.5), y: p(0.5), z: p(0.2) } },
+      { start: 'b', rubrics: { x: p(1), y: p(1), z: p(1) } },
+    ] as unknown as Parameters<typeof overlapGroups>[0];
+    expect(overlapGroups(buckets, ['x', 'y', 'z', 'none'])).toEqual([['x', 'y']]);
   });
 });

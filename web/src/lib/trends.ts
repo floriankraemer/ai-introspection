@@ -56,3 +56,15 @@ export function gradedTotal(t: Trends): number {
     0,
   );
 }
+
+/** Groups of two or more rubrics whose pass rates are identical in every bucket: their lines would hide each other. */
+export function overlapGroups(buckets: Trends['buckets'], names: string[]): string[][] {
+  const groups = new Map<string, string[]>();
+  for (const name of names) {
+    const rates = buckets.map((b) => b.rubrics[name]?.passRate ?? null);
+    if (rates.every((r) => r === null)) continue;
+    const key = JSON.stringify(rates);
+    groups.set(key, [...(groups.get(key) ?? []), name]);
+  }
+  return [...groups.values()].filter((g) => g.length > 1);
+}
