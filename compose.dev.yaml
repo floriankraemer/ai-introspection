@@ -11,6 +11,8 @@ services:
     environment:
       CI:
       CHOKIDAR_USEPOLLING: '1'
+      # gh (PR accept mode, `make shell`): pass-through, so it stays unset unless your shell or .env sets it.
+      GH_TOKEN:
       # Postgres for `make test-pg` only. The dev server ignores it and keeps SQLite in /data.
       INTROSPECT_TEST_DATABASE_URL: postgres://introspect:introspect@postgres:5432/introspect
     ports:
