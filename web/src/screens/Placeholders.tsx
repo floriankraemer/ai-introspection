@@ -7,18 +7,6 @@ const next = (
   </Link>
 );
 
-export function Proposals() {
-  return (
-    <div className="flex flex-col gap-5">
-      <PageHeader title="Proposals" />
-      <EmptyState title="No proposals yet" actions={next}>
-        Once sessions are graded, Introspect drafts fixes for the patterns that keep failing and
-        lists them here for you to accept, edit or reject.
-      </EmptyState>
-    </div>
-  );
-}
-
 export function Trends() {
   return (
     <div className="flex flex-col gap-5">

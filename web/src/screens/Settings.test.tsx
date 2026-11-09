@@ -78,4 +78,28 @@ describe('Settings', () => {
       await screen.findByText(/Used 1M of 1M tokens today\. Grading is deferred/),
     ).toBeInTheDocument();
   });
+
+  it('overrides the accept mode per repo and adds a project repo', async () => {
+    const user = userEvent.setup();
+    renderApp('/settings');
+    const mode = await screen.findByLabelText('Accept mode for ~/dev/agent-skills');
+    await user.selectOptions(mode, 'pr');
+    expect(await screen.findByLabelText('Accept mode for ~/dev/agent-skills')).toHaveValue('pr');
+    expect(screen.getByText(/^Next run /)).toBeVisible();
+
+    const add = screen.getByRole('button', { name: 'Add project repo' });
+    expect(add).toBeDisabled();
+    await user.type(screen.getByLabelText('Project repo path'), 'nope');
+    await user.click(add);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Enter an absolute path');
+    await user.clear(screen.getByLabelText('Project repo path'));
+    await user.type(screen.getByLabelText('Project repo path'), '~/projects/web-app');
+    await user.click(add);
+    expect(await screen.findByLabelText('Accept mode for ~/projects/web-app')).toHaveValue('');
+  });
+
+  it('shows what the improver used inside the budget line', async () => {
+    renderApp('/settings');
+    expect(await screen.findByText(/The improver used 48k tokens today/)).toBeVisible();
+  });
 });

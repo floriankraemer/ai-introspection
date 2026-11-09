@@ -14,7 +14,7 @@ import type { Agent, Api, SessionResultFilter } from './api/types.js';
 import { Shell } from './components/Shell.js';
 import { ErrorState } from './components/ui.js';
 import { AuthExchange, AuthRequired } from './screens/AuthRequired.js';
-import { Proposals, Trends } from './screens/Placeholders.js';
+import { Trends } from './screens/Placeholders.js';
 import { SessionDetail } from './screens/SessionDetail.js';
 import { Sessions, type SessionsSearch } from './screens/Sessions.js';
 import { Settings } from './screens/Settings.js';
@@ -98,7 +98,7 @@ const rubrics = createRoute({
 const proposals = createRoute({
   getParentRoute: () => shell,
   path: '/proposals',
-  component: Proposals,
+  component: lazyRouteComponent(() => import('./screens/Proposals.js'), 'Proposals'),
 });
 const trends = createRoute({ getParentRoute: () => shell, path: '/trends', component: Trends });
 const settings = createRoute({

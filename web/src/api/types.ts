@@ -76,6 +76,12 @@ export interface EventQuery {
   limit?: number | undefined;
 }
 
+export type Proposal = Schemas['Proposal'];
+export type ProposalStatus = Proposal['status'];
+export type ProposalList = Schemas['ProposalList'];
+export type ImproverRun = Schemas['ImproverRun'];
+export type ImproverSchedule = Json200<paths['/v1/improver/schedule']['get']>;
+
 /** The API surface the SPA uses. `client.ts` implements it over HTTP, `mock.ts` over fixtures. */
 export interface Api {
   getSettings(): Promise<Settings>;
@@ -90,7 +96,10 @@ export interface Api {
   putGlobalSkillRepo(path: string): Promise<SkillRepo>;
   initGlobalSkillRepo(path: string): Promise<SkillRepo>;
   copyStarterRubrics(): Promise<{ copied: string[] }>;
-  patchSkillRepo(id: string, body: { enabled: boolean }): Promise<SkillRepo>;
+  patchSkillRepo(
+    id: string,
+    body: { enabled?: boolean; acceptMode?: SkillRepo['acceptMode'] },
+  ): Promise<SkillRepo>;
   startImport(): Promise<Job>;
   getJob(id: string): Promise<Job>;
   getTrendSummary(days: number): Promise<TrendSummary>;
@@ -110,4 +119,13 @@ export interface Api {
   dryRunRubric(name: string, body: DryRunInput): Promise<DryRunResult>;
   addLabel(name: string, label: LabelInput): Promise<void>;
   getBudget(): Promise<Budget>;
+  listProposals(status?: ProposalStatus): Promise<ProposalList>;
+  getProposal(id: string): Promise<Proposal>;
+  patchProposal(id: string, diff: string): Promise<Proposal>;
+  acceptProposal(id: string): Promise<Proposal>;
+  rejectProposal(id: string, reason: string): Promise<Proposal>;
+  startImprover(since?: string): Promise<Job>;
+  listImproverRuns(): Promise<ImproverRun[]>;
+  getImproverSchedule(): Promise<ImproverSchedule>;
+  addProjectRepo(path: string): Promise<SkillRepo>;
 }

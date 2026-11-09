@@ -4,12 +4,21 @@ import {
   queryOptions,
   useInfiniteQuery,
   useMutation,
+  useQueries,
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { useApi } from './context.js';
-import type { Api, EventFilter, Job, Settings, SessionQuery } from './types.js';
+import type {
+  Api,
+  EventFilter,
+  Job,
+  Proposal,
+  ProposalStatus,
+  Settings,
+  SessionQuery,
+} from './types.js';
 
 /** Query options live apart from hooks so route loaders can prefetch with the same keys. */
 export const settingsQuery = (api: Api) =>
@@ -164,6 +173,121 @@ export function useGradeJob(start: (api: Api, ids: string[]) => Promise<Job>) {
   useEffect(() => {
     // Any terminal status: a failed or deferred job may still have graded some sessions.
     if (status && TERMINAL.includes(status)) void invalidateKeys(qc, GRADE_KEYS);
+  }, [status, qc]);
+  return { run, job: job.data ?? run.data ?? null };
+}
+
+/** Everything an accepted, rejected or newly drafted proposal changes. */
+export const PROPOSAL_KEYS = [
+  'proposals',
+  'proposal',
+  'improver-runs',
+  'improver-schedule',
+  'trend-summary',
+  'budget',
+];
+
+export function useProposals(status: ProposalStatus) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['proposals', status],
+    queryFn: () => api.listProposals(status),
+  });
+}
+
+/** Open count for the nav badge; shares the cache with the Open tab. */
+export function useOpenProposalCount() {
+  return useProposals('open').data?.counts.open ?? null;
+}
+
+/** Several statuses as one list, newest first (a tab can cover more than one status). */
+export function useProposalTab(statuses: ProposalStatus[]) {
+  const api = useApi();
+  return useQueries({
+    queries: statuses.map((status) => ({
+      queryKey: ['proposals', status],
+      queryFn: () => api.listProposals(status),
+    })),
+    combine: (rs) => ({
+      items: rs
+        .flatMap((r) => r.data?.items ?? [])
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+      pending: rs.some((r) => r.isPending),
+      error: rs.find((r) => r.isError)?.error ?? null,
+      loaded: rs.every((r) => r.data),
+    }),
+  });
+}
+
+export function useImproverSchedule() {
+  const api = useApi();
+  return useQuery({ queryKey: ['improver-schedule'], queryFn: () => api.getImproverSchedule() });
+}
+
+export function usePatchSkillRepo() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string } & Parameters<Api['patchSkillRepo']>[1]) =>
+      api.patchSkillRepo(id, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['skill-repos'] }),
+  });
+}
+
+export function useAddProjectRepo() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (path: string) => api.addProjectRepo(path),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['skill-repos'] }),
+  });
+}
+
+export function useProposal(id: string | null) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['proposal', id],
+    queryFn: () => api.getProposal(id ?? ''),
+    enabled: id !== null,
+  });
+}
+
+export function useImproverRuns() {
+  const api = useApi();
+  return useQuery({ queryKey: ['improver-runs'], queryFn: () => api.listImproverRuns() });
+}
+
+/** Accept, reject or edit one proposal. Accept and reject move it between tabs, so lists are refetched. */
+export function useProposalAction<V>(
+  id: string,
+  call: (api: Api, v: V) => Promise<Proposal>,
+  { refreshAll }: { refreshAll: boolean },
+) {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: V) => call(api, v),
+    onSuccess: (p) => {
+      qc.setQueryData(['proposal', id], p);
+      void invalidateKeys(qc, refreshAll ? PROPOSAL_KEYS : ['proposals']);
+    },
+  });
+}
+
+/** Starts an improver run and follows its job; any terminal status refetches proposals, runs, trends and budget. */
+export function useImproverRun() {
+  const api = useApi();
+  const qc = useQueryClient();
+  const run = useMutation({
+    mutationFn: () => api.startImprover(),
+    onSuccess: (job) => {
+      qc.setQueryData(['job', job.id], job);
+    },
+  });
+  const job = useJob(run.data?.id ?? null);
+  const status = job.data?.status;
+  useEffect(() => {
+    if (status && TERMINAL.includes(status)) void invalidateKeys(qc, PROPOSAL_KEYS);
   }, [status, qc]);
   return { run, job: job.data ?? run.data ?? null };
 }

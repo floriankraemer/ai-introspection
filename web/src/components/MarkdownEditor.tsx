@@ -42,15 +42,18 @@ const highlight = HighlightStyle.define([
   { tag: t.link, color: 'var(--accent)', textDecoration: 'underline' },
 ]);
 
-/** CodeMirror 6 in markdown mode, with the `---` YAML frontmatter highlighted as YAML. */
+/** CodeMirror 6 in markdown mode (or plain text), with the `---` YAML frontmatter highlighted as YAML. */
 export default function MarkdownEditor({
   value,
   onChange,
   label,
+  plain = false,
 }: {
   value: string;
   onChange: (v: string) => void;
   label: string;
+  /** No markdown highlighting: for diffs and other text where `- ` is not a list. */
+  plain?: boolean;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
@@ -68,8 +71,9 @@ export default function MarkdownEditor({
         extensions: [
           history(),
           keymap.of([...defaultKeymap, ...historyKeymap]),
-          yamlFrontmatter({ content: markdown() }),
-          syntaxHighlighting(highlight),
+          ...(plain
+            ? []
+            : [yamlFrontmatter({ content: markdown() }), syntaxHighlighting(highlight)]),
           EditorView.lineWrapping,
           EditorView.contentAttributes.of({ 'aria-label': label, 'aria-multiline': 'true' }),
           theme,

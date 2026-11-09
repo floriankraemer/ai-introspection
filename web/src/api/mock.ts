@@ -1,4 +1,5 @@
 import { ApiError } from './client.js';
+import { createProposalsApi } from './mock-proposals.js';
 import type {
   Api,
   Budget,
@@ -22,9 +23,10 @@ import type {
  * Fixture-backed implementation of `Api` for building the UI before the backend exists.
  * Scenarios: `graded` (default, full demo), `ungraded` (phase 1: nothing graded),
  * `empty` (configured, no sessions), `fresh` (nothing configured: shows the setup wizard),
- * `overbudget` (graded, but the judge budget is used up: grade jobs are deferred).
+ * `overbudget` (graded, but the judge budget is used up: grade jobs are deferred),
+ * `noruns` (graded, but the improver never ran: no proposals, no runs).
  */
-export type MockScenario = 'graded' | 'ungraded' | 'empty' | 'fresh' | 'overbudget';
+export type MockScenario = 'graded' | 'ungraded' | 'empty' | 'fresh' | 'overbudget' | 'noruns';
 
 const RUBRICS = [
   { name: 'Efficiency', target: 0.7 },
@@ -363,7 +365,7 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
         },
       ];
   const jobs = new Map<string, Job>();
-  const graded = scenario === 'graded';
+  const graded = scenario === 'graded' || scenario === 'noruns';
   const sessions: SessionSummary[] =
     scenario === 'empty' || fresh
       ? []
@@ -487,6 +489,10 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
     usdPerMonth: settings['budget.usd_per_month'],
     deferredJobs: scenario === 'overbudget' ? 3 : 0,
     tokensResetAt: new Date(Date.now() + 8 * H).toISOString(),
+    improver:
+      scenario === 'graded'
+        ? { tokensToday: 48_000, usdMonth: 0.9 }
+        : { tokensToday: 0, usdMonth: 0 },
     usdResetAt: new Date(Date.now() + 20 * 24 * H).toISOString(),
   });
   const gradeJob = (n: number): Job => {
@@ -520,6 +526,12 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
   };
 
   return {
+    ...createProposalsApi(
+      scenario === 'graded' || scenario === 'overbudget',
+      wait,
+      (job) => jobs.set(job.id, job),
+      JOB_META,
+    ),
     async getSettings() {
       await wait();
       return { ...settings };
@@ -620,6 +632,27 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
       if (!repo) throw new ApiError(404, 'Not found', `No repo ${id}`);
       return repo;
     },
+    async addProjectRepo(path) {
+      await wait();
+      if (!path.startsWith('~/') && !path.startsWith('/'))
+        throw new ApiError(
+          422,
+          'Invalid path',
+          'Enter an absolute path such as ~/projects/web-app.',
+        );
+      const existing = repos.find((r) => r.path === path);
+      if (existing) return existing;
+      const repo: SkillRepo = {
+        id: `r${String(repos.length + 1)}`,
+        kind: 'project',
+        path,
+        hasRubrics: false,
+        enabled: true,
+        acceptMode: null,
+      };
+      repos = [...repos, repo];
+      return repo;
+    },
     async startImport() {
       await wait();
       const job: Job = {
@@ -637,7 +670,7 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
       await wait();
       const job = jobs.get(id);
       if (!job) throw new ApiError(404, 'Not found', `No job ${id}`);
-      if (job.kind === 'grade') {
+      if (job.kind === 'grade' || job.kind === 'improve') {
         if (job.status === 'deferred') return job;
         const total = job.progress?.total ?? 1;
         const next: Job = { ...job, status: 'succeeded', progress: { done: total, total } };

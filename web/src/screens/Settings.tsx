@@ -4,15 +4,24 @@ import { useState, type ReactNode } from 'react';
 import { useApi } from '../api/context.js';
 import {
   invalidateKeys,
+  useAddProjectRepo,
   useBudget,
   useDoctor,
   usePatchSettings,
+  usePatchSkillRepo,
   useSettings,
   useSkillRepos,
   useSources,
 } from '../api/queries.js';
 import { formatTokens } from '../lib/format.js';
-import type { Agent, BudgetMode, Settings as SettingsData, SourceStatus } from '../api/types.js';
+import type {
+  Agent,
+  BudgetMode,
+  Settings as SettingsData,
+  SkillRepo,
+  SourceStatus,
+} from '../api/types.js';
+import { NextRun } from '../components/NextRun.js';
 import { HealthCheck } from '../components/HealthCheck.js';
 import { JudgeTest } from '../components/JudgeTest.js';
 import {
@@ -479,14 +488,100 @@ function BudgetUsage({ mode }: { mode: BudgetMode }) {
           {usdOver ? ' Grading is deferred until next month.' : ''}
         </p>
       ) : null}
+      {b.improver.tokensToday > 0 || b.improver.usdMonth > 0 ? (
+        <p className="m-0 text-muted">
+          The improver used {formatTokens(b.improver.tokensToday)} tokens today and $
+          {b.improver.usdMonth.toFixed(2)} this month. This counts toward the budget above.
+        </p>
+      ) : null}
     </div>
+  );
+}
+
+const MODE_VALUE = { default: '', merge: 'merge', pr: 'pr' } as const;
+
+/** Every skills repo with its own accept override; "Default" follows the global setting. */
+function RepoList({ repos }: { repos: SkillRepo[] }) {
+  const patch = usePatchSkillRepo();
+  if (repos.length === 0) return null;
+  return (
+    <ul aria-label="Skills repos" className="m-0 flex list-none flex-col gap-2 p-0 text-sm">
+      {repos.map((r) => (
+        <li key={r.id} className="flex flex-wrap items-center justify-between gap-2">
+          <span className="flex min-w-0 items-center gap-2">
+            <code className="break-all">{r.path}</code>
+            <Chip>{r.kind === 'global' ? 'Global' : r.enabled ? 'Project' : 'Disabled'}</Chip>
+          </span>
+          <label className="flex items-center gap-2 text-xs text-muted">
+            Accept by
+            <select
+              aria-label={`Accept mode for ${r.path}`}
+              className={`${FIELD} w-auto`}
+              value={r.acceptMode ?? MODE_VALUE.default}
+              disabled={patch.isPending}
+              onChange={(e) => {
+                patch.mutate({
+                  id: r.id,
+                  acceptMode: e.target.value === '' ? null : (e.target.value as 'merge' | 'pr'),
+                });
+              }}
+            >
+              <option value="">Default</option>
+              <option value="merge">Merging locally</option>
+              <option value="pr">Opening a pull request</option>
+            </select>
+          </label>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function AddProject() {
+  const add = useAddProjectRepo();
+  const [path, setPath] = useState('');
+  return (
+    <form
+      className="flex flex-col gap-1"
+      onSubmit={(e) => {
+        e.preventDefault();
+        add.mutate(path.trim(), {
+          onSuccess: () => {
+            setPath('');
+          },
+        });
+      }}
+    >
+      <div className="flex items-end gap-2">
+        <Field label="Project repo path" className="flex-1">
+          <input
+            className={FIELD}
+            placeholder="~/projects/web-app"
+            value={path}
+            onChange={(e) => {
+              setPath(e.target.value);
+            }}
+          />
+        </Field>
+        <Button type="submit" disabled={add.isPending || path.trim() === ''}>
+          Add project repo
+        </Button>
+      </div>
+      <p className="m-0 text-xs text-muted">
+        The improver only changes .claude/**, CLAUDE.md and AGENTS.md in project repos.
+      </p>
+      {add.isError ? (
+        <p role="alert" className="m-0 text-[13px] text-fail">
+          {add.error.message}
+        </p>
+      ) : null}
+    </form>
   );
 }
 
 function ScheduleCard({ settings, save }: { settings: SettingsData; save: (p: Patch) => void }) {
   const repos = useSkillRepos();
   const global = repos.data?.find((r) => r.kind === 'global');
-  const projects = repos.data?.filter((r) => r.kind === 'project') ?? [];
   return (
     <section aria-label="Schedule" className={SECTION}>
       <h2 className={H2}>Schedule</h2>
@@ -511,6 +606,7 @@ function ScheduleCard({ settings, save }: { settings: SettingsData; save: (p: Pa
           ['manual', 'Manually'],
         ]}
       />
+      <NextRun />
       <div className="flex flex-col gap-1 text-xs text-muted">
         <span>Skills repo for patches</span>
         {repos.isPending ? (
@@ -542,16 +638,8 @@ function ScheduleCard({ settings, save }: { settings: SettingsData; save: (p: Pa
           ['pr', 'Opening a pull request'],
         ]}
       />
-      {projects.length > 0 ? (
-        <ul className="m-0 flex list-none flex-col gap-1 p-0 text-sm">
-          {projects.map((r) => (
-            <li key={r.id} className="flex justify-between gap-3">
-              <code className="break-all">{r.path}</code>
-              <Chip>{r.enabled ? 'Enabled' : 'Disabled'}</Chip>
-            </li>
-          ))}
-        </ul>
-      ) : null}
+      <RepoList repos={repos.data ?? []} />
+      <AddProject />
     </section>
   );
 }

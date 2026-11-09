@@ -1,5 +1,7 @@
 import { Link, Outlet, useRouterState } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
+import { useOpenProposalCount } from '../api/queries.js';
+import { Chip } from './ui.js';
 import { applyThemePref, getThemePref, THEME_KEY, type ThemePref } from '../lib/theme.js';
 
 const NAV = [
@@ -46,6 +48,7 @@ function ThemeSelect() {
 
 export function Shell() {
   const path = useRouterState({ select: (s) => s.location.pathname });
+  const openProposals = useOpenProposalCount();
   return (
     <div className="flex min-h-screen flex-col bg-page text-ink lg:grid lg:grid-cols-[220px_minmax(0,1fr)]">
       <a
@@ -69,6 +72,12 @@ export function Shell() {
               className={`rounded-lg px-3 py-2.5 text-ink no-underline hover:bg-sunken hover:text-ink ${active ? 'bg-accent-soft font-semibold' : ''}`}
             >
               {item.label}
+              {item.to === '/proposals' && openProposals ? (
+                <Chip className="ml-1.5">
+                  {openProposals}
+                  <span className="sr-only"> open</span>
+                </Chip>
+              ) : null}
             </Link>
           );
         })}

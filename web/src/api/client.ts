@@ -6,6 +6,9 @@ export class ApiError extends Error {
     readonly status: number,
     readonly title: string,
     readonly detail: string | null,
+    /** Extension members of the problem: `problems` on a 422, `fix` on a 409. */
+    readonly problems: string[] = [],
+    readonly fix: string | null = null,
   ) {
     super(detail ?? title);
     this.name = 'ApiError';
@@ -24,8 +27,19 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   };
   const res = await fetch(`/v1${path}`, init);
   if (!res.ok) {
-    const p = (await res.json().catch(() => ({}))) as { title?: string; detail?: string };
-    throw new ApiError(res.status, p.title ?? res.statusText, p.detail ?? null);
+    const p = (await res.json().catch(() => ({}))) as {
+      title?: string;
+      detail?: string;
+      problems?: string[];
+      fix?: string;
+    };
+    throw new ApiError(
+      res.status,
+      p.title ?? res.statusText,
+      p.detail ?? null,
+      p.problems ?? [],
+      p.fix ?? null,
+    );
   }
   return res.status === 204 ? (undefined as T) : ((await res.json()) as T);
 }
@@ -68,5 +82,14 @@ export const realApi: Api = {
   dryRunRubric: (name, body) => request('POST', `/rubrics/${id(name)}/dry-run`, body),
   addLabel: (name, label) => request('POST', `/rubrics/${id(name)}/labels`, label),
   getBudget: () => request('GET', '/budget'),
+  listProposals: (status) => request('GET', `/proposals${qs({ status })}`),
+  getProposal: (pid) => request('GET', `/proposals/${id(pid)}`),
+  patchProposal: (pid, diff) => request('PATCH', `/proposals/${id(pid)}`, { diff }),
+  acceptProposal: (pid) => request('POST', `/proposals/${id(pid)}/accept`),
+  rejectProposal: (pid, reason) => request('POST', `/proposals/${id(pid)}/reject`, { reason }),
+  startImprover: (since) => request('POST', '/improver/runs', since ? { since } : {}),
+  getImproverSchedule: () => request('GET', '/improver/schedule'),
+  addProjectRepo: (path) => request('POST', '/skill-repos/projects', { path }),
+  listImproverRuns: () => request('GET', '/improver/runs'),
   exchangeToken: (token) => request('POST', '/auth/session', { token }),
 };
