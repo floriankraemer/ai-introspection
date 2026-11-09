@@ -1,8 +1,26 @@
-import { expect, test } from './support.ts';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { expect, test, scanNow } from './support.ts';
 
-// Flow 4: the merged proposal and a manual commit in the skills repository (made by run.sh between
-// the phases) show as markers on the chart and as rows in the change log.
+// Flow 4: the merged proposal and a manual commit in the skills repository show as markers on the
+// chart and as rows in the change log.
 test('trends: markers and change log', async ({ page }) => {
+  // A person edits a skill in the skills repository, outside Introspect, a second after the last
+  // thing the app did (its clock is NOW plus the real time since it started).
+  const date = new Date((await scanNow(page.request)) + 1000).toISOString().slice(0, 19) + 'Z';
+  const git = (...args: string[]) =>
+    execFileSync('git', ['-C', '/work/repos/skills', ...args], {
+      env: { ...process.env, GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date },
+    });
+  mkdirSync('/work/repos/skills/skills/e2e-testing', { recursive: true });
+  writeFileSync(
+    '/work/repos/skills/skills/e2e-testing/SKILL.md',
+    '# E2E testing\n\nRun the suite before you finish.\n',
+  );
+  git('add', 'skills');
+  git('commit', '-q', '-m', 'Add an e2e-testing skill (manual edit)');
+  await scanNow(page.request);
+
   await page.goto('/trends');
   await expect(page.getByRole('heading', { name: 'Trends', level: 1 })).toBeVisible();
   const chart = page.getByRole('region', { name: 'Pass rate chart' });

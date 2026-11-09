@@ -1,10 +1,10 @@
-import { expect, test, allSessions, get } from './support.ts';
+import { expect, test, allSessions, get, NOW } from './support.ts';
 
 // Flow 2: grade sessions, read the grades, correct the judge, tune a rubric.
 test('grading: grades, evidence, a wrong-judge label, rubric edit', async ({ page }) => {
   const sessions = await allSessions(page.request);
   // Sessions of the last week, so that they count in the "last 7 days" header.
-  const week = Date.now() - 6 * 24 * 3_600_000;
+  const week = NOW - 6 * 24 * 3_600_000;
   const generated = sessions.filter(
     (s) => ['alpha', 'beta', 'gamma'].includes(s.repo ?? '') && Date.parse(s.startedAt) > week,
   );
@@ -31,14 +31,14 @@ test('grading: grades, evidence, a wrong-judge label, rubric edit', async ({ pag
   const grades = page.getByRole('complementary', { name: 'Grades' });
   await expect(grades.getByRole('heading', { name: /judge: fake-judge/ })).toBeVisible();
   const card = grades.locator(':scope > div').filter({
-    has: page.getByText('efficiency', { exact: true }),
+    has: page.getByText('Efficiency', { exact: true }),
   });
   await expect(card.getByText(/^0 · Fail$/)).toBeVisible();
   await expect(card.getByText(/Fake judge: \d+ failed events/)).toBeVisible();
 
   // Evidence: the events the judge cited are highlighted in the trace.
   await card.getByRole('button', { name: 'Show 3 evidence events' }).click();
-  await expect(page.getByText('Highlighted: evidence for efficiency')).toBeVisible();
+  await expect(page.getByText('Highlighted: evidence for Efficiency')).toBeVisible();
   await expect(page.getByRole('region', { name: 'Trace' }).getByText('Evidence:')).toHaveCount(3);
 
   // Rubrics before the label: nothing compared yet.
@@ -56,11 +56,8 @@ test('grading: grades, evidence, a wrong-judge label, rubric edit', async ({ pag
   await card.getByLabel('Note').fill('The retries were needed to find the flaky test.');
   await card.getByRole('button', { name: 'Save label' }).click();
   await expect(card.getByText('Label saved.')).toBeVisible();
-  await card.getByRole('link', { name: 'calibration of efficiency' }).click();
+  await card.getByRole('link', { name: 'calibration of Efficiency' }).click();
   await expect(efficiency).toContainText('0/1 agree');
-  // ponytail: the open panel can show the pre-label detail after a client-side navigation (suspected
-  // app bug, see report); a reload reads the server state.
-  await page.reload();
   await expect(
     page
       .getByRole('complementary', { name: 'Calibration' })

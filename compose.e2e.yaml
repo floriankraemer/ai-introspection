@@ -1,6 +1,9 @@
 # End-to-end stack: the runtime image with fake judge and improver, seeded session folders and a
 # Playwright runner. Use through `make e2e` (e2e/run.sh); it creates e2e/.work first, as your user.
 name: introspect-pw
+# The one fixed instant of the run: the app clock starts here (it then advances in real time), the
+# seed generator and the browser clock use it too.
+x-now: &now '2026-11-09T12:00:00Z'
 services:
   app:
     image: introspect-pw:app
@@ -19,6 +22,7 @@ services:
       CHOKIDAR_USEPOLLING: '1'
       INTROSPECT_JUDGE: fake
       INTROSPECT_IMPROVER: fake
+      INTROSPECT_NOW: *now
       TZ: UTC
       GIT_AUTHOR_NAME: Introspect E2E
       GIT_AUTHOR_EMAIL: e2e@example.invalid
@@ -68,6 +72,11 @@ services:
     environment:
       TZ: UTC
       NPM_CONFIG_UPDATE_NOTIFIER: 'false'
+      INTROSPECT_NOW: *now
+      GIT_AUTHOR_NAME: Introspect E2E
+      GIT_AUTHOR_EMAIL: e2e@example.invalid
+      GIT_COMMITTER_NAME: Introspect E2E
+      GIT_COMMITTER_EMAIL: e2e@example.invalid
     volumes:
       # The sign-in token, read-only.
       - data:/data:ro

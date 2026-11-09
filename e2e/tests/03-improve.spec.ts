@@ -62,7 +62,7 @@ test('improve: trusted rubrics, proposals, invalid edit, accept, reject', async 
   await expect(page.getByText('No rubric is trusted yet')).toHaveCount(0);
   await page.getByRole('button', { name: 'Run improver now' }).click();
   await expect(page.getByText(/Last run .*succeeded, 1 proposal/)).toBeVisible();
-  await expect(page.getByText(/verbosity needs calibration/)).toBeVisible();
+  await expect(page.getByText(/Verbosity needs calibration/)).toBeVisible();
   const first1 = page.getByRole('button', { name: /Address efficiency failures/ });
   await expect(first1).toBeVisible();
 

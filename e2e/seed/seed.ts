@@ -1,8 +1,8 @@
 // Writes the deterministic fixture sessions the suite imports.
 // Run inside the Playwright container: `node seed/seed.ts /work/sources`.
 //
-// "Now" is the real clock: the app has no way to fix it. Every timestamp is a fixed offset from the
-// moment of seeding, so counts such as "sessions in the last 7 days" are the same on every run.
+// "Now" is INTROSPECT_NOW, the instant the app clock starts at (compose.e2e.yaml). Every timestamp is
+// a fixed offset from it, so the data, the counts and the relative times are the same on every run.
 import { mkdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
@@ -17,7 +17,8 @@ if (!root) throw new Error('Usage: node seed/seed.ts <sources folder>');
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
-const NOW = Date.now();
+const NOW = Date.parse(process.env.INTROSPECT_NOW ?? '');
+if (Number.isNaN(NOW)) throw new Error('INTROSPECT_NOW is not set');
 const iso = (ms: number): string => new Date(ms).toISOString();
 
 const claudeDir = join(root, 'claude', 'projects');

@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useGradeJob, useImport, useSessions, useTrendSummary } from '../api/queries.js';
 import type { Agent, SessionResultFilter, SessionSummary, TrendSummary } from '../api/types.js';
 import {
@@ -170,8 +170,8 @@ const RANGE_LABEL: Record<SessionRange, string> = {
   all: 'All time',
 };
 const DAY_MS = 86_400_000;
-// ponytail: the summary API caps `days` at 365, so "All" is the last year there; the table has no cap.
-const RANGE_DAYS: Record<SessionRange, number> = { '7': 7, '30': 30, all: 365 };
+/** `days` for the summary API; 0 means all time. */
+const RANGE_DAYS: Record<SessionRange, number> = { '7': 7, '30': 30, all: 0 };
 
 /** Header checkbox: selects or clears every loaded row; shows a dash for a partial selection. */
 function SelectAll({ all, some, onChange }: { all: boolean; some: boolean; onChange: () => void }) {
@@ -207,7 +207,13 @@ export function Sessions({
   const defaultResult: SessionResultFilter =
     (summary.data?.sessionsGraded ?? 0) > 0 ? 'failed_any' : 'all';
   const result = search.result ?? defaultResult;
-  const sessions = useSessions({ q: search.q, agent: search.agent, result });
+  // Fixed per period, so the query key does not change on every render.
+  const since = useMemo(
+    () =>
+      range === 'all' ? undefined : new Date(Date.now() - RANGE_DAYS[range] * DAY_MS).toISOString(),
+    [range],
+  );
+  const sessions = useSessions({ q: search.q, agent: search.agent, result, since });
 
   if (summary.isPending) return <Loading label="Loading sessions" />;
   if (summary.isError)
@@ -218,11 +224,7 @@ export function Sessions({
 
   const s = summary.data;
   const filtered = Boolean(search.q ?? search.agent ?? search.result ?? search.range);
-  // GET /v1/sessions has no since filter yet, so the range cuts the (newest-first) list here.
-  const cutoff = range === 'all' ? null : Date.now() - RANGE_DAYS[range] * DAY_MS;
-  const loaded = sessions.data?.pages.flatMap((p) => p.items) ?? [];
-  const items = cutoff === null ? loaded : loaded.filter((r) => Date.parse(r.startedAt) >= cutoff);
-  const reachedCutoff = cutoff !== null && loaded.length > items.length;
+  const items = sessions.data?.pages.flatMap((p) => p.items) ?? [];
   const names = s.rubrics.map((r) => r.name);
   const rubricCols = names.length ? names : ['Rubrics'];
   const allSelected = items.length > 0 && items.every((r) => selected.has(r.id));
@@ -232,7 +234,7 @@ export function Sessions({
     setSelected(next);
   };
   // Nothing in the chosen period is not the same as nothing collected: older sessions may exist.
-  const noData = s.sessionsCollected === 0 && !filtered && loaded.length === 0;
+  const noData = s.sessionsCollected === 0 && !filtered && items.length === 0;
 
   return (
     <div className="flex flex-col gap-6">
@@ -408,7 +410,7 @@ export function Sessions({
                   </tbody>
                 </table>
               </Card>
-              {sessions.hasNextPage && !reachedCutoff ? (
+              {sessions.hasNextPage ? (
                 <Button
                   className="self-center"
                   disabled={sessions.isFetchingNextPage}

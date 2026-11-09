@@ -59,6 +59,8 @@ export interface SessionQuery {
   q?: string | undefined;
   agent?: Agent | undefined;
   result?: SessionResultFilter | undefined;
+  /** ISO instant: only sessions that started at or after it. */
+  since?: string | undefined;
   cursor?: string | undefined;
   limit?: number | undefined;
 }
@@ -119,6 +121,7 @@ export interface Api {
   ): Promise<SkillRepo>;
   startImport(): Promise<Job>;
   getJob(id: string): Promise<Job>;
+  /** `days` 0 means all time. */
   getTrendSummary(days: number): Promise<TrendSummary>;
   getTrends(query: TrendQuery): Promise<Trends>;
   listTrendChanges(): Promise<TrendChange[]>;

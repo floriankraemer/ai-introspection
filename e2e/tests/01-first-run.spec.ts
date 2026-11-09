@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { PLANTED } from '../vendor/agent-fixtures.ts';
-import { allSessions, get, send, token } from './support.ts';
+import { allSessions, get, scanNow, send, token } from './support.ts';
 
 // Flow 1: the very first start. Sign in with the link, finish the wizard, see the sessions.
 test('first run: sign in, wizard, import, redaction', async ({ page }) => {
@@ -22,7 +22,7 @@ test('first run: sign in, wizard, import, redaction', async ({ page }) => {
   await expect(page.getByText('/sources/claude/projects')).toBeVisible();
   await expect(page.getByText('35 sessions')).toBeVisible();
   await expect(page.getByText('/sources/codex/sessions')).toBeVisible();
-  await expect(page.getByText('1 sessions')).toBeVisible();
+  await expect(page.getByText('1 session', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Continue' }).click();
 
   // Step 2: skip the judge (the fake judge is selected by the environment).
@@ -47,6 +47,9 @@ test('first run: sign in, wizard, import, redaction', async ({ page }) => {
     .poll(async () => (await get(page.request, '/v1/sessions?result=all&limit=100')).items.length)
     .toBe(36);
   await expect(page.getByRole('cell', { name: 'Codex', exact: true })).toBeVisible();
+
+  // The scan remembers the skills repository tip; edits made after it count as changes.
+  await scanNow(page.request);
 
   // The planted secrets never reach the UI or the API.
   const secret = (await allSessions(page.request)).find((s) =>

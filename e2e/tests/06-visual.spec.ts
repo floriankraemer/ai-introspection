@@ -3,8 +3,8 @@ import { expect, test, allSessions } from './support.ts';
 
 // Visual regression: every screen in light and dark at 1280x860. Baselines live in
 // e2e/__screenshots and are made in the Playwright container (`make e2e-update`), so the fonts match.
-// Text that changes with the clock (relative times, dates, commit ids) is masked: the app has no way
-// to fix "now", so those areas are covered with a box in the image.
+// The app clock, the seed and the browser clock all start at INTROSPECT_NOW, so dates and relative
+// times are stable and not masked. Only what varies from run to run (random ids) is masked.
 for (const scheme of ['light', 'dark'] as const) {
   test.describe(scheme, () => {
     test.use({ colorScheme: scheme });
@@ -17,7 +17,7 @@ for (const scheme of ['light', 'dark'] as const) {
     test('sessions', async ({ page }) => {
       await page.goto('/');
       await expect(page.getByRole('table', { name: 'Sessions' })).toBeVisible();
-      await shot(page, 'sessions', [page.locator('tbody td:nth-child(5)')]);
+      await shot(page, 'sessions');
     });
 
     test('session detail', async ({ page }) => {
@@ -41,10 +41,9 @@ for (const scheme of ['light', 'dark'] as const) {
       await page.getByRole('tab', { name: /Accepted/ }).click();
       const detail = page.getByRole('region', { name: 'Proposal detail' });
       await expect(detail.getByText(/Merged as commit/)).toBeVisible();
+      // Random per run: the branch suffix and the merge commit id.
       await shot(page, 'proposals', [
-        page.getByText(/^Last run /),
-        page.getByText(/^Next run /),
-        detail.getByText(/drafted /),
+        detail.getByText(/^Branch /),
         detail.getByText(/^Merged as commit/),
       ]);
     });
@@ -54,19 +53,13 @@ for (const scheme of ['light', 'dark'] as const) {
       await expect(
         page.getByRole('region', { name: 'Change log' }).getByRole('row'),
       ).not.toHaveCount(1);
-      await shot(page, 'trends', [
-        page.locator('svg.recharts-surface'),
-        page.getByRole('region', { name: 'Change log' }).locator('tbody td:first-child'),
-      ]);
+      await shot(page, 'trends');
     });
 
     test('settings', async ({ page }) => {
       await page.goto('/settings');
-      await expect(page.getByText('2 need attention')).toBeVisible();
-      await shot(page, 'settings', [
-        page.getByRole('group', { name: 'Budget usage' }),
-        page.getByText(/^Next run /),
-      ]);
+      await expect(page.getByText('3 need attention')).toBeVisible();
+      await shot(page, 'settings');
     });
 
     test('setup wizard, step 1', async ({ page }) => {

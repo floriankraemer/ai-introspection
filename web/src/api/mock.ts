@@ -724,7 +724,9 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
     },
     async getTrendSummary(days) {
       const inLast = (d: number) =>
-        sessions.filter((s) => Date.parse(s.startedAt) >= Date.now() - d * 86_400_000);
+        d === 0
+          ? sessions
+          : sessions.filter((s) => Date.parse(s.startedAt) >= Date.now() - d * 86_400_000);
       await wait();
       const rates = [0.58, 0.71, 0.84, 0.66];
       return {
@@ -736,13 +738,14 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
           : [],
       };
     },
-    async listSessions({ q, agent, result, cursor, limit = 50 }) {
+    async listSessions({ q, agent, result, since, cursor, limit = 50 }) {
       await wait();
       const needle = q?.toLowerCase();
       const all = sessions.filter(
         (s) =>
           (!needle || `${s.title} ${s.repo ?? ''}`.toLowerCase().includes(needle)) &&
           (!agent || s.agent === agent) &&
+          (!since || Date.parse(s.startedAt) >= Date.parse(since)) &&
           (result === 'failed_any'
             ? s.grades.some((g) => g.passed === false)
             : result === 'not_graded'
