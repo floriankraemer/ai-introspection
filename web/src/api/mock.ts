@@ -1,5 +1,6 @@
 import { ApiError } from './client.js';
 import { createProposalsApi } from './mock-proposals.js';
+import { createTrendsApi } from './mock-trends.js';
 import type {
   Api,
   Budget,
@@ -445,7 +446,7 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
           passThreshold: r.passThreshold,
           appliesTo: 'all',
           sha: `${String(r.version)}f3c2a1b7d`,
-          target: null,
+          target: r.name === 'silent-workaround' ? 0.8 : 0.7,
           labelCount: 10,
           trusted: 10 - r.wrong >= 8,
           agreement: { agree: 10 - r.wrong, total: 10 },
@@ -526,6 +527,7 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
   };
 
   return {
+    ...createTrendsApi(graded || scenario === 'overbudget', wait, () => gradeJob(40)),
     ...createProposalsApi(
       scenario === 'graded' || scenario === 'overbudget',
       wait,

@@ -14,7 +14,6 @@ import type { Agent, Api, SessionResultFilter } from './api/types.js';
 import { Shell } from './components/Shell.js';
 import { ErrorState } from './components/ui.js';
 import { AuthExchange, AuthRequired } from './screens/AuthRequired.js';
-import { Trends } from './screens/Placeholders.js';
 import { SessionDetail } from './screens/SessionDetail.js';
 import { Sessions, type SessionsSearch } from './screens/Sessions.js';
 import { Settings } from './screens/Settings.js';
@@ -100,7 +99,12 @@ const proposals = createRoute({
   path: '/proposals',
   component: lazyRouteComponent(() => import('./screens/Proposals.js'), 'Proposals'),
 });
-const trends = createRoute({ getParentRoute: () => shell, path: '/trends', component: Trends });
+const trends = createRoute({
+  getParentRoute: () => shell,
+  path: '/trends',
+  // Lazy: the screen pulls in Recharts, which the other screens never need.
+  component: lazyRouteComponent(() => import('./screens/Trends.js'), 'Trends'),
+});
 const settings = createRoute({
   getParentRoute: () => shell,
   path: '/settings',

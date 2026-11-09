@@ -18,6 +18,7 @@ import type {
   ProposalStatus,
   Settings,
   SessionQuery,
+  TrendQuery,
 } from './types.js';
 
 /** Query options live apart from hooks so route loaders can prefetch with the same keys. */
@@ -52,6 +53,8 @@ export const GRADE_KEYS = [
   'sessions',
   'session-events',
   'trend-summary',
+  'trends',
+  'trend-changes',
   'budget',
 ];
 
@@ -74,6 +77,33 @@ export function useSkillRepos() {
 export function useTrendSummary(days = 7) {
   const api = useApi();
   return useQuery({ queryKey: ['trend-summary', days], queryFn: () => api.getTrendSummary(days) });
+}
+
+export function useTrends(query: TrendQuery) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['trends', query],
+    queryFn: () => api.getTrends(query),
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useTrendChanges() {
+  const api = useApi();
+  return useQuery({ queryKey: ['trend-changes'], queryFn: () => api.listTrendChanges() });
+}
+
+/** Re-grades the fixed reference set; when the job ends, trends and the change log refetch. */
+export function useReferenceRegrade() {
+  const { run, job } = useGradeJob((api) => api.startReferenceRegrade());
+  return {
+    start: () => {
+      run.mutate([]);
+    },
+    pending: run.isPending,
+    failed: run.isError,
+    job,
+  };
 }
 
 export function useSessions(query: SessionQuery) {
@@ -184,6 +214,8 @@ export const PROPOSAL_KEYS = [
   'improver-runs',
   'improver-schedule',
   'trend-summary',
+  'trends',
+  'trend-changes',
   'budget',
 ];
 
