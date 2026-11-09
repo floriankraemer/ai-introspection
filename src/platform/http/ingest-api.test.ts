@@ -19,7 +19,7 @@ import { createIngest } from '../../modules/ingest/index.js';
 import { PLANTED, writeFixtureSources } from '../testkit/agent-fixtures.js';
 import { createSecretStore, createSettings } from '../../modules/settings/index.js';
 import { createTrends } from '../../modules/trends/index.js';
-import { wireGrading } from './wire-grading.js';
+import { wireGrading, wireImprovement } from './wire-grading.js';
 import { LOCAL_USER_ID, LOCAL_WORKSPACE_ID } from '../identity/index.js';
 import { createJobQueue } from '../jobs/queue.js';
 import { createWorker } from '../jobs/worker.js';
@@ -83,6 +83,15 @@ beforeAll(async () => {
   });
   const worker = createWorker({ queue, handlers: { ...ingest.handlers, ...grading.handlers } });
   tick = () => worker.tick();
+  const improvement = wireImprovement({
+    db: t.handle.db,
+    ingest,
+    settings,
+    queue,
+    skillRepos,
+    grading,
+    dataDir,
+  });
   app = createApp({
     webDir: join(dir, 'web'),
     port: PORT,
@@ -91,6 +100,7 @@ beforeAll(async () => {
     settings,
     ingest,
     grading,
+    improvement,
     rubrics,
     judges,
     trends: createTrends(ingest, grading),

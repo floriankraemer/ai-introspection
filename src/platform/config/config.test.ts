@@ -14,6 +14,7 @@ describe('loadConfig', () => {
       claudeSeedCredentials: undefined,
       timeZone: 'UTC',
       judgeOverride: undefined,
+      improverOverride: undefined,
     });
   });
 

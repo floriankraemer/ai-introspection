@@ -39,9 +39,10 @@ ENV NODE_ENV=production \
     INTROSPECT_HOST=0.0.0.0 \
     INTROSPECT_DATA_DIR=/data
 WORKDIR /app
-# git: skills repositories are read and committed to (starter rubrics, later proposals).
+# git: skills repositories are read and committed to (starter rubrics, proposal branches, merges).
+# gh: PR accept mode (`gh pr create`); it reads GH_TOKEN from the environment.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates \
+ && apt-get install -y --no-install-recommends git gh ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 # The claude CLI is the second judge transport (subscription login, local mode). Pinned: the adapter
 # refuses an untested major version. It runs with a private HOME under /data and its own login

@@ -173,6 +173,9 @@ export interface Schema {
     status: string;
     clusters: Generated<number>;
     proposals_created: Generated<number>;
+    /** JSON `RunSummary`: clusters, excluded untrusted rubrics, skipped sessions. */
+    summary: Json | null;
+    error: string | null;
   };
   skill_repo: {
     id: string;
@@ -199,11 +202,15 @@ export interface Schema {
     rationale: string;
     evidence_session_ids: Json | null;
     rubric_names: Json | null;
-    status: Generated<'open' | 'accepted' | 'rejected' | 'conflict' | 'superseded'>;
+    status: Generated<'open' | 'accepted' | 'rejected' | 'conflict' | 'superseded' | 'failed'>;
     decided_by: string | null;
     decided_at: Ts | null;
     decision_note: string | null;
     pr_url: string | null;
+    /** JSON `ClusterSummary` the proposal answers. */
+    cluster_summary: Json | null;
+    /** SHA of the merge commit (local merge mode). */
+    merge_commit: string | null;
     created_at: Ts;
   };
   change_event: {

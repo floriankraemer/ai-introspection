@@ -137,12 +137,35 @@ const starterRubrics = createRoute({
 const patchRepo = createRoute({
   method: 'patch',
   path: '/v1/skill-repos/{id}',
-  summary: 'Enable or disable a skills repository',
+  summary:
+    'Enable or disable a skills repository, and set (`merge` or `pr`) or clear (`null`) its accept-mode override',
   security,
   request: {
     params: z.object({ id: z.uuid() }),
     body: {
-      content: { 'application/json': { schema: z.object({ enabled: z.boolean() }) } },
+      content: {
+        'application/json': {
+          schema: z.object({
+            enabled: z.boolean().optional(),
+            acceptMode: z.enum(['merge', 'pr']).nullable().optional(),
+          }),
+        },
+      },
+      required: true,
+    },
+  },
+  responses: { 200: json(skillRepoSchema, 'The repository'), ...problemResponses },
+});
+
+const registerProject = createRoute({
+  method: 'post',
+  path: '/v1/skill-repos/projects',
+  summary:
+    'Register a project repository (below the mounted projects folder) so the improver can propose `.claude/**`, CLAUDE.md and AGENTS.md changes there',
+  security,
+  request: {
+    body: {
+      content: { 'application/json': { schema: z.object({ path: z.string().min(1) }) } },
       required: true,
     },
   },
@@ -172,8 +195,11 @@ export function registerSetupRoutes(
     if (!repo) throw new ConflictError('Set the global skills repository first');
     return c.json(await copyStarterRubrics(repo.path), 200);
   });
+  app.openapi(registerProject, async (c) =>
+    c.json(await skillRepos.registerProject(c.req.valid('json').path), 200),
+  );
   app.openapi(patchRepo, async (c) => {
-    const repo = await skillRepos.setEnabled(c.req.valid('param').id, c.req.valid('json').enabled);
+    const repo = await skillRepos.update(c.req.valid('param').id, c.req.valid('json'));
     if (!repo) throw new ApiError(404, 'Not found', 'No such repository');
     return c.json(repo, 200);
   });

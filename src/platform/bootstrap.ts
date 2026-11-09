@@ -1,8 +1,13 @@
 import { serve } from '@hono/node-server';
 import { fileURLToPath } from 'node:url';
 import { createGrading, createJudgeProvider } from '../modules/grading/index.js';
-import { createSkillRepos } from '../modules/improvement/index.js';
-import { createIngest } from '../modules/ingest/index.js';
+import {
+  createImprovement,
+  createImproverProvider,
+  createSkillRepos,
+  parseSince,
+} from '../modules/improvement/index.js';
+import { createIngest, createRedactor, loadOrCreateRedactionKey } from '../modules/ingest/index.js';
 import { createRubrics } from '../modules/rubrics/index.js';
 import { createSecretStore, createSettings } from '../modules/settings/index.js';
 import { createTrends } from '../modules/trends/index.js';
@@ -66,6 +71,49 @@ function buildGrading(
 }
 
 type GradingParts = ReturnType<typeof buildGrading>;
+
+/** The improver, wired like the judge: same transport setting, same budget ledger, same redaction rules. */
+function buildImprovement(
+  config: Config,
+  handle: ReturnType<typeof openDatabase>,
+  settings: ReturnType<typeof createSettings>,
+  secrets: SecretStoreLike,
+  ingest: ReturnType<typeof createIngest>,
+  queue: ReturnType<typeof createJobQueue>,
+  skillRepos: ReturnType<typeof createSkillRepos>,
+  grading: GradingParts['grading'],
+) {
+  const redactionKey = loadOrCreateRedactionKey(config.dataDir);
+  return createImprovement({
+    db: handle.db,
+    workspaceId: LOCAL_WORKSPACE_ID,
+    userId: LOCAL_USER_ID,
+    dataDir: config.dataDir,
+    settings,
+    queue,
+    skillRepos,
+    ingest,
+    grading,
+    improvers: createImproverProvider({
+      secrets,
+      env: process.env,
+      transport: async () => (await settings.get())['judge.transport'],
+      claudeHome: config.claudeHome,
+      claudeSeedCredentials: config.claudeSeedCredentials,
+      sourcePaths: async () => (await ingest.sources.list()).map((s) => s.path),
+      override: config.improverOverride,
+    }),
+    // The diff is scanned with the same rules as ingest, built-in and custom (ADR-0007).
+    hasSecret: async (text) => {
+      const redactor = createRedactor({
+        key: redactionKey,
+        customPatterns: (await settings.get())['redaction.custom_patterns'],
+      });
+      const result = redactor.redact(text);
+      return result.failed || result.count > 0;
+    },
+  });
+}
 
 /** Gathers what the doctor checks look at. `dbError` is set when the database is not usable. */
 async function doctorReport(
@@ -177,9 +225,19 @@ export async function startServer(config: Config): Promise<RunningServer> {
     queue,
     skillRepos,
   );
+  const improvement = buildImprovement(
+    config,
+    handle,
+    settings,
+    secrets,
+    ingest,
+    queue,
+    skillRepos,
+    grading,
+  );
   const worker = createWorker({
     queue,
-    handlers: { ...ingest.handlers, ...grading.handlers },
+    handlers: { ...ingest.handlers, ...grading.handlers, ...improvement.handlers },
     onError: (error, job) => {
       console.error(`job ${job.kind} ${job.id} failed`, error);
     },
@@ -188,7 +246,7 @@ export async function startServer(config: Config): Promise<RunningServer> {
     handle,
     queue,
     workspaceId: LOCAL_WORKSPACE_ID,
-    schedules: [...ingest.schedules, ...grading.schedules],
+    schedules: [...ingest.schedules, ...grading.schedules, ...improvement.schedules],
   });
   const app = createApp({
     webDir: WEB_DIR,
@@ -198,6 +256,7 @@ export async function startServer(config: Config): Promise<RunningServer> {
     settings,
     ingest,
     grading,
+    improvement,
     rubrics,
     judges,
     trends: createTrends(ingest, grading),
@@ -323,6 +382,53 @@ export async function runGradeCommand(
     );
   } finally {
     process.stderr.write('\n');
+    await handle.close();
+  }
+}
+
+export interface ImproveCommandOptions {
+  /** `24h`, `7d` or `2w`; default 24 hours. */
+  since: string;
+  /** Run in the foreground; otherwise queue a job for the running server. */
+  now: boolean;
+}
+
+/** `introspect improve`: a foreground run with `--now`, else a queued job for the server. */
+export async function runImproveCommand(
+  config: Config,
+  opts: ImproveCommandOptions,
+): Promise<{ queued: string } | Awaited<ReturnType<ReturnType<typeof createImprovement>['run']>>> {
+  const handle = openDatabase(config.databaseUrl);
+  try {
+    await migrateToLatest(handle);
+    await ensureLocalIdentity(handle.db);
+    const secrets = createSecretStore(config.dataDir);
+    const settings = createSettings(handle.db, LOCAL_WORKSPACE_ID, secrets);
+    const queue = createJobQueue(handle);
+    const ingest = createIngest({
+      db: handle.db,
+      workspaceId: LOCAL_WORKSPACE_ID,
+      userId: LOCAL_USER_ID,
+      dataDir: config.dataDir,
+      settings,
+      queue,
+      pollMode: config.watchPoll,
+    });
+    const skillRepos = createSkillRepos(handle.db, LOCAL_WORKSPACE_ID);
+    const { grading } = buildGrading(config, handle, settings, secrets, ingest, queue, skillRepos);
+    const improvement = buildImprovement(
+      config,
+      handle,
+      settings,
+      secrets,
+      ingest,
+      queue,
+      skillRepos,
+      grading,
+    );
+    if (!opts.now) return { queued: await improvement.enqueueRun(opts.since) };
+    return await improvement.run(parseSince(opts.since));
+  } finally {
     await handle.close();
   }
 }

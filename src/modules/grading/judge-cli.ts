@@ -132,7 +132,7 @@ export function judgeLogin(home: string, binary = 'claude'): Promise<number | nu
   );
 }
 
-function usageOf(u: Record<string, unknown> | undefined): Usage {
+export function usageOf(u: Record<string, unknown> | undefined): Usage {
   const n = (v: unknown): number => (typeof v === 'number' ? v : 0);
   return {
     input: n(u?.input_tokens),
@@ -142,13 +142,19 @@ function usageOf(u: Record<string, unknown> | undefined): Usage {
   };
 }
 
+export interface CliInvokerOptions {
+  home: string;
+  seedCredentials?: string | undefined;
+  sourcePaths: () => Promise<string[]>;
+  binary?: string;
+  run?: CliRunner;
+}
+
 /**
- * `claude -p` transport (local mode, subscription). Runs in a private HOME with the judge's own login,
- * with no tools, no project settings and the fixed judge prompt as the whole system prompt;
- * the verdict comes back as structured output and is checked with the same schema as the API's.
+ * Runs `claude` in the private home: refuses an overlapping home, needs the judge's own login,
+ * checks the CLI's major version once. Shared by the judge and the improver (ADR-0006).
  */
-export function createCliJudge(opts: CliJudgeOptions): Judge {
-  const model = opts.model ?? JUDGE_MODEL;
+export function createCliInvoker(opts: CliInvokerOptions) {
   const binary = opts.binary ?? 'claude';
   const run = opts.run ?? spawnRunner;
   let versionChecked = false;
@@ -160,7 +166,11 @@ export function createCliJudge(opts: CliJudgeOptions): Judge {
     LANG: process.env.LANG ?? 'C.UTF-8',
   });
 
-  async function invoke(args: string[], input: string): Promise<CliRun> {
+  return async function invoke(
+    args: string[],
+    input: string,
+    timeoutMs = CLI_TIMEOUT_MS,
+  ): Promise<CliRun> {
     const problem = await isolationProblem(opts.home, await opts.sourcePaths());
     if (problem) throw new JudgeUnavailableError(problem);
     await prepareHome(opts.home, opts.seedCredentials);
@@ -179,8 +189,28 @@ export function createCliJudge(opts: CliJudgeOptions): Judge {
         );
       versionChecked = true;
     }
-    return run(binary, args, { cwd, env: env(), input, timeoutMs: CLI_TIMEOUT_MS });
+    return run(binary, args, { cwd, env: env(), input, timeoutMs });
+  };
+}
+
+export function parseCliJson(out: CliRun): Record<string, unknown> {
+  try {
+    return JSON.parse(out.stdout) as Record<string, unknown>;
+  } catch {
+    throw new Error(
+      `claude exited with ${String(out.code)} and no JSON: ${out.stderr.slice(0, 300)}`,
+    );
   }
+}
+
+/**
+ * `claude -p` transport (local mode, subscription). Runs in a private HOME with the judge's own login,
+ * with no tools, no project settings and the fixed judge prompt as the whole system prompt;
+ * the verdict comes back as structured output and is checked with the same schema as the API's.
+ */
+export function createCliJudge(opts: CliJudgeOptions): Judge {
+  const model = opts.model ?? JUDGE_MODEL;
+  const invoke = createCliInvoker(opts);
 
   const baseArgs = (system: string): string[] => [
     '-p',
@@ -197,17 +227,7 @@ export function createCliJudge(opts: CliJudgeOptions): Judge {
     system,
   ];
 
-  function parse(out: CliRun): Record<string, unknown> {
-    let json: Record<string, unknown>;
-    try {
-      json = JSON.parse(out.stdout) as Record<string, unknown>;
-    } catch {
-      throw new Error(
-        `claude exited with ${String(out.code)} and no JSON: ${out.stderr.slice(0, 300)}`,
-      );
-    }
-    return json;
-  }
+  const parse = parseCliJson;
 
   return {
     transport: 'cli',

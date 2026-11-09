@@ -290,9 +290,9 @@ All IDs are UUIDs (sessions UUIDv5, others UUIDv7); every table carries `workspa
 | `rubric` | rubrics | id, name, version (blob SHA), ordinal*, commit_sha*, scale, pass_threshold, target_pass_rate*, applies_to*, body_md | Unique (workspace_id, name, version) |
 | `calibration_label`* | rubrics | id, rubric_name, session_id, user_id, label (pass / fail), note | Rubrics "You" column; "Judge was wrong" creates one |
 | `grade` | grading | id, session_id, rubric_id, rubric_version, score, passed, reason, evidence_event_ids, judge_model, transport*, status* (ok / refused / invalid), llm_call_id*, graded_at | Unique (session_id, rubric_version, judge_model); latest per rubric is current |
-| `proposal` | improvement | id, run_id*, title*, target_repo_id*, target_path, branch*, base_sha*, head_sha*, diff, rationale, evidence_session_ids, rubric_names*, status, decided_by*, decided_at*, decision_note*, pr_url* | Status: open / accepted / rejected / conflict / superseded |
+| `proposal` | improvement | id, run_id*, title*, target_repo_id*, target_path, branch*, base_sha*, head_sha*, diff, rationale, evidence_session_ids, rubric_names*, status, decided_by*, decided_at*, decision_note*, pr_url*, cluster_summary*, merge_commit* | Status: open / accepted / rejected / conflict / superseded / failed (diff refused) |
 | `skill_repo`* | improvement | id, kind (global / project), path, remote_url, default_branch, allow_list, accept_mode (override), enabled | One global row from Settings, project rows registered on first target |
-| `improver_run`* | improvement | id, started_at, finished_at, status, clusters, proposals_created | Settings shows last and next run |
+| `improver_run`* | improvement | id, started_at, finished_at, status, clusters, proposals_created, summary*, error* | Settings shows last and next run; `summary` lists clusters, excluded untrusted rubrics and skipped sessions |
 | `change_event` | trends | id, at, kind* (proposal_merged / manual_edit / judge_changed / rubric_changed), proposal_id?, repo_id*, description, files, rubric_names* | Trend markers |
 | `llm_call`* | platform/llm | id, at, purpose (grade / dry_run / cluster / improve), model, transport, tokens_in, cache_read_tokens, tokens_out, cost_estimate, ref_id | Budget ledger |
 | `job`* | platform/jobs | see ADR-0005 | Durable queue |
@@ -397,13 +397,14 @@ flowchart LR
 | Rubrics | Calibration table, n/10, gate | `GET /v1/rubrics/{name}/calibration` | grading |
 | Settings | Test the judge transport (a tiny real request) | `POST /v1/judge/test {transport, apiKey?}` | grading |
 | Settings | Tokens today, spend this month against the active limits | `GET /v1/budget` | grading |
-| Proposals | Nav badge, Open / Accepted / Rejected tabs, list | `GET /v1/proposals?status=` | improvement |
+| Proposals | Nav badge, Open / Accepted / Rejected tabs, list (`total` of `?status=open` is the badge) | `GET /v1/proposals?status=` | improvement |
+| Settings | Last runs, next run, run now | `GET /v1/improver/runs`, `GET /v1/improver/schedule`, `POST /v1/improver/runs` | improvement |
 | Proposals | Detail: branch, target repo and file, why, evidence, diff | `GET /v1/proposals/{id}` | improvement |
 | Proposals | Accept and merge / Edit first / Reject with reason | `POST /v1/proposals/{id}/accept`, `PATCH /v1/proposals/{id}`, `POST /v1/proposals/{id}/reject` | improvement |
 | Trends | Range, weekly series, target line, merge markers | `GET /v1/trends?range=8w|90d&rubric=` | trends |
 | Trends | Change log with before → after | `GET /v1/change-events?range=` | trends |
 | Settings | Sources, redaction, retention days, judge "Runs via" (API key default or claude CLI), sampling, budget mode and limits, schedule, accept mode | `GET /v1/settings`, `PATCH /v1/settings`, `GET /v1/sources`, `POST /v1/sources` | settings, ingest |
-| Settings | Global skills repo, registered project repos (enable, accept-mode override) | `GET /v1/skill-repos`, `GET /v1/skill-repos/detected`, `PUT /v1/skill-repos/global`, `POST /v1/skill-repos/global/init`, `PATCH /v1/skill-repos/{id}` | improvement |
+| Settings | Global skills repo, registered project repos (enable, accept-mode override) | `GET /v1/skill-repos`, `GET /v1/skill-repos/detected`, `PUT /v1/skill-repos/global`, `POST /v1/skill-repos/projects`, `POST /v1/skill-repos/global/init`, `PATCH /v1/skill-repos/{id}` | improvement |
 | Settings | Last / next improver run, dead jobs | `GET /v1/jobs?status=dead` | platform/jobs |
 | Settings | Team mode: server URL, share toggle, Connect with SSO | `PATCH /v1/settings` (team.*), device flow against the team server | settings, identity |
 | (team) | Shipper intake | `POST /v1/sessions` (idempotent upsert) | ingest |

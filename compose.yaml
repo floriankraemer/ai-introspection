@@ -30,6 +30,8 @@ services:
       GH_TOKEN:
       # Test-only judge (`fake`); leave it out of .env for real grading.
       INTROSPECT_JUDGE:
+      # Test-only improver (`fake`); leave it out of .env for real proposals.
+      INTROSPECT_IMPROVER:
       # Time zone of the budget windows ("tokens per day", "dollars per month"); UTC when unset.
       TZ:
     volumes:

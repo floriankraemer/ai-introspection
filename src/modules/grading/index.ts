@@ -25,11 +25,29 @@ import { createGrader, latestGrades, type GradeDetail, type Verdict } from './se
 
 export { createJudgeProvider, type JudgeProvider, type JudgeStatus } from './judges.js';
 export { createFakeJudge } from './judge-fake.js';
-export { isolationProblem, judgeLogin } from './judge-cli.js';
+export {
+  createCliInvoker,
+  credentialsPresent,
+  isolationProblem,
+  judgeLogin,
+  loginFile,
+  parseCliJson,
+  spawnRunner,
+  usageOf as cliUsageOf,
+  type CliRunner,
+} from './judge-cli.js';
+export { JudgeUnavailableError } from './types.js';
 export { JUDGE_MODEL, type Judge, type JudgeRequest, type JudgeResult } from './types.js';
 export { condenseTrace, MAX_TRACE_TOKENS } from './condense.js';
 export { GATE, gateStats, type CalibrationRow, type CalibrationTable } from './calibration.js';
-export type { BudgetStatus } from './budget.js';
+export {
+  costOf,
+  estimateCost,
+  type Budget,
+  type BudgetStatus,
+  type Reservation,
+} from './budget.js';
+export type { Usage } from './types.js';
 export type { GradeDetail, Verdict } from './service.js';
 
 export const GRADE_SESSION_JOB = 'grade_session';
@@ -81,6 +99,25 @@ export interface GradeRunSummary {
   errors: string[];
   /** Why work was skipped, with a count per reason ("already graded", "redaction is off", ...). */
   skippedReasons: Record<string, number>;
+}
+
+/** A failing grade of a trusted rubric, with what the improver needs to know about its session. */
+export interface FailedGrade {
+  sessionId: string;
+  rubric: string;
+  rubricSha: string;
+  reason: string;
+  evidenceEventIds: string[];
+  gradedAt: string;
+  sessionTitle: string;
+  repoRoot: string | null;
+  cwd: string | null;
+}
+
+export interface FailedGrades {
+  failures: FailedGrade[];
+  /** Failing grades of rubrics that have not passed the calibration gate: left out, and reported. */
+  untrusted: { rubric: string; failures: number }[];
 }
 
 export interface DryRunResult {
@@ -324,7 +361,8 @@ export function createGrading(deps: GradingDeps) {
     handlers,
     schedules,
     sweep,
-    budget: { status: (at?: Date) => budget.status(at) },
+    /** The one ledger of all LLM calls; the improver reserves and settles through it too. */
+    budget,
     calibration,
 
     /** Queues a background batch (re-grade, "Grade selected"). Returns the job id. */
@@ -543,6 +581,60 @@ export function createGrading(deps: GradingDeps) {
             gradedCount: s?.total ?? 0,
           };
         }),
+      };
+    },
+
+    /**
+     * Failing grades (status ok, passed false, still the newest of their rubric for the session)
+     * made since `since`. Rubrics that have not passed the calibration gate are counted apart.
+     */
+    async failedGradesSince(since: Date): Promise<FailedGrades> {
+      const rows = await db
+        .selectFrom('grade')
+        .innerJoin('session', 'session.id', 'grade.session_id')
+        .select(['session.id', 'session.title', 'session.repo_root', 'session.cwd'])
+        .distinct()
+        .where('grade.workspace_id', '=', workspaceId)
+        .where('grade.status', '=', 'ok')
+        .where('grade.passed', '=', false)
+        .where('grade.graded_at', '>=', since.toISOString())
+        .execute();
+      const latest = await latestGrades(
+        db,
+        workspaceId,
+        rows.map((r) => r.id),
+        await trustedNames(),
+      );
+      const failures: FailedGrade[] = [];
+      const untrusted = new Map<string, number>();
+      for (const s of rows) {
+        for (const g of latest.get(s.id) ?? []) {
+          if (g.status !== 'ok' || g.passed !== false || g.gradedAt < since.toISOString()) continue;
+          if (!g.trusted) {
+            untrusted.set(g.rubric, (untrusted.get(g.rubric) ?? 0) + 1);
+            continue;
+          }
+          failures.push({
+            sessionId: s.id,
+            rubric: g.rubric,
+            rubricSha: g.rubricSha,
+            reason: g.reason,
+            evidenceEventIds: g.evidenceEventIds,
+            gradedAt: g.gradedAt,
+            sessionTitle: s.title ?? '',
+            repoRoot: s.repo_root,
+            cwd: s.cwd,
+          });
+        }
+      }
+      failures.sort(
+        (a, b) => a.sessionId.localeCompare(b.sessionId) || a.rubric.localeCompare(b.rubric),
+      );
+      return {
+        failures,
+        untrusted: [...untrusted]
+          .map(([rubric, n]) => ({ rubric, failures: n }))
+          .sort((a, b) => a.rubric.localeCompare(b.rubric)),
       };
     },
 

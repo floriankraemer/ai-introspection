@@ -14,7 +14,7 @@ import { createJobQueue } from '../jobs/queue.js';
 import { createWorker } from '../jobs/worker.js';
 import { writeFixtureSources } from '../testkit/agent-fixtures.js';
 import { sqliteTestDb, type TestDb } from '../testkit/db.js';
-import { wireGrading } from './wire-grading.js';
+import { wireGrading, wireImprovement } from './wire-grading.js';
 import { createApp } from './app.js';
 import { loadOrCreateToken } from './auth.js';
 
@@ -68,6 +68,15 @@ beforeAll(async () => {
   });
   const worker = createWorker({ queue, handlers: { ...ingest.handlers, ...grading.handlers } });
   tick = () => worker.tick();
+  const improvement = wireImprovement({
+    db: t.handle.db,
+    ingest,
+    settings,
+    queue,
+    skillRepos,
+    grading,
+    dataDir,
+  });
   app = createApp({
     webDir: join(dir, 'web'),
     port: PORT,
@@ -76,6 +85,7 @@ beforeAll(async () => {
     settings,
     ingest,
     grading,
+    improvement,
     rubrics,
     judges,
     trends: createTrends(ingest, grading),

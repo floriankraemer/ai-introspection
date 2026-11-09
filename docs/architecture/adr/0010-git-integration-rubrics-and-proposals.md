@@ -121,3 +121,25 @@ Change detection and housekeeping:
 ## Related
 
 - ADR-0006 (improver adapters), ADR-0009 (rubrics and improvement modules), overview "Runtime flows".
+
+## Implementation notes (Phase 3, WP7)
+
+- The improver port is `propose(request) -> whole-file edits | none`, not `cluster` plus `propose`.
+  Clustering is deterministic code (target repository and rubric, then word overlap of the judge's reasons, at least 25 %), so no `cluster` call exists yet.
+  The adapters get a read-only snapshot of the target's allowed files (at most 60 files, 64 KiB each, 200 KiB in all) and return the complete new content of each file they change.
+  Introspect writes the files into the worktree and derives the unified diff with `git diff --binary`, so the adapter has no write or shell tool and the diff always applies to the base commit.
+  The API adapter is a manual tool loop (`list_files`, `read_file`, `submit_proposal`, `decline`, at most 10 turns) on `claude-opus-5-5`; the CLI adapter inlines the files and runs `claude -p` with no tools, in the judge's private home.
+- Global repositories default to the allow-list `**`; paths under `rubrics/` and `.git/` are denied in every repository, case-insensitively.
+  Project repositories allow `.claude/**`, `CLAUDE.md` and `AGENTS.md`.
+  A diff is refused for: a path with `..`, an absolute path, a backslash, `//` or a quoted name; a binary change; a symlink or submodule; more than 5 files or 300 changed lines; an added line that the redaction rules (built-in and custom) would change.
+  A refused diff is stored as a proposal with status `failed` and the reason in `decision_note`; its branch is deleted.
+- Target resolution uses rule 2 and 3 only: the registered project repository the session ran in, else the global one.
+  A session records its host path, so a project matches by registered path or, inside the container, by the repository's folder name.
+  Rule 1 (instruction files loaded in the session) is not used yet.
+- The 'one proposal per cluster' dedupe: a cluster whose sessions are all evidence of an open proposal on the same repository is skipped.
+- Accept in `merge` mode: default branch checked out and clean tree, else 409 with `fix`; a conflicting merge is aborted, the proposal gets status `conflict`.
+  Automated commits and merges ignore the user's hooks and signing (`core.hooksPath=/dev/null`, `commit.gpgsign=false`).
+  The merge commit SHA and a `proposal_merged` change event (files, rubric names) are written in one transaction.
+  In `pr` mode the proposal stays `open` with `pr_url`; a job every 10 minutes polls `gh pr view`, and a merged PR becomes `accepted` with the change event at the merge time, a closed one `rejected`.
+- Budget: one reservation per proposal at the worst case (a full 16,000-token answer), settled with the real usage of all turns.
+  `GET /v1/budget` reports the improver's share in `improver`.

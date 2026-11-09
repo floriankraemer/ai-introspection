@@ -6,6 +6,7 @@ import {
   runDoctorCommand,
   runGradeCommand,
   runImportCommand,
+  runImproveCommand,
   startServer,
 } from './platform/bootstrap.js';
 import { formatReport, hasFailure } from './platform/doctor/index.js';
@@ -89,6 +90,30 @@ async function gradeCommand(): Promise<void> {
   if (summary.failed > 0) process.exit(1);
 }
 
+async function improveCommand(): Promise<void> {
+  const now = process.argv.includes('--now');
+  const out = await runImproveCommand(loadConfig(), { since: option('since') ?? '24h', now });
+  if ('queued' in out) {
+    console.log(
+      `Queued improver job ${out.queued}. The running server picks it up; use --now to run here instead.`,
+    );
+    return;
+  }
+  const s = out.summary;
+  console.log(
+    `Improver run ${out.status}: ${String(out.proposalsCreated)} proposals from ${String(s.clusters.length)} clusters (${String(s.failedGrades)} failing grades).`,
+  );
+  for (const u of s.untrustedExcluded)
+    console.log(`  excluded ${String(u.failures)} failures of "${u.rubric}": not calibrated yet`);
+  for (const k of s.skippedSessions) console.log(`  skipped session ${k.sessionId}: ${k.reason}`);
+  for (const c of s.clusters) console.log(`  ${c.outcome}: ${c.summary} (${c.detail})`);
+  if (out.deferUntil)
+    console.log(
+      `Stopped by the budget: ${out.deferReason ?? ''}; resumes ${out.deferUntil.toISOString()}.`,
+    );
+  if (out.status === 'failed') process.exit(1);
+}
+
 /** Signs the judge in to Claude, in its own private home, never with the host's login. */
 async function judgeLoginCommand(): Promise<void> {
   const { claudeHome } = loadConfig();
@@ -128,6 +153,11 @@ if (command === 'serve') {
     console.error(e instanceof Error ? e.message : e);
     process.exit(1);
   });
+} else if (command === 'improve') {
+  improveCommand().catch((e: unknown) => {
+    console.error(e instanceof Error ? e.message : e);
+    process.exit(1);
+  });
 } else if (command === 'grade') {
   gradeCommand().catch((e: unknown) => {
     console.error(e instanceof Error ? e.message : e);
@@ -135,7 +165,7 @@ if (command === 'serve') {
   });
 } else {
   console.error(
-    'Usage: introspect serve | open | doctor | judge-login | import [--agent <agent> --path <folder>] | grade --session <id> | --since <7d> | --all [--policy]',
+    'Usage: introspect serve | open | doctor | judge-login | import [--agent <agent> --path <folder>] | grade --session <id> | --since <7d> | --all [--policy] | improve [--now] [--since 24h]',
   );
   process.exit(1);
 }

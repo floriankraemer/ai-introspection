@@ -138,6 +138,8 @@ const budgetSchema = z
     tokensPerDay: z.number().int().nullable(),
     usdMonth: z.number(),
     usdPerMonth: z.number().nullable(),
+    /** The improver's share of `tokensToday` and `usdMonth` (one ledger, one budget). */
+    improver: z.object({ tokensToday: z.number().int(), usdMonth: z.number() }),
     deferredJobs: z.number().int(),
     tokensResetAt: z.iso.datetime(),
     usdResetAt: z.iso.datetime(),

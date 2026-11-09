@@ -7,6 +7,7 @@ import {
 import type { JobQueue } from '../jobs/queue.js';
 import { ApiError, problemResponses } from './problem.js';
 import { registerGradingRoutes, type GradingRouteDeps } from './routes-grading.js';
+import { registerImprovementRoutes, type ImprovementRouteDeps } from './routes-improvement.js';
 import { registerIngestRoutes, type IngestRouteDeps } from './routes-ingest.js';
 import { registerSetupRoutes, type SetupRouteDeps } from './routes-setup.js';
 import { DEFAULT_PAGE, jobSchema, MAX_PAGE, security, toJobDto } from './schemas.js';
@@ -125,7 +126,8 @@ const retryJob = createRoute({
   },
 });
 
-export interface RouteDeps extends IngestRouteDeps, SetupRouteDeps, GradingRouteDeps {
+export interface RouteDeps
+  extends IngestRouteDeps, SetupRouteDeps, GradingRouteDeps, ImprovementRouteDeps {
   token: string;
   queue: JobQueue;
   settings: SettingsService;
@@ -186,5 +188,6 @@ export function registerRoutes(app: OpenAPIHono, deps: RouteDeps): void {
 
   registerIngestRoutes(app, deps);
   registerGradingRoutes(app, deps);
+  registerImprovementRoutes(app, deps);
   registerSetupRoutes(app, deps);
 }

@@ -8,7 +8,11 @@ export class InvalidInputError extends Error {
 
 /** The request conflicts with the current state, for example a missing prerequisite (HTTP 409). */
 export class ConflictError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    /** The actionable fix, shown apart from the reason (problem+json `fix`). */
+    readonly fix?: string,
+  ) {
     super(message);
     this.name = 'ConflictError';
   }
@@ -22,5 +26,13 @@ export class BudgetExceededError extends Error {
   ) {
     super(message);
     this.name = 'BudgetExceededError';
+  }
+}
+
+/** The named thing does not exist (HTTP 404). */
+export class NotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'NotFoundError';
   }
 }
