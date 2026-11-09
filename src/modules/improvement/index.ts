@@ -1,10 +1,12 @@
 import { Cron } from 'croner';
 import { fromJson } from '../../platform/db/json.js';
 import { InvalidInputError } from '../../platform/errors.js';
+import { createKeyedMutex } from '../../platform/keyed-mutex.js';
 import { DeferJob, type JobHandler } from '../../platform/jobs/worker.js';
 import type { Schedule } from '../../platform/jobs/scheduler.js';
 import type { ImprovementDeps } from './context.js';
 import { createProposals, type ProposalStatus } from './proposals.js';
+import { sweepOrphans } from './housekeeping.js';
 import { createRunner, type RunSummary } from './runner.js';
 
 export {
@@ -21,7 +23,13 @@ export { createImproverProvider, type ImproverProvider } from './improvers.js';
 export { createFakeImprover } from './improver-fake.js';
 export { createApiImprover } from './improver-api.js';
 export { createCliImprover } from './improver-cli.js';
-export { IMPROVER_MODEL, type Improver, type ImproveRequest, type ImproveResult } from './types.js';
+export {
+  IMPROVER_MODEL,
+  ImproverCallError,
+  type Improver,
+  type ImproveRequest,
+  type ImproveResult,
+} from './types.js';
 export type { ClusterSummary, ProposalDto, ProposalList, ProposalStatus } from './proposals.js';
 export type { RunResult, RunSummary } from './runner.js';
 export { inspectDiff, DiffRejectedError } from './diff.js';
@@ -33,6 +41,8 @@ const PR_SYNC_CRON = '*/10 * * * *';
 const DAY_MS = 86_400_000;
 const CRONS = { daily: '0 6 * * *', weekly: '0 6 * * 1' } as const;
 const RUNS_SHOWN = 20;
+/** A scheduled run never looks back further than this, however long ago the last good run was. */
+const MAX_LOOKBACK_DAYS = 14;
 
 /** `24h`, `7d` or `2w` as a point in time that long ago. */
 export function parseSince(text: string, now = new Date()): Date {
@@ -60,18 +70,33 @@ export interface ImproverRunDto {
 
 export function createImprovement(deps: ImprovementDeps) {
   const now = deps.now ?? (() => new Date());
-  const proposals = createProposals(deps);
-  const runner = createRunner(deps);
+  // Every mutating git operation on a repository (accept, reject, edit, worktrees) takes its lock here.
+  const locks = createKeyedMutex();
+  const proposals = createProposals(deps, locks);
+  const runner = createRunner(deps, locks);
 
   async function cronOf(): Promise<string | null> {
     const mode = (await deps.settings.get())['schedule.improver'];
     return mode === 'manual' ? null : CRONS[mode];
   }
 
-  /** The look-back window of a scheduled run: the period since the previous one. */
+  /**
+   * The look-back window of a scheduled run: the period since the previous one, widened to the
+   * start of the last successful run so a night the server was off or the run failed is not lost.
+   */
   async function scheduledSince(): Promise<Date> {
     const mode = (await deps.settings.get())['schedule.improver'];
-    return new Date(now().getTime() - (mode === 'weekly' ? 7 : 1) * DAY_MS);
+    const at = now().getTime();
+    const period = at - (mode === 'weekly' ? 7 : 1) * DAY_MS;
+    const last = await deps.db
+      .selectFrom('improver_run')
+      .select('started_at')
+      .where('workspace_id', '=', deps.workspaceId)
+      .where('status', '=', 'succeeded')
+      .orderBy('started_at', 'desc')
+      .executeTakeFirst();
+    const lastAt = last ? new Date(last.started_at).getTime() : period;
+    return new Date(Math.max(Math.min(period, lastAt), at - MAX_LOOKBACK_DAYS * DAY_MS));
   }
 
   /** Runs the improver; a budget stop defers the job, so the next window picks it up. */
@@ -106,6 +131,9 @@ export function createImprovement(deps: ImprovementDeps) {
     handlers,
     schedules,
     proposals,
+
+    /** At startup: removes worktree folders and `introspect/*` branches that no open proposal owns (a crash leaves them). */
+    sweep: () => sweepOrphans(deps, locks),
 
     /** `introspect improve --now`: in the foreground. */
     run: (since: Date) => runner.run(since),

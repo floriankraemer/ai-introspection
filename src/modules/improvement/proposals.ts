@@ -7,24 +7,28 @@ import { fromJson, toJson } from '../../platform/db/json.js';
 import type { Db } from '../../platform/db/schema.js';
 import { ConflictError, InvalidInputError, NotFoundError } from '../../platform/errors.js';
 import {
-  addWorktreeForBranch,
+  addWorktree,
   applyDiff,
   changedFiles,
   commitAll,
   currentBranch,
-  defaultBranch,
   deleteBranch,
-  diffSince,
   git,
   isClean,
+  mergeInProgress,
   mergeNoFf,
+  minimalEnv,
+  moveBranch,
+  NothingToCommitError,
   removeWorktree,
   revParse,
 } from '../../platform/git/index.js';
+import type { KeyedMutex } from '../../platform/keyed-mutex.js';
 import type { GhRunner, ImprovementDeps } from './context.js';
-import { DiffRejectedError, inspectDiff } from './diff.js';
-import { allowListOf } from './policy.js';
+import { DiffRejectedError, executableWarning, inspectDiff, isExecutableSurface } from './diff.js';
+import { policyOf } from './policy.js';
 import type { SkillRepoRow } from './skill-repos.js';
+import { verifyChange } from './verify.js';
 
 const run = promisify(execFile);
 const GH_TIMEOUT_MS = 60_000;
@@ -68,7 +72,8 @@ export interface ProposalDto {
   clusterSize: number;
   /** How accepting works for this repository right now. */
   acceptMode: 'merge' | 'pr';
-  validation: { ok: boolean; problems: string[] };
+  /** `problems` is why a failed proposal was refused; `warnings` flag a change to something Claude Code executes (only possible when the repository sets allowExecutable). */
+  validation: { ok: boolean; problems: string[]; warnings: string[] };
   mergeCommit: string | null;
   rejectReason: string | null;
   prUrl: string | null;
@@ -95,23 +100,38 @@ const STATUSES: readonly ProposalStatus[] = [
 ];
 
 /** Display counts of a diff; tolerant, because a failed proposal's diff may be exactly what validation refused. */
-export function diffStats(diff: string): { files: string[]; additions: number; deletions: number } {
+export function diffStats(diff: string): {
+  files: string[];
+  additions: number;
+  deletions: number;
+  warnings: string[];
+} {
   const files: string[] = [];
+  const warnings = new Set<string>();
   let additions = 0;
   let deletions = 0;
+  let current: string | null = null;
   for (const line of diff.split('\n')) {
     const m = /^diff --git a\/.+ b\/(.+)$/.exec(line);
-    if (m?.[1]) files.push(m[1]);
+    if (m?.[1]) {
+      current = m[1];
+      files.push(current);
+      if (isExecutableSurface(current)) warnings.add(executableWarning(current));
+    } else if (
+      current &&
+      /^(?:(?:new|old) )?(?:file )?mode 100755$|^index \S+\.\.\S+ 100755$/.test(line)
+    )
+      warnings.add(executableWarning(current));
     else if (line.startsWith('+') && !line.startsWith('+++')) additions += 1;
     else if (line.startsWith('-') && !line.startsWith('---')) deletions += 1;
   }
-  return { files, additions, deletions };
+  return { files, additions, deletions, warnings: [...warnings].sort() };
 }
 
 const ghRunner: GhRunner = async (args, { cwd }) =>
-  (await run('gh', args, { cwd, timeout: GH_TIMEOUT_MS, env: process.env })).stdout.trim();
+  (await run('gh', args, { cwd, timeout: GH_TIMEOUT_MS, env: minimalEnv(true) })).stdout.trim();
 
-export function createProposals(deps: ImprovementDeps) {
+export function createProposals(deps: ImprovementDeps, locks: KeyedMutex) {
   const { db, workspaceId } = deps;
   const now = deps.now ?? (() => new Date());
   const env = deps.env ?? process.env;
@@ -171,8 +191,8 @@ export function createProposals(deps: ImprovementDeps) {
       acceptMode: m.byRepo.get(r.target_repo_id ?? '') ?? m.fallback,
       validation:
         r.status === 'failed'
-          ? { ok: false, problems: [r.decision_note ?? 'Validation failed'] }
-          : { ok: true, problems: [] },
+          ? { ok: false, problems: [r.decision_note ?? 'Validation failed'], warnings: [] }
+          : { ok: true, problems: [], warnings: stats.warnings },
       mergeCommit: r.merge_commit,
       rejectReason: r.status === 'rejected' ? r.decision_note : null,
       prUrl: r.pr_url,
@@ -276,7 +296,7 @@ export function createProposals(deps: ImprovementDeps) {
   }
 
   async function acceptByMerge(p: ProposalDto, repo: SkillRepoRow, branch: string): Promise<void> {
-    const def = repo.defaultBranch ?? (await defaultBranch(repo.path));
+    const def = await deps.skillRepos.refreshDefaultBranch(repo);
     const hint =
       'Or set this repository to PR mode in Settings (Accept mode), which never touches the working tree.';
     const cur = await currentBranch(repo.path);
@@ -290,9 +310,27 @@ export function createProposals(deps: ImprovementDeps) {
         `${repo.path} has uncommitted changes`,
         `Commit or stash them, then accept again. ${hint}`,
       );
+    // Someone else's merge: never touch it, and never start ours on top of it.
+    if (await mergeInProgress(repo.path))
+      throw new ConflictError(
+        `${repo.path} has a merge in progress`,
+        `Finish it or run "git merge --abort" there, then accept again. ${hint}`,
+      );
     const before = await revParse(repo.path, 'HEAD');
-    if (!(await mergeNoFf(repo.path, branch, `Merge proposal: ${p.title}\n\n${p.rationale}`))) {
-      await db.updateTable('proposal').set({ status: 'conflict' }).where('id', '=', p.id).execute();
+    const message = `Merge proposal: ${p.title}\n\n${p.rationale}`;
+    const outcome = await mergeNoFf(repo.path, branch, message).catch((e: unknown) => {
+      throw new ConflictError(
+        `The merge failed: ${e instanceof Error ? e.message : String(e)}`,
+        `Nothing was changed and the proposal is still open. Fix the problem named above, then accept again. ${hint}`,
+      );
+    });
+    if (outcome === 'conflict') {
+      await db
+        .updateTable('proposal')
+        .set({ status: 'conflict' })
+        .where('id', '=', p.id)
+        .where('status', 'in', ['open', 'conflict'])
+        .execute();
       throw new ConflictError(
         `The branch ${branch} conflicts with ${def}; nothing was changed`,
         `Reject this proposal and run the improver again, or merge the branch by hand. ${hint}`,
@@ -312,17 +350,22 @@ export function createProposals(deps: ImprovementDeps) {
         `${repo.path} has no remote called "origin" to push to`,
         'Add a remote, or use merge mode for this repository.',
       );
-    const def = repo.defaultBranch ?? (await defaultBranch(repo.path));
-    await git(repo.path, [
-      '-c',
-      'credential.helper=',
-      '-c',
-      'credential.helper=!gh auth git-credential',
-      'push',
-      '-u',
-      'origin',
-      branch,
-    ]).catch((e: unknown) => {
+    const def = await deps.skillRepos.refreshDefaultBranch(repo);
+    await git(
+      repo.path,
+      [
+        '-c',
+        'credential.helper=',
+        '-c',
+        'credential.helper=!gh auth git-credential',
+        'push',
+        '--no-verify',
+        '-u',
+        'origin',
+        branch,
+      ],
+      { network: true },
+    ).catch((e: unknown) => {
       throw new ConflictError(
         `Pushing ${branch} failed: ${e instanceof Error ? e.message : String(e)}`,
       );
@@ -339,6 +382,23 @@ export function createProposals(deps: ImprovementDeps) {
       .where('id', '=', p.id)
       .execute();
   }
+
+  /** Closes the pull request of a proposal that is being rejected; the user is told how to do it by hand when that fails. */
+  async function closePullRequest(p: ProposalDto, repo: SkillRepoRow): Promise<void> {
+    const url = p.prUrl;
+    if (!url) return;
+    await ghReady();
+    await gh(['pr', 'close', url, '--delete-branch'], { cwd: repo.path }).catch((e: unknown) => {
+      throw new ConflictError(
+        `Closing the pull request failed: ${e instanceof Error ? e.message : String(e)}`,
+        `Close ${url} on GitHub (or run "gh pr close ${url} --delete-branch"), then reject again. A pull request closed there is marked rejected within ten minutes anyway.`,
+      );
+    });
+  }
+
+  /** Runs `fn` while holding the lock of the proposal's repository: every mutating git operation on it is serial. */
+  const exclusively = <T>(p: ProposalDto, fn: () => Promise<T>): Promise<T> =>
+    locks.run(p.targetRepo?.id ?? p.id, fn);
 
   return {
     get,
@@ -372,79 +432,115 @@ export function createProposals(deps: ImprovementDeps) {
 
     /** Accept: merge into the default branch, or push the branch and open a PR (ADR-0010). */
     async accept(id: string): Promise<ProposalDto> {
-      const p = await mustGet(id);
-      mustBeOpen(p);
-      const repo = await repoOf(p);
-      await branchIntact(p, repo);
-      const branch = p.branch ?? '';
-      if ((await mergeMode(repo)) === 'merge') await acceptByMerge(p, repo, branch);
-      else await acceptByPr(p, repo, branch);
-      return mustGet(id);
+      return exclusively(await mustGet(id), async () => {
+        // Read again under the lock: another accept or a reject may have won while this one waited.
+        const p = await mustGet(id);
+        mustBeOpen(p);
+        const repo = await repoOf(p);
+        await branchIntact(p, repo);
+        const branch = p.branch ?? '';
+        if ((await mergeMode(repo)) === 'merge') await acceptByMerge(p, repo, branch);
+        else await acceptByPr(p, repo, branch);
+        return mustGet(id);
+      });
     },
 
     async reject(id: string, reason: string): Promise<ProposalDto> {
-      const p = await mustGet(id);
-      mustBeOpen(p);
-      const repo = p.targetRepo ? await deps.skillRepos.row(p.targetRepo.id) : null;
-      await db
-        .updateTable('proposal')
-        .set({
-          status: 'rejected',
-          decided_by: deps.userId,
-          decided_at: now().toISOString(),
-          decision_note: reason,
-        })
-        .where('id', '=', id)
-        .execute();
-      if (repo && p.branch) await deleteBranch(repo.path, p.branch);
-      return mustGet(id);
+      return exclusively(await mustGet(id), async () => {
+        const p = await mustGet(id);
+        mustBeOpen(p);
+        const repo = p.targetRepo ? await deps.skillRepos.row(p.targetRepo.id) : null;
+        if (repo) await closePullRequest(p, repo);
+        const changed = await db
+          .updateTable('proposal')
+          .set({
+            status: 'rejected',
+            decided_by: deps.userId,
+            decided_at: now().toISOString(),
+            decision_note: reason,
+          })
+          .where('id', '=', id)
+          .where('status', 'in', ['open', 'conflict'])
+          .executeTakeFirst();
+        if (Number(changed.numUpdatedRows) === 0)
+          throw new ConflictError('The proposal was decided in the meantime');
+        if (repo && p.branch) await deleteBranch(repo.path, p.branch);
+        return mustGet(id);
+      });
     },
 
     /**
-     * "Edit first": the human's diff replaces the branch content. It is validated like an
-     * improver diff and must apply to the base commit; the branch gets one fresh commit.
+     * "Edit first": the human's diff replaces the branch content. It is applied on a temporary
+     * branch from the base commit, validated against what git reports changed, and committed there;
+     * only then does the proposal branch move (compare-and-swap). Any failure leaves the original
+     * branch and head SHA as they were.
      */
     async edit(id: string, rawDiff: string): Promise<ProposalDto> {
-      const p = await mustGet(id);
-      mustBeOpen(p);
-      if (p.prUrl)
-        throw new ConflictError('A pull request is already open for this branch; edit it there');
-      const repo = await repoOf(p);
-      const head = await branchIntact(p, repo);
-      if (!p.baseSha || !p.branch) throw new ConflictError('The proposal has no branch');
+      const first = await mustGet(id);
+      mustBeOpen(first);
       const diff = rawDiff.endsWith('\n') ? rawDiff : `${rawDiff}\n`;
-      const report = inspectDiff(diff, allowListOf(repo));
-      if (await deps.hasSecret(report.addedText))
-        throw new DiffRejectedError('an added line holds something that looks like a secret');
-      const dir = join(deps.dataDir, 'worktrees', `edit-${p.id}-${String(now().getTime())}`);
-      await mkdir(join(deps.dataDir, 'worktrees'), { recursive: true });
-      try {
-        await addWorktreeForBranch(repo.path, dir, p.branch);
-        await git(dir, ['reset', '--hard', '-q', p.baseSha]);
+      const policy = policyOf(await repoOf(first));
+      // First filter on the text; verifyChange below checks what git really changes.
+      const text = inspectDiff(diff, policy.allowList, policy.allowExecutable);
+      if (await deps.hasSecret(text.addedText))
+        throw new DiffRejectedError('an added line holds something that looks like a secret', true);
+      return exclusively(first, async () => {
+        const p = await mustGet(id);
+        mustBeOpen(p);
+        if (p.prUrl)
+          throw new ConflictError('A pull request is already open for this branch; edit it there');
+        const repo = await repoOf(p);
+        const head = await branchIntact(p, repo);
+        if (!p.baseSha || !p.branch) throw new ConflictError('The proposal has no branch');
+        const branch = p.branch;
+        const temp = `introspect-tmp/edit-${p.id.slice(-8)}-${String(now().getTime())}`;
+        const dir = join(deps.dataDir, 'worktrees', `edit-${p.id}-${String(now().getTime())}`);
+        await mkdir(join(deps.dataDir, 'worktrees'), { recursive: true });
         try {
-          await applyDiff(dir, diff);
-        } catch (e) {
-          await git(dir, ['reset', '--hard', '-q', head]);
-          throw new InvalidInputError(
-            `The diff does not apply to ${p.baseSha.slice(0, 8)}: ${e instanceof Error ? e.message : String(e)}`,
-          );
+          await addWorktree(repo.path, dir, temp, p.baseSha);
+          try {
+            await applyDiff(dir, diff);
+          } catch (e) {
+            throw new InvalidInputError(
+              `The diff does not apply to ${p.baseSha.slice(0, 8)}: ${e instanceof Error ? e.message : String(e)}`,
+            );
+          }
+          const newHead = await commitAll(
+            dir,
+            `introspect: ${p.title} (edited)\n\n${p.rationale}`,
+          ).catch((e: unknown) => {
+            throw e instanceof NothingToCommitError
+              ? new DiffRejectedError('diff changes nothing')
+              : e;
+          });
+          const change = await verifyChange(dir, p.baseSha, newHead, policy);
+          if (await deps.hasSecret(change.addedText))
+            throw new DiffRejectedError(
+              'an added line holds something that looks like a secret',
+              true,
+            );
+          await moveBranch(repo.path, branch, newHead, head);
+          try {
+            await db
+              .updateTable('proposal')
+              .set({
+                diff: change.diff,
+                head_sha: newHead,
+                target_path: change.files[0] ?? p.targetPath,
+              })
+              .where('id', '=', id)
+              .execute();
+          } catch (e) {
+            await moveBranch(repo.path, branch, head, newHead).catch(() => undefined);
+            throw e;
+          }
+        } finally {
+          await removeWorktree(repo.path, dir);
+          await rm(dir, { recursive: true, force: true });
+          await deleteBranch(repo.path, temp);
         }
-        const canonical = await diffSince(dir, p.baseSha);
-        const newHead = await commitAll(dir, `introspect: ${p.title} (edited)\n\n${p.rationale}`);
-        await db
-          .updateTable('proposal')
-          .set({
-            diff: canonical,
-            head_sha: newHead,
-            target_path: report.files[0] ?? p.targetPath,
-          })
-          .where('id', '=', id)
-          .execute();
-      } finally {
-        await removeWorktree(repo.path, dir);
-        await rm(dir, { recursive: true, force: true });
-      }
-      return mustGet(id);
+        return mustGet(id);
+      });
     },
 
     /** Polls open PRs: a merged PR becomes `accepted` with its change event, a closed one `rejected`. */
@@ -483,6 +579,7 @@ export function createProposals(deps: ImprovementDeps) {
               decision_note: 'The pull request was closed without merging',
             })
             .where('id', '=', p.id)
+            .where('status', '=', 'open')
             .execute();
           changed += 1;
         }

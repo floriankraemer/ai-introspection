@@ -27,6 +27,11 @@ export interface ImproveRequest {
   target: { kind: 'global' | 'project'; allowList: readonly string[] };
   /** Read-only snapshot of the target's allowed files (repo-relative path to content). */
   files: Readonly<Record<string, string>>;
+  /**
+   * What the budget reserved for this call, in tokens (input + output). A multi-turn adapter stops
+   * with a `budget` decline before a turn that could push its total past it.
+   */
+  tokenCap?: number;
 }
 
 export interface FileEdit {
@@ -44,7 +49,7 @@ export type ImproveResult =
       model: string;
       usage: Usage;
     }
-  | { kind: 'none'; reason: string; model: string; usage: Usage };
+  | { kind: 'none'; reason: string; model: string; usage: Usage; budget?: true };
 
 /**
  * Port of the improvement module (ADR-0006). An adapter reads the snapshot in the request and
@@ -60,7 +65,7 @@ export interface Improver {
 /** What an adapter must return, whatever the transport. */
 export const proposalSchema = z.object({
   title: z.string().trim().min(1).max(120),
-  rationale: z.string().trim().min(1),
+  rationale: z.string().trim().min(1).max(4000),
   edits: z
     .array(z.object({ path: z.string().min(1), content: z.string().nullable() }))
     .min(1)

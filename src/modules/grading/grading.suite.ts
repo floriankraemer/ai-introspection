@@ -23,6 +23,7 @@ import {
   GRADE_SESSION_JOB,
   type Grading,
 } from './index.js';
+import { STALE_RESERVATION_MS } from './budget.js';
 import type { FakeDecision } from './judge-fake.js';
 import { JudgeCallError, type Judge, type JudgeRequest, type Usage } from './types.js';
 
@@ -485,8 +486,8 @@ export function gradingSuite(name: string, make: TestDbFactory): void {
       });
 
       it('lets reservations that no process will settle expire', async () => {
-        const at = new Date(Date.now() - 31 * 60_000);
-        if (at.getUTCDate() !== new Date().getUTCDate()) return; // the window would start after it
+        // A fixed morning, so the reservation and the check fall on the same budget day.
+        const at = new Date('2026-11-09T01:00:00Z');
         await t.handle.db
           .insertInto('llm_call')
           .values({
@@ -500,7 +501,13 @@ export function gradingSuite(name: string, make: TestDbFactory): void {
             status: 'reserved',
           })
           .execute();
-        expect((await grading.budget.status()).tokensToday).toBe(0);
+        const later = (ms: number) => new Date(at.getTime() + ms);
+        expect(
+          (await grading.budget.status(later(STALE_RESERVATION_MS - 60_000))).tokensToday,
+        ).toBe(1_000_000);
+        expect(
+          (await grading.budget.status(later(STALE_RESERVATION_MS + 60_000))).tokensToday,
+        ).toBe(0);
       });
     });
 

@@ -7,6 +7,7 @@ import * as tokenSplit from './migrations/0003_token_split.js';
 import * as labelScore from './migrations/0004_label_score.js';
 import * as reviewFixes from './migrations/0005_review_fixes.js';
 import * as improver from './migrations/0006_improver.js';
+import * as improverReview from './migrations/0007_improver_review.js';
 
 /** Migrations are bundled (not read from a folder) so tsx, tsc output and tests all find them. */
 export async function migrateToLatest({ db, dialect }: DbHandle): Promise<void> {
@@ -24,6 +25,7 @@ export async function migrateToLatest({ db, dialect }: DbHandle): Promise<void> 
     '0004_label_score': { up: (k) => labelScore.up(k) },
     '0005_review_fixes': { up: (k) => reviewFixes.up(k) },
     '0006_improver': { up: (k) => improver.up(k) },
+    '0007_improver_review': { up: (k) => improverReview.up(k, dialect) },
   };
   const provider: MigrationProvider = { getMigrations: () => Promise.resolve(migrations) };
   const { error } = await new Migrator({

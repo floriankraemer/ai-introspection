@@ -431,7 +431,7 @@ The plan's four contract roots (`/v1/sessions`, `/v1/grades`, `/v1/proposals`, `
 | Team trust | Aggregates by rubric/workspace/repo only; per-user share opt-out enforced at shipper and server; RLS |
 | Agent log formats change (added) | Versioned adapters with fixtures per agent version; `unknown` events and ingest-warning counter instead of crashes |
 | Laptop asleep at schedule time (added) | Durable schedule state with single catch-up on start; last/next run visible |
-| Damage to the user's skills or project repos (added) | Worktrees for improver; project allow-list limited to `.claude/**`, `CLAUDE.md`, `AGENTS.md` (never source code); merges only on explicit accept with a clean tree on the default branch, or via PR; rubric saves commit only their own path |
+| Damage to the user's skills or project repos (added) | Worktrees for improver; allow-lists limited to skills, commands, agents, `CLAUDE.md` and `AGENTS.md` (never source code, hooks, settings or scripts unless a repository sets `allowExecutable`); merges only on explicit accept with a clean tree on the default branch, or via PR; rubric saves commit only their own path |
 | Fix lands in the wrong place (added) | Target resolution from loaded instruction files' real paths; one target repo per cluster; target shown in the inbox before accept |
 | Dual-dialect drift (added) | One Kysely migration set; repository tests on SQLite and Postgres in CI from Phase 1 |
 | CLI transport instability (added) | Pinned CLI version range with contract tests; API transport as fallback |

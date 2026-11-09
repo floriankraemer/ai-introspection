@@ -23,6 +23,10 @@ export interface ImprovementDeps {
   improvers: Pick<ImproverProvider, 'current'>;
   /** True when `text` holds anything the redaction rules would replace. */
   hasSecret: (text: string) => Promise<boolean>;
+  /** Replaces what the redaction rules match; without it a file that holds a secret is not sent at all. */
+  redact?: (text: string) => Promise<{ text: string; count: number; failed: boolean }>;
+  /** Days a declined or failed cluster is not billed again (default 7). */
+  dedupeDays?: number;
   env?: NodeJS.ProcessEnv;
   gh?: GhRunner;
   now?: () => Date;

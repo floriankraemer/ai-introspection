@@ -27,6 +27,8 @@ const skillRepoSchema = z
     hasRubrics: z.boolean(),
     enabled: z.boolean(),
     acceptMode: z.enum(['merge', 'pr']).nullable(),
+    /** Hooks, settings files and scripts may be proposed; each such proposal then carries a warning. Default false. */
+    allowExecutable: z.boolean(),
   })
   .openapi('SkillRepo');
 
@@ -138,7 +140,7 @@ const patchRepo = createRoute({
   method: 'patch',
   path: '/v1/skill-repos/{id}',
   summary:
-    'Enable or disable a skills repository, and set (`merge` or `pr`) or clear (`null`) its accept-mode override',
+    'Enable or disable a skills repository, set (`merge` or `pr`) or clear (`null`) its accept-mode override, and allow or deny executable instruction surfaces (hooks, settings, scripts)',
   security,
   request: {
     params: z.object({ id: z.uuid() }),
@@ -148,6 +150,7 @@ const patchRepo = createRoute({
           schema: z.object({
             enabled: z.boolean().optional(),
             acceptMode: z.enum(['merge', 'pr']).nullable().optional(),
+            allowExecutable: z.boolean().optional(),
           }),
         },
       },
@@ -161,7 +164,7 @@ const registerProject = createRoute({
   method: 'post',
   path: '/v1/skill-repos/projects',
   summary:
-    'Register a project repository (below the mounted projects folder) so the improver can propose `.claude/**`, CLAUDE.md and AGENTS.md changes there',
+    'Register a project repository (below the mounted projects folder) so the improver can propose `.claude/skills|commands|agents/**`, CLAUDE.md and AGENTS.md changes there',
   security,
   request: {
     body: {

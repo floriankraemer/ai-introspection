@@ -21,6 +21,7 @@ const TABLES: Record<keyof Schema, true> = {
   grade: true,
   proposal: true,
   skill_repo: true,
+  cluster_outcome: true,
   improver_run: true,
   change_event: true,
   llm_call: true,

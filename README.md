@@ -46,13 +46,23 @@ Run it in the stack with `docker compose exec introspect introspect improve --no
 - Failures are clustered by target repository and rubric, then by word overlap of the judge's reasons.
   The clustering is deliberately simple: a cause that the judge describes in different words ends up in separate clusters.
   The top three clusters of a run get a proposal.
-- Each cluster targets one repository: a **project repository** the session ran in (only `.claude/**`, `CLAUDE.md` and `AGENTS.md`), if you registered it under the projects mount (`POST /v1/skill-repos/projects`, the folder `/repos/projects/<name>` must match the repository's folder name); otherwise the **global skills repository** (everything except `rubrics/`).
+- Each cluster targets one repository: a **project repository** the session ran in (only `.claude/skills/**`, `.claude/commands/**`, `.claude/agents/**`, `CLAUDE.md` and `AGENTS.md`), if you registered it under the projects mount (`POST /v1/skill-repos/projects`, the folder `/repos/projects/<name>` must match the repository's folder name; if two registered projects share a folder name the session is skipped, with the reason in the run summary); otherwise the **global skills repository** (`skills/**`, `commands/**`, `agents/**`, `CLAUDE.md`, `AGENTS.md`).
   The improver never edits `rubrics/`, in any repository.
+  Hooks, `settings*.json`, scripts (`*.sh`, `*.py`, `*.js`), executable files and symlinks are denied by default, because Claude Code or a shell runs them.
+  A repository can opt in (`PATCH /v1/skill-repos/{id}` with `allowExecutable: true`); every such proposal then carries `validation.warnings`.
 - The improver works in a git worktree under `/data/worktrees` on a branch `introspect/<slug>`; your working tree is never touched until you accept.
-  A diff is refused when it leaves the allowed paths, contains `..` or a binary, changes more than 5 files or 300 lines, or adds anything the redaction rules would replace.
+  A diff is refused when it leaves the allowed paths, contains `..` or a binary, changes more than 5 files or 300 lines, adds an invisible character (control, zero-width, bidi or Unicode tag), or adds anything the redaction rules would replace.
+  After any diff is applied, Introspect checks git's own list of changed files and modes (`git diff --raw`), not the text of the diff.
+  Title (120 characters) and rationale (4000) are bounded and scanned for secrets too.
+  Files are redacted before they are sent to the model.
+  A cluster the improver declined, or failed on, is not billed again for 7 days unless new failing sessions join it.
+  Automated git calls ignore the repository's hooks and signing and get a minimal environment.
+  Accepts, rejects and edits on one repository run one at a time.
 - **Accept** merges the branch with `git merge --no-ff` into the default branch (`proposals.accept_mode` = `merge`, the default), which needs that branch checked out with a clean tree; otherwise Introspect answers with the reason and a fix, and the proposal stays open.
   In `pr` mode it pushes the branch and runs `gh pr create`; set `GH_TOKEN` in `.env` (`make doctor` checks it).
   A repository can override the mode (`PATCH /v1/skill-repos/{id}` with `acceptMode`).
+  Rejecting a proposal with an open pull request closes it (`gh pr close --delete-branch`); if that fails you get the command to run by hand.
+  A merge that fails for a reason other than a conflict is reported as an error and leaves the proposal open.
   An accepted proposal writes a change event that the Trends screen will mark.
 - The improver's calls are on the same budget ledger as grading; `GET /v1/budget` reports its share in `improver`.
 - `INTROSPECT_IMPROVER=fake` (environment only) swaps in a deterministic improver for tests and demos.

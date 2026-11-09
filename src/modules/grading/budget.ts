@@ -13,8 +13,8 @@ const FALLBACK_PRICE = { input: 2, output: 10, cacheRead: 0.2 };
 const CACHE_WRITE_FACTOR = 1.25;
 /** What one verdict costs in output, for the pre-call budget check. */
 export const ESTIMATED_OUTPUT_TOKENS = 1500;
-/** A reservation older than this belongs to a process that died; it stops counting against the budget. */
-const STALE_RESERVATION_MS = 30 * 60_000;
+/** A reservation older than this belongs to a process that died; it stops counting against the budget. Longer than any call can run (an improver loop is up to 10 API turns, a CLI call times out at 20 minutes). */
+export const STALE_RESERVATION_MS = 3 * 60 * 60_000;
 
 /** Estimated dollars at API list prices. For the CLI transport this is an estimate too (ADR-0006). */
 export function costOf(model: string, u: Usage): number {

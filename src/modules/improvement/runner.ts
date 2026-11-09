@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdir, rmdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { newId } from '../../platform/db/ids.js';
@@ -5,20 +6,21 @@ import { fromJson, toJson } from '../../platform/db/json.js';
 import {
   addWorktree,
   commitAll,
-  defaultBranch,
   deleteBranch,
   diffSince,
   git,
+  NothingToCommitError,
   removeWorktree,
   revParse,
 } from '../../platform/git/index.js';
+import type { KeyedMutex } from '../../platform/keyed-mutex.js';
 import { costOf } from '../grading/index.js';
 import { redactionRefusal } from '../ingest/index.js';
 import { clusterFailures, type Cluster, type TargetedFailure } from './clustering.js';
 import type { ImprovementDeps } from './context.js';
-import { DiffRejectedError, inspectDiff } from './diff.js';
+import { DiffRejectedError, invisibleProblem, stripInvisible } from './diff.js';
 import { estimateChars } from './improver-prompt.js';
-import { allowListOf } from './policy.js';
+import { policyOf } from './policy.js';
 import type { ClusterSummary } from './proposals.js';
 import type { SkillRepoRow } from './skill-repos.js';
 import { resolveTarget } from './target.js';
@@ -28,6 +30,7 @@ import {
   type ImproveRequest,
   type ImproveResult,
 } from './types.js';
+import { verifyChange } from './verify.js';
 import { applyEdits, collectFiles } from './worktree.js';
 
 /** Clusters turned into proposals per run (ADR-0010 diagram: the top 3 by session count). */
@@ -39,10 +42,16 @@ const EVIDENCE_EVENTS_PER_FAILURE = 6;
 const EVIDENCE_LINE_CHARS = 300;
 /** The API adapter answers in one response of at most this many tokens; the reservation assumes all of it. */
 const ESTIMATED_OUTPUT_TOKENS = 16_000;
-/** Whole-file reads in the tool loop re-send the context; 3 characters per token errs high. */
+/** Whole-file reads in the tool loop re-send the context each turn; 3 characters per token errs high. */
 const CHARS_PER_TOKEN = 3;
-const READ_OVERHEAD = 2;
+/** A typical loop is list, read, submit (3 sends of the context); the adapter stops at the reserved total instead of paying for more. */
+const LOOP_INPUT_FACTOR = 4;
 const STORED_DIFF_CHARS = 100_000;
+const MAX_TITLE_CHARS = 120;
+const MAX_RATIONALE_CHARS = 4000;
+/** A declined or failed cluster is not billed again for this long unless it gained sessions. */
+export const DEFAULT_DEDUPE_DAYS = 7;
+const DAY_MS = 86_400_000;
 
 export type ClusterOutcomeKind = 'proposed' | 'declined' | 'failed' | 'skipped' | 'deferred';
 
@@ -84,9 +93,10 @@ const slugOf = (title: string): string =>
     .slice(0, 40)
     .replace(/-+$/g, '') || 'change';
 
-export function createRunner(deps: ImprovementDeps) {
+export function createRunner(deps: ImprovementDeps, locks: KeyedMutex) {
   const { db, workspaceId } = deps;
   const now = deps.now ?? (() => new Date());
+  const dedupeMs = (deps.dedupeDays ?? DEFAULT_DEDUPE_DAYS) * DAY_MS;
 
   async function evidenceOf(f: {
     sessionId: string;
@@ -123,7 +133,7 @@ export function createRunner(deps: ImprovementDeps) {
       });
     return {
       cluster: { id: cluster.id, rubrics: [cluster.rubric], summary: cluster.summary, failures },
-      target: { kind: repo.kind, allowList: allowListOf(repo) },
+      target: { kind: repo.kind, allowList: policyOf(repo).allowList },
       files,
     };
   }
@@ -134,7 +144,7 @@ export function createRunner(deps: ImprovementDeps) {
     req: ImproveRequest,
   ): Promise<ImproveResult | { deferUntil: Date; reason: string }> {
     const improver = await deps.improvers.current();
-    const inputTokens = Math.ceil((estimateChars(req) * READ_OVERHEAD) / CHARS_PER_TOKEN);
+    const inputTokens = Math.ceil((estimateChars(req) * LOOP_INPUT_FACTOR) / CHARS_PER_TOKEN);
     const usd = costOf(improver.model, {
       input: inputTokens,
       cacheRead: 0,
@@ -156,7 +166,10 @@ export function createRunner(deps: ImprovementDeps) {
       return { deferUntil: reservation.deferral.runAfter, reason: reservation.deferral.reason };
     if (reservation.kind === 'too_large') throw new Error(`Not improved: ${reservation.reason}`);
     try {
-      const answer = await improver.propose(req);
+      const answer = await improver.propose({
+        ...req,
+        tokenCap: inputTokens + ESTIMATED_OUTPUT_TOKENS,
+      });
       await deps.grading.budget.settle(reservation.id, {
         model: answer.model,
         usage: answer.usage,
@@ -193,11 +206,11 @@ export function createRunner(deps: ImprovementDeps) {
         id,
         workspace_id: workspaceId,
         run_id: runId,
-        title,
+        title: stripInvisible(title).slice(0, MAX_TITLE_CHARS) || 'Refused proposal',
         target_repo_id: repo.id,
         target_path: '',
-        diff: diff.slice(0, STORED_DIFF_CHARS),
-        rationale,
+        diff: stripInvisible(diff).slice(0, STORED_DIFF_CHARS),
+        rationale: stripInvisible(rationale).slice(0, MAX_RATIONALE_CHARS),
         evidence_session_ids: toJson(cluster.sessionIds),
         rubric_names: toJson([cluster.rubric]),
         status: 'failed',
@@ -207,6 +220,62 @@ export function createRunner(deps: ImprovementDeps) {
       })
       .execute();
     return id;
+  }
+
+  /** Title and rationale are bounded, free of invisible characters, and scanned for secrets like the diff. */
+  async function checkText(title: string, rationale: string): Promise<void> {
+    if (title.length > MAX_TITLE_CHARS)
+      throw new DiffRejectedError(`the title is longer than ${String(MAX_TITLE_CHARS)} characters`);
+    if (rationale.length > MAX_RATIONALE_CHARS)
+      throw new DiffRejectedError(
+        `the rationale is longer than ${String(MAX_RATIONALE_CHARS)} characters`,
+      );
+    const invisible = invisibleProblem(`${title}\n${rationale}`);
+    if (invisible) throw new DiffRejectedError(`the title or rationale ${invisible}`);
+    if (await deps.hasSecret(`${title}\n${rationale}`))
+      throw new DiffRejectedError(
+        'the title or rationale holds something that looks like a secret',
+        true,
+      );
+  }
+
+  const fingerprintOf = (cluster: Cluster): string =>
+    createHash('sha256')
+      .update(`${cluster.targetRepoId}\n${[...cluster.sessionIds].sort().join('\n')}`)
+      .digest('hex');
+
+  /** Remembers a declined or failed cluster: only the reason, never the diff. */
+  async function recordOutcome(
+    cluster: Cluster,
+    outcome: 'declined' | 'failed',
+    detail: string,
+  ): Promise<void> {
+    await db
+      .insertInto('cluster_outcome')
+      .values({
+        id: newId(),
+        workspace_id: workspaceId,
+        target_repo_id: cluster.targetRepoId,
+        fingerprint: fingerprintOf(cluster),
+        outcome,
+        detail: stripInvisible(detail).slice(0, 500),
+        at: now().toISOString(),
+      })
+      .execute();
+  }
+
+  async function recentOutcome(
+    cluster: Cluster,
+  ): Promise<{ outcome: string; at: string } | undefined> {
+    return db
+      .selectFrom('cluster_outcome')
+      .select(['outcome', 'at'])
+      .where('workspace_id', '=', workspaceId)
+      .where('target_repo_id', '=', cluster.targetRepoId)
+      .where('fingerprint', '=', fingerprintOf(cluster))
+      .where('at', '>=', new Date(now().getTime() - dedupeMs).toISOString())
+      .orderBy('at', 'desc')
+      .executeTakeFirst();
   }
 
   /** One cluster: worktree, improver, validated diff, commit on its branch, proposal row. */
@@ -228,8 +297,7 @@ export function createRunner(deps: ImprovementDeps) {
         .slice(0, MAX_FAILURES_PER_REQUEST)
         .map((f) => f.reason),
     };
-    const base = repo.defaultBranch ?? (await defaultBranch(repo.path));
-    if (!repo.defaultBranch) await deps.skillRepos.rememberDefaultBranch(repo.id, base);
+    const base = await deps.skillRepos.refreshDefaultBranch(repo);
     const baseSha = await revParse(repo.path, base);
     const proposalId = newId();
     const provisional = `introspect/${slugOf(cluster.summary)}-${proposalId.slice(-8)}`;
@@ -240,28 +308,42 @@ export function createRunner(deps: ImprovementDeps) {
       `${slugOf(cluster.summary)}-${proposalId.slice(-8)}`,
     );
     await mkdir(join(deps.dataDir, 'worktrees', runId), { recursive: true });
-    await addWorktree(repo.path, dir, provisional, baseSha);
+    await locks.run(repo.id, () => addWorktree(repo.path, dir, provisional, baseSha));
     let keepBranch = false;
     let branchName = provisional;
     try {
-      const allow = allowListOf(repo);
-      const req = await requestFor(cluster, repo, await collectFiles(dir, allow));
+      const policy = policyOf(repo);
+      const req = await requestFor(cluster, repo, await collectFiles(dir, policy, deps.redact));
       const answer = await callImprover(runId, req);
       if ('deferUntil' in answer) return { defer: answer.deferUntil, reason: answer.reason };
-      if (answer.kind === 'none')
+      if (answer.kind === 'none') {
+        await recordOutcome(cluster, 'declined', answer.reason);
         return { outcome: 'declined', detail: answer.reason, proposalId: null };
+      }
 
       const slug = `introspect/${slugOf(answer.title)}-${proposalId.slice(-8)}`;
       try {
-        await applyEdits(dir, answer.edits, allow);
-        const diff = await diffSince(dir, baseSha);
-        const report = inspectDiff(diff, allow);
-        if (await deps.hasSecret(report.addedText))
-          throw new DiffRejectedError('an added line holds something that looks like a secret');
-        const head = await commitAll(dir, `introspect: ${answer.title}\n\n${answer.rationale}`);
-        await git(dir, ['branch', '-m', slug]);
-        branchName = slug;
-        keepBranch = true;
+        await checkText(answer.title, answer.rationale);
+        await applyEdits(dir, answer.edits, policy);
+        const head = await commitAll(
+          dir,
+          `introspect: ${answer.title}\n\n${answer.rationale}`,
+        ).catch((e: unknown) => {
+          throw e instanceof NothingToCommitError
+            ? new DiffRejectedError('diff changes nothing')
+            : e;
+        });
+        // git's own account of what changed is the authority, not the text we wrote or were given.
+        const change = await verifyChange(dir, baseSha, head, policy);
+        if (await deps.hasSecret(change.addedText))
+          throw new DiffRejectedError(
+            'an added line holds something that looks like a secret',
+            true,
+          );
+        await locks.run(repo.id, async () => {
+          await git(dir, ['branch', '-m', slug]);
+          branchName = slug;
+        });
         await db
           .insertInto('proposal')
           .values({
@@ -270,11 +352,11 @@ export function createRunner(deps: ImprovementDeps) {
             run_id: runId,
             title: answer.title,
             target_repo_id: repo.id,
-            target_path: report.files[0] ?? '',
+            target_path: change.files[0] ?? '',
             branch: slug,
             base_sha: baseSha,
             head_sha: head,
-            diff,
+            diff: change.diff,
             rationale: answer.rationale,
             evidence_session_ids: toJson(cluster.sessionIds),
             rubric_names: toJson([cluster.rubric]),
@@ -282,25 +364,31 @@ export function createRunner(deps: ImprovementDeps) {
             created_at: now().toISOString(),
           })
           .execute();
+        // Only now does the branch belong to a proposal; any failure above leaves nothing behind.
+        keepBranch = true;
         return { outcome: 'proposed', detail: answer.title, proposalId };
       } catch (e) {
         if (!(e instanceof DiffRejectedError)) throw e;
-        const diff = await diffSince(dir, baseSha).catch(() => '');
+        const hidden = e.sensitive;
+        const diff = hidden ? '' : await diffSince(dir, baseSha).catch(() => '');
         const id = await storeFailed(
           runId,
           repo,
           cluster,
           summary,
-          answer.title,
-          answer.rationale,
+          hidden ? 'Refused proposal' : answer.title,
+          hidden ? '' : answer.rationale,
           diff,
           e.message,
         );
+        await recordOutcome(cluster, 'failed', e.message);
         return { outcome: 'failed', detail: e.message, proposalId: id };
       }
     } finally {
-      await removeWorktree(repo.path, dir);
-      if (!keepBranch) await deleteBranch(repo.path, branchName);
+      await locks.run(repo.id, async () => {
+        await removeWorktree(repo.path, dir);
+        if (!keepBranch) await deleteBranch(repo.path, branchName);
+      });
     }
   }
 
@@ -346,17 +434,14 @@ export function createRunner(deps: ImprovementDeps) {
         skipped.add(f.sessionId);
         continue;
       }
-      const repo = await resolveTarget(f, repos);
-      if (!repo) {
+      const target = await resolveTarget(f, repos);
+      if ('skip' in target) {
         if (!skipped.has(f.sessionId))
-          summary.skippedSessions.push({
-            sessionId: f.sessionId,
-            reason: 'no global skills repository is set',
-          });
+          summary.skippedSessions.push({ sessionId: f.sessionId, reason: target.skip });
         skipped.add(f.sessionId);
         continue;
       }
-      targeted.push({ ...f, targetRepoId: repo.id });
+      targeted.push({ ...f, targetRepoId: target.repo.id });
     }
     const clusters = clusterFailures(targeted);
     let proposals = 0;
@@ -390,6 +475,11 @@ export function createRunner(deps: ImprovementDeps) {
         report.detail = 'a proposal already covers these sessions';
         continue;
       }
+      const earlier = await recentOutcome(cluster);
+      if (earlier) {
+        report.detail = `${earlier.outcome} on ${earlier.at.slice(0, 10)} for these same sessions; it is tried again after new failures join the cluster or ${String(dedupeMs / DAY_MS)} days pass`;
+        continue;
+      }
       try {
         const out = await proposeCluster(runId, cluster, repo);
         if ('defer' in out) {
@@ -406,6 +496,8 @@ export function createRunner(deps: ImprovementDeps) {
         report.outcome = 'failed';
         report.detail = e instanceof Error ? e.message : String(e);
         failed += 1;
+        // A response that was paid for and gave nothing usable is not paid for again tomorrow.
+        if (e instanceof ImproverCallError) await recordOutcome(cluster, 'failed', report.detail);
       }
     }
     return {

@@ -1253,11 +1253,18 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "warnings": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               }
             },
             "required": [
               "ok",
-              "problems"
+              "problems",
+              "warnings"
             ]
           },
           "mergeCommit": {
@@ -1665,6 +1672,9 @@
               "pr",
               null
             ]
+          },
+          "allowExecutable": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -1673,7 +1683,8 @@
           "path",
           "hasRubrics",
           "enabled",
-          "acceptMode"
+          "acceptMode",
+          "allowExecutable"
         ]
       }
     },
@@ -4638,7 +4649,7 @@
         }
       },
       "patch": {
-        "summary": "Edit first: replace the diff. It is validated like an improver diff, must apply to the base commit, and amends the proposal branch",
+        "summary": "Edit first: replace the diff. It is validated like an improver diff (422 with the reason: a path outside the allow-list, an executable surface, a symlink, an invisible character, a secret, or a diff that changes nothing), must apply to the base commit (422), and replaces the proposal branch only when every check passed. 409 when the proposal is not open or a pull request is open",
         "security": [
           {
             "bearerAuth": []
@@ -4823,7 +4834,7 @@
     },
     "/v1/proposals/{id}/reject": {
       "post": {
-        "summary": "Reject with a reason; the branch is deleted",
+        "summary": "Reject an open or conflicting proposal with a reason; the branch is deleted, and an open pull request is closed with `gh pr close --delete-branch` (409 with a fix when that fails). 409 when the proposal is already decided",
         "security": [
           {
             "bearerAuth": []
@@ -5751,7 +5762,7 @@
     },
     "/v1/skill-repos/projects": {
       "post": {
-        "summary": "Register a project repository (below the mounted projects folder) so the improver can propose `.claude/**`, CLAUDE.md and AGENTS.md changes there",
+        "summary": "Register a project repository (below the mounted projects folder) so the improver can propose `.claude/skills|commands|agents/**`, CLAUDE.md and AGENTS.md changes there",
         "security": [
           {
             "bearerAuth": []
@@ -5842,7 +5853,7 @@
     },
     "/v1/skill-repos/{id}": {
       "patch": {
-        "summary": "Enable or disable a skills repository, and set (`merge` or `pr`) or clear (`null`) its accept-mode override",
+        "summary": "Enable or disable a skills repository, set (`merge` or `pr`) or clear (`null`) its accept-mode override, and allow or deny executable instruction surfaces (hooks, settings, scripts)",
         "security": [
           {
             "bearerAuth": []
@@ -5879,6 +5890,9 @@
                       "pr",
                       null
                     ]
+                  },
+                  "allowExecutable": {
+                    "type": "boolean"
                   }
                 }
               }

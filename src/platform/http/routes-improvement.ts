@@ -56,7 +56,13 @@ export const proposalSchema = z
     clusterSize: z.number().int(),
     /** How accepting works for the target repository now (its override, else the setting). */
     acceptMode: z.enum(['merge', 'pr']),
-    validation: z.object({ ok: z.boolean(), problems: z.array(z.string()) }),
+    validation: z.object({
+      ok: z.boolean(),
+      /** Why a `failed` proposal was refused. */
+      problems: z.array(z.string()),
+      /** Allowed but worth a second look: the change touches a hook, settings file or script that Claude Code executes (only when the repository sets allowExecutable). */
+      warnings: z.array(z.string()),
+    }),
     /** SHA of the merge commit after a local merge. */
     mergeCommit: z.string().nullable(),
     rejectReason: z.string().nullable(),
@@ -146,7 +152,7 @@ const patchProposal = createRoute({
   method: 'patch',
   path: '/v1/proposals/{id}',
   summary:
-    'Edit first: replace the diff. It is validated like an improver diff, must apply to the base commit, and amends the proposal branch',
+    'Edit first: replace the diff. It is validated like an improver diff (422 with the reason: a path outside the allow-list, an executable surface, a symlink, an invisible character, a secret, or a diff that changes nothing), must apply to the base commit (422), and replaces the proposal branch only when every check passed. 409 when the proposal is not open or a pull request is open',
   security,
   request: {
     params: id,
@@ -171,7 +177,8 @@ const acceptProposal = createRoute({
 const rejectProposal = createRoute({
   method: 'post',
   path: '/v1/proposals/{id}/reject',
-  summary: 'Reject with a reason; the branch is deleted',
+  summary:
+    'Reject an open or conflicting proposal with a reason; the branch is deleted, and an open pull request is closed with `gh pr close --delete-branch` (409 with a fix when that fails). 409 when the proposal is already decided',
   security,
   request: {
     params: id,

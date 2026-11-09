@@ -1,37 +1,69 @@
-import { execFile, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { realpath, stat } from 'node:fs/promises';
-import { promisify } from 'node:util';
 
-const run = promisify(execFile);
 const GIT_TIMEOUT_MS = 30_000;
 const FALLBACK_IDENTITY = ['-c', 'user.name=Introspect', '-c', 'user.email=introspect@localhost'];
 
-/** Runs git without a shell; arguments are never interpreted. Rejects with git's stderr. */
-export async function git(cwd: string, args: readonly string[]): Promise<string> {
-  try {
-    const { stdout } = await run('git', [...args], {
-      cwd,
-      timeout: GIT_TIMEOUT_MS,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-    });
-    return stdout.trim();
-  } catch (e) {
-    const err = e as { stderr?: string; message: string };
-    const stderr = err.stderr?.trim() ?? '';
-    const detail = stderr === '' ? err.message : stderr;
-    throw new Error(`git ${args.join(' ')} failed: ${detail}`, { cause: e });
+/**
+ * Every automated git call ignores the repository's hooks, signing and fsmonitor: they are
+ * commands the repository's author chose, and the container has neither their tools nor their keys.
+ */
+const SAFE_CONFIG = [
+  '-c',
+  'core.hooksPath=/dev/null',
+  '-c',
+  'commit.gpgsign=false',
+  '-c',
+  'core.fsmonitor=false',
+];
+
+const BASE_ENV_KEYS = ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TZ', 'XDG_CONFIG_HOME'];
+const NETWORK_ENV_KEYS = ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_HOST', 'GH_CONFIG_DIR', 'SSH_AUTH_SOCK'];
+const GIT_ENV = /^GIT_(AUTHOR|COMMITTER)_|^GIT_CONFIG_(GLOBAL|SYSTEM|NOSYSTEM)$/;
+
+/** The environment of a child that is git or gh: no other secret of the server's reaches it. `network` adds the forge credentials. */
+export function minimalEnv(
+  network = false,
+  source: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { GIT_TERMINAL_PROMPT: '0' };
+  const keys = network ? [...BASE_ENV_KEYS, ...NETWORK_ENV_KEYS] : BASE_ENV_KEYS;
+  for (const [k, v] of Object.entries(source))
+    if (v !== undefined && (keys.includes(k) || GIT_ENV.test(k))) env[k] = v;
+  return env;
+}
+
+/** A git call that exited non-zero (or was killed); `exitCode` tells a merge conflict (1) from a crash. */
+export class GitError extends Error {
+  constructor(
+    message: string,
+    readonly exitCode: number | null,
+    readonly stderr: string,
+  ) {
+    super(message);
+    this.name = 'GitError';
   }
+}
+
+export interface GitOptions {
+  /** Passes GH_TOKEN and friends: only for push and `gh`. */
+  network?: boolean;
 }
 
 /**
  * Runs git with optional stdin and returns stdout untouched (a diff's trailing newline matters).
- * Rejects with git's stderr.
+ * Rejects with a GitError holding git's stderr.
  */
-export function gitRaw(cwd: string, args: readonly string[], input?: string): Promise<string> {
+export function gitRaw(
+  cwd: string,
+  args: readonly string[],
+  input?: string,
+  opts: GitOptions = {},
+): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn('git', [...args], {
+    const child = spawn('git', [...SAFE_CONFIG, ...args], {
       cwd,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      env: minimalEnv(opts.network === true),
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     const out: Buffer[] = [];
@@ -47,15 +79,28 @@ export function gitRaw(cwd: string, args: readonly string[], input?: string): Pr
     child.on('close', (code) => {
       clearTimeout(timer);
       if (code === 0) resolve(Buffer.concat(out).toString('utf8'));
-      else
+      else {
+        const stderr = Buffer.concat(err).toString('utf8').trim();
         reject(
-          new Error(
-            `git ${args.join(' ')} failed: ${Buffer.concat(err).toString('utf8').trim() || `exit ${String(code)}`}`,
+          new GitError(
+            `git ${args.join(' ')} failed: ${stderr || `exit ${String(code)}`}`,
+            code,
+            stderr,
           ),
         );
+      }
     });
     child.stdin.end(input ?? '');
   });
+}
+
+/** Runs git without a shell; arguments are never interpreted. Rejects with git's stderr. */
+export async function git(
+  cwd: string,
+  args: readonly string[],
+  opts: GitOptions = {},
+): Promise<string> {
+  return (await gitRaw(cwd, args, undefined, opts)).trim();
 }
 
 /** Creates a repository with `main` as its first branch, whatever the user's `init.defaultBranch` says. */
@@ -92,9 +137,6 @@ export async function commitPaths(
   await git(repo, ['add', '--', ...paths]);
   await git(repo, [...(await identityArgs(repo)), 'commit', '-m', message, '--', ...paths]);
 }
-
-/** Automated commits ignore the user's hooks and signing (the container has neither their tools nor their keys). */
-const AUTOMATED = ['-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null'];
 
 export const revParse = (repo: string, rev: string): Promise<string> =>
   git(repo, ['rev-parse', '--verify', `${rev}^{commit}`]);
@@ -134,15 +176,6 @@ export async function addWorktree(
   await git(repo, ['worktree', 'add', '-q', '-b', branch, path, startPoint]);
 }
 
-/** Adds a worktree for an existing branch. */
-export async function addWorktreeForBranch(
-  repo: string,
-  path: string,
-  branch: string,
-): Promise<void> {
-  await git(repo, ['worktree', 'add', '-q', path, branch]);
-}
-
 /** Removes a worktree and forgets stale ones; never throws, so cleanup cannot hide the real error. */
 export async function removeWorktree(repo: string, path: string): Promise<void> {
   await git(repo, ['worktree', 'remove', '--force', path]).catch(() => undefined);
@@ -153,17 +186,19 @@ export async function deleteBranch(repo: string, branch: string): Promise<void> 
   await git(repo, ['branch', '-D', branch]).catch(() => undefined);
 }
 
+/** The worktree holds no change (the edits equal the content already there). */
+export class NothingToCommitError extends Error {
+  constructor() {
+    super('nothing to commit');
+    this.name = 'NothingToCommitError';
+  }
+}
+
 /** Stages everything in `worktree` and commits it on the checked-out branch; returns the new HEAD. */
 export async function commitAll(worktree: string, message: string): Promise<string> {
   await git(worktree, ['add', '-A']);
-  await git(worktree, [
-    ...(await identityArgs(worktree)),
-    ...AUTOMATED,
-    'commit',
-    '-q',
-    '-m',
-    message,
-  ]);
+  if ((await git(worktree, ['status', '--porcelain'])) === '') throw new NothingToCommitError();
+  await git(worktree, [...(await identityArgs(worktree)), 'commit', '-q', '-m', message]);
   return git(worktree, ['rev-parse', 'HEAD']);
 }
 
@@ -182,12 +217,26 @@ export async function applyDiff(repo: string, diff: string, check = false): Prom
   );
 }
 
-/** `git merge --no-ff`; on a conflict the merge is aborted and `false` returned. */
-export async function mergeNoFf(repo: string, branch: string, message: string): Promise<boolean> {
+/** True while a merge is in progress in `repo` (MERGE_HEAD exists). */
+export const mergeInProgress = (repo: string): Promise<boolean> =>
+  git(repo, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).then(
+    () => true,
+    () => false,
+  );
+
+/**
+ * `git merge --no-ff`. A real conflict (exit 1 with MERGE_HEAD left behind) is aborted and returns
+ * `conflict`. Any other failure throws, and a merge this call left half done is aborted too; the
+ * caller must have checked that no merge was running before (and hold the repository's lock).
+ */
+export async function mergeNoFf(
+  repo: string,
+  branch: string,
+  message: string,
+): Promise<'merged' | 'conflict'> {
   try {
     await git(repo, [
       ...(await identityArgs(repo)),
-      ...AUTOMATED,
       'merge',
       '--no-ff',
       '--no-verify',
@@ -195,11 +244,33 @@ export async function mergeNoFf(repo: string, branch: string, message: string): 
       message,
       branch,
     ]);
-    return true;
-  } catch {
-    await git(repo, ['merge', '--abort']).catch(() => undefined);
-    return false;
+    return 'merged';
+  } catch (e) {
+    const halfDone = await mergeInProgress(repo);
+    if (halfDone) await git(repo, ['merge', '--abort']).catch(() => undefined);
+    if (halfDone && e instanceof GitError && e.exitCode === 1) return 'conflict';
+    throw e;
   }
+}
+
+/** Moves `refs/heads/<branch>` to `to` only while it still points at `from`. */
+export async function moveBranch(
+  repo: string,
+  branch: string,
+  to: string,
+  from: string,
+): Promise<void> {
+  await git(repo, ['update-ref', `refs/heads/${branch}`, to, from]);
+}
+
+/** Local branch names below `prefix` (for example `introspect/`). */
+export async function listBranches(repo: string, prefix: string): Promise<string[]> {
+  const out = await git(repo, [
+    'for-each-ref',
+    '--format=%(refname:short)',
+    `refs/heads/${prefix}`,
+  ]);
+  return out.split('\n').filter((b) => b !== '');
 }
 
 /** Files changed between two commits. */

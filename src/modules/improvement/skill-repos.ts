@@ -5,7 +5,7 @@ import { newId } from '../../platform/db/ids.js';
 import { asBool, fromJson } from '../../platform/db/json.js';
 import type { Db } from '../../platform/db/schema.js';
 import { ConflictError, InvalidInputError } from '../../platform/errors.js';
-import { initRepo, isGitRepoRoot } from '../../platform/git/index.js';
+import { defaultBranch, initRepo, isGitRepoRoot } from '../../platform/git/index.js';
 import { copyStarterRubrics, hasRubrics } from '../rubrics/index.js';
 
 export interface SkillRepoDto {
@@ -16,6 +16,8 @@ export interface SkillRepoDto {
   hasRubrics: boolean;
   enabled: boolean;
   acceptMode: 'merge' | 'pr' | null;
+  /** Hooks, settings files and scripts may be proposed (each such proposal carries a warning). */
+  allowExecutable: boolean;
 }
 
 export interface DetectedSkillRepo {
@@ -44,6 +46,7 @@ export interface SkillRepoRow {
   allowList: string[] | null;
   acceptMode: 'merge' | 'pr' | null;
   enabled: boolean;
+  allowExecutable: boolean;
 }
 
 export interface SkillReposOptions {
@@ -93,7 +96,7 @@ export function createSkillRepos(db: Db, workspaceId: string, options: SkillRepo
   const select = () =>
     db
       .selectFrom('skill_repo')
-      .select(['id', 'kind', 'path', 'enabled', 'accept_mode'])
+      .select(['id', 'kind', 'path', 'enabled', 'accept_mode', 'allow_executable'])
       .where('workspace_id', '=', workspaceId);
   type Row = Awaited<ReturnType<ReturnType<typeof select>['execute']>>[number];
 
@@ -104,6 +107,7 @@ export function createSkillRepos(db: Db, workspaceId: string, options: SkillRepo
     hasRubrics: await hasRubrics(r.path),
     enabled: asBool(r.enabled),
     acceptMode: r.accept_mode === 'merge' || r.accept_mode === 'pr' ? r.accept_mode : null,
+    allowExecutable: asBool(r.allow_executable),
   });
 
   const toRow = (r: {
@@ -114,6 +118,7 @@ export function createSkillRepos(db: Db, workspaceId: string, options: SkillRepo
     allow_list: string | null;
     accept_mode: string | null;
     enabled: boolean | number;
+    allow_executable: boolean | number;
   }): SkillRepoRow => ({
     id: r.id,
     kind: r.kind,
@@ -122,6 +127,7 @@ export function createSkillRepos(db: Db, workspaceId: string, options: SkillRepo
     allowList: r.allow_list === null ? null : (fromJson(r.allow_list) as string[]),
     acceptMode: r.accept_mode === 'merge' || r.accept_mode === 'pr' ? r.accept_mode : null,
     enabled: asBool(r.enabled),
+    allowExecutable: asBool(r.allow_executable),
   });
 
   return {
@@ -194,11 +200,16 @@ export function createSkillRepos(db: Db, workspaceId: string, options: SkillRepo
     /** Enable or disable a repository, and set or clear (null) its accept-mode override. */
     async update(
       id: string,
-      patch: { enabled?: boolean | undefined; acceptMode?: 'merge' | 'pr' | null | undefined },
+      patch: {
+        enabled?: boolean | undefined;
+        acceptMode?: 'merge' | 'pr' | null | undefined;
+        allowExecutable?: boolean | undefined;
+      },
     ): Promise<SkillRepoDto | null> {
       const set = {
         ...(patch.enabled !== undefined && { enabled: patch.enabled }),
         ...(patch.acceptMode !== undefined && { accept_mode: patch.acceptMode }),
+        ...(patch.allowExecutable !== undefined && { allow_executable: patch.allowExecutable }),
       };
       if (Object.keys(set).length > 0)
         await db
@@ -213,7 +224,7 @@ export function createSkillRepos(db: Db, workspaceId: string, options: SkillRepo
 
     /**
      * Registers a project repository: the root of a git work tree below a mounted projects folder.
-     * Its allow-list is fixed to `.claude/**`, `CLAUDE.md` and `AGENTS.md` (ADR-0010); source code is never in it.
+     * Its allow-list is fixed to `.claude/{skills,commands,agents}/**`, `CLAUDE.md` and `AGENTS.md` (ADR-0010); source code is never in it.
      */
     async registerProject(path: string): Promise<SkillRepoDto> {
       if (!path.startsWith('/')) throw new InvalidInputError('The path must be absolute');
@@ -257,6 +268,15 @@ export function createSkillRepos(db: Db, workspaceId: string, options: SkillRepo
         .where('workspace_id', '=', workspaceId)
         .executeTakeFirst();
       return found ? toRow(found) : null;
+    },
+
+    /** The default branch as git says it now (origin/HEAD, main, master); the cached copy is updated when it moved. */
+    async refreshDefaultBranch(
+      repo: Pick<SkillRepoRow, 'id' | 'path' | 'defaultBranch'>,
+    ): Promise<string> {
+      const branch = await defaultBranch(repo.path);
+      if (branch !== repo.defaultBranch) await this.rememberDefaultBranch(repo.id, branch);
+      return branch;
     },
 
     async rememberDefaultBranch(id: string, branch: string): Promise<void> {

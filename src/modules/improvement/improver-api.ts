@@ -116,7 +116,23 @@ export function createApiImprover(opts: ApiImproverOptions): Improver {
       ];
       let usage: Usage = NO_USAGE;
       let answered = model;
+      let lastTurn = { input: 0, output: 0 };
       for (let turn = 0; turn < MAX_TURNS; turn += 1) {
+        // The next turn re-sends everything so far and may answer with a full MAX_TOKENS: stop before
+        // that could go past what the budget reserved (cache reads are not counted, as in the ledger).
+        const spent = usage.input + usage.cacheWrite + usage.output;
+        if (
+          turn > 0 &&
+          req.tokenCap !== undefined &&
+          spent + lastTurn.input + lastTurn.output + MAX_TOKENS > req.tokenCap
+        )
+          return {
+            kind: 'none',
+            reason: `budget: stopped after ${String(turn)} turns at ${String(spent)} tokens, close to the ${String(req.tokenCap)} reserved for this call`,
+            model: answered,
+            usage,
+            budget: true,
+          };
         let res: Anthropic.Message;
         try {
           res = await client.messages.create({
@@ -134,6 +150,10 @@ export function createApiImprover(opts: ApiImproverOptions): Improver {
           throw usage === NO_USAGE ? e : new ImproverCallError(describe(e), usage, answered);
         }
         answered = res.model;
+        lastTurn = {
+          input: res.usage.input_tokens + (res.usage.cache_creation_input_tokens ?? 0),
+          output: res.usage.output_tokens,
+        };
         usage = addUsage(usage, {
           input: res.usage.input_tokens,
           cacheRead: res.usage.cache_read_input_tokens ?? 0,

@@ -10,7 +10,8 @@ const real = (p: string): Promise<string> => realpath(p).catch(() => p);
  *
  * A session records the host path of its repository, which inside the container is mounted
  * elsewhere (`/repos/projects/<name>`). A project therefore matches when the session's folder
- * (or one of its parents) is the registered path, or when the repository root has the same folder name.
+ * (or one of its parents) is the registered path, or when the repository root has the same folder name (only when exactly one registered
+ * project has it; with several the session is skipped, never guessed).
  *
  * ponytail: instruction files loaded in the session (ADR-0010 rule 1) are not consulted, so a
  * failure caused by a global skill inside a registered project still targets the project. Upgrade
@@ -19,7 +20,7 @@ const real = (p: string): Promise<string> => realpath(p).catch(() => p);
 export async function resolveTarget(
   session: { repoRoot: string | null; cwd: string | null },
   repos: readonly SkillRepoRow[],
-): Promise<SkillRepoRow | null> {
+): Promise<{ repo: SkillRepoRow } | { skip: string }> {
   const enabled = repos.filter((r) => r.enabled);
   const projects = enabled.filter((r) => r.kind === 'project');
   const start = session.repoRoot ?? session.cwd;
@@ -29,14 +30,20 @@ export async function resolveTarget(
     );
     for (let dir = start; ; dir = dirname(dir)) {
       const hit = known.find((k) => k.paths.has(dir));
-      if (hit) return hit.row;
+      if (hit) return { repo: hit.row };
       if (dirname(dir) === dir) break;
     }
   }
   if (session.repoRoot) {
     const name = basename(session.repoRoot);
     const byName = projects.filter((p) => basename(p.path) === name);
-    if (byName.length === 1) return byName[0] ?? null;
+    const [only] = byName;
+    if (only && byName.length === 1) return { repo: only };
+    if (byName.length > 1)
+      return {
+        skip: `${String(byName.length)} registered project repositories are named "${name}"; the session's repository cannot be told apart`,
+      };
   }
-  return enabled.find((r) => r.kind === 'global') ?? null;
+  const global = enabled.find((r) => r.kind === 'global');
+  return global ? { repo: global } : { skip: 'no global skills repository is set' };
 }

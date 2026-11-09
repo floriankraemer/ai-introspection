@@ -187,6 +187,18 @@ export interface Schema {
     allow_list: Json | null;
     accept_mode: string | null;
     enabled: Bool;
+    /** Hooks, settings and scripts may be proposed (default off). */
+    allow_executable: Bool;
+  };
+  cluster_outcome: {
+    id: string;
+    workspace_id: string;
+    target_repo_id: string;
+    /** Hash of the cluster's session ids. */
+    fingerprint: string;
+    outcome: 'declined' | 'failed';
+    detail: string;
+    at: Ts;
   };
   proposal: {
     id: string;

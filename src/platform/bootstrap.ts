@@ -103,7 +103,12 @@ function buildImprovement(
       sourcePaths: async () => (await ingest.sources.list()).map((s) => s.path),
       override: config.improverOverride,
     }),
-    // The diff is scanned with the same rules as ingest, built-in and custom (ADR-0007).
+    // Diffs and repository files are scanned with the same rules as ingest, built-in and custom (ADR-0007).
+    redact: async (text) =>
+      createRedactor({
+        key: redactionKey,
+        customPatterns: (await settings.get())['redaction.custom_patterns'],
+      }).redact(text),
     hasSecret: async (text) => {
       const redactor = createRedactor({
         key: redactionKey,
@@ -267,6 +272,10 @@ export async function startServer(config: Config): Promise<RunningServer> {
 
   const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host }, (info) => {
     console.log(`introspect listening on http://${info.address}:${String(info.port)}`);
+  });
+  // A crash can leave worktrees and branches behind; clear them before any job can use them.
+  await improvement.sweep().catch((e: unknown) => {
+    console.error('improver housekeeping failed', e);
   });
   worker.start();
   scheduler.start();
