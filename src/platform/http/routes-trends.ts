@@ -1,5 +1,6 @@
 import { createRoute, z, type OpenAPIHono } from '@hono/zod-openapi';
-import type { Trends } from '../../modules/trends/index.js';
+import { enqueueTrendsScan, type Trends } from '../../modules/trends/index.js';
+import { LOCAL_WORKSPACE_ID } from '../identity/index.js';
 import type { JobQueue } from '../jobs/queue.js';
 import { ApiError, problemResponses } from './problem.js';
 import { jobSchema, security, toJobDto } from './schemas.js';
@@ -156,6 +157,15 @@ const regrade = createRoute({
   responses: { 202: json(jobSchema, 'The grading job'), ...problemResponses },
 });
 
+const scanNow = createRoute({
+  method: 'post',
+  path: '/v1/trends/scan',
+  summary:
+    'Look for manual edits, rubric versions and judge changes now, without waiting for the schedule',
+  security,
+  responses: { 202: json(jobSchema, 'The scan job'), ...problemResponses },
+});
+
 const addReference = createRoute({
   method: 'post',
   path: '/v1/sessions/{id}/reference',
@@ -186,6 +196,11 @@ export function registerTrendsRoutes(app: OpenAPIHono, { queue, trends }: Trends
   app.openapi(regrade, async (c) => {
     const job = await queue.get(await trends.reference.regrade());
     if (!job) throw new ApiError(500, 'Internal server error', 'The grading job vanished');
+    return c.json(toJobDto(job), 202);
+  });
+  app.openapi(scanNow, async (c) => {
+    const job = await queue.get(await enqueueTrendsScan(queue, LOCAL_WORKSPACE_ID));
+    if (!job) throw new ApiError(500, 'Internal server error', 'The scan job vanished');
     return c.json(toJobDto(job), 202);
   });
   app.openapi(addReference, async (c) => {

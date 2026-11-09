@@ -95,13 +95,16 @@ export interface JobQueue {
   list(opts: { status?: JobStatus; cursor?: string; limit: number }): Promise<Job[]>;
 }
 
-export function createJobQueue({ db, dialect }: DbHandle): JobQueue {
+export function createJobQueue(
+  { db, dialect }: DbHandle,
+  clock: () => Date = () => new Date(),
+): JobQueue {
   const iso = (d: Date): string => d.toISOString();
 
   return {
     async enqueue(input, tx = db) {
       const id = newId();
-      const now = new Date();
+      const now = clock();
       const inserted = await tx
         .insertInto('job')
         .values({
@@ -121,7 +124,7 @@ export function createJobQueue({ db, dialect }: DbHandle): JobQueue {
       return inserted?.id ?? null;
     },
 
-    async claim(workerId, kinds, now = new Date()) {
+    async claim(workerId, kinds, now = clock()) {
       if (kinds.length === 0) return null;
       // One statement picks, locks and updates the row. On Postgres the pick is a MATERIALIZED CTE:
       // a plain `id IN (subselect ... LIMIT 1 FOR UPDATE SKIP LOCKED)` may be planned as a join that
@@ -157,7 +160,7 @@ export function createJobQueue({ db, dialect }: DbHandle): JobQueue {
       return row ? toJob(row) : null;
     },
 
-    async heartbeat(jobId, workerId, now = new Date()) {
+    async heartbeat(jobId, workerId, now = clock()) {
       const r = await db
         .updateTable('job')
         .set({ lease_until: iso(new Date(now.getTime() + LEASE_MS)) })
@@ -168,7 +171,7 @@ export function createJobQueue({ db, dialect }: DbHandle): JobQueue {
       return r.numUpdatedRows > 0n;
     },
 
-    async complete(jobId, workerId, now = new Date()) {
+    async complete(jobId, workerId, now = clock()) {
       await db
         .updateTable('job')
         .set({ status: 'succeeded', finished_at: iso(now), lease_until: null, locked_by: null })
@@ -177,7 +180,7 @@ export function createJobQueue({ db, dialect }: DbHandle): JobQueue {
         .execute();
     },
 
-    async fail(jobId, workerId, error, now = new Date()) {
+    async fail(jobId, workerId, error, now = clock()) {
       return db.transaction().execute(async (tx) => {
         const job = await tx
           .selectFrom('job')
@@ -220,7 +223,7 @@ export function createJobQueue({ db, dialect }: DbHandle): JobQueue {
         .execute();
     },
 
-    async reapExpired(now = new Date()) {
+    async reapExpired(now = clock()) {
       const base = (status: JobStatus, outOfAttempts: boolean) =>
         db
           .updateTable('job')
@@ -244,7 +247,7 @@ export function createJobQueue({ db, dialect }: DbHandle): JobQueue {
       return Number(dead.numUpdatedRows + requeued.numUpdatedRows);
     },
 
-    async retryDead(jobId, now = new Date()) {
+    async retryDead(jobId, now = clock()) {
       const r = await db
         .updateTable('job')
         .set({ status: 'queued', attempts: 0, run_after: iso(now), finished_at: null })

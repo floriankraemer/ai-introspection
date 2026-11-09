@@ -183,6 +183,18 @@ describe('sessions', () => {
       notGradedReason: expect.any(String),
     });
     expect((await call('GET', '/v1/sessions?limit=0')).status).toBe(400);
+    expect((await call('GET', '/v1/sessions?since=yesterday')).status).toBe(400);
+    const since = await json<{ items: unknown[] }>(
+      await call('GET', '/v1/sessions?since=2099-01-01T00:00:00Z'),
+    );
+    expect(since.items).toEqual([]);
+    expect(
+      (
+        await json<{ items: unknown[] }>(
+          await call('GET', '/v1/sessions?since=2000-01-01T00:00:00Z'),
+        )
+      ).items,
+    ).toHaveLength(2);
     expect((await call('GET', '/v1/sessions?agent=vim')).status).toBe(400);
   });
 
@@ -247,6 +259,12 @@ describe('sessions', () => {
       rubrics: [],
     });
     expect(await json(await call('GET', '/v1/trends/summary'))).toMatchObject({ days: 7 });
+    expect(await json(await call('GET', '/v1/trends/summary?days=0'))).toMatchObject({
+      days: 0,
+      sessionsCollected: 2,
+    });
+    expect((await call('GET', '/v1/trends/summary?days=366')).status).toBe(400);
+    expect((await call('GET', '/v1/trends/summary?days=-1')).status).toBe(400);
   });
 });
 

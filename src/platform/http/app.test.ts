@@ -230,6 +230,16 @@ describe('trends api', () => {
     });
   });
 
+  it('starts a change scan now: 202 and a trends_scan job, a new one each time', async () => {
+    const first = await post('/v1/trends/scan');
+    expect(first.status).toBe(202);
+    const a = (await first.json()) as { id: string; kind: string };
+    expect(a.kind).toBe('trends_scan');
+    const b = (await (await post('/v1/trends/scan')).json()) as { id: string };
+    expect(b.id).not.toBe(a.id);
+    expect((await app.request(`${BASE}/v1/trends/scan`, { method: 'POST' })).status).toBe(401);
+  });
+
   it('answers 409 to a re-grade of an empty reference set and 404 to an unknown session', async () => {
     expect((await post('/v1/trends/reference-regrade')).status).toBe(409);
     const missing = '018f0000-0000-7000-8000-000000000000';

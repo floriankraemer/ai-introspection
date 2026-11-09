@@ -85,7 +85,12 @@ export interface SettingsService {
   onUpdate(listener: (keys: readonly string[]) => Promise<void>): void;
 }
 
-export function createSettings(db: Db, workspaceId: string, secrets: SecretStore): SettingsService {
+export function createSettings(
+  db: Db,
+  workspaceId: string,
+  secrets: SecretStore,
+  clock: () => Date = () => new Date(),
+): SettingsService {
   async function get(): Promise<Settings> {
     const rows = await db
       .selectFrom('setting')
@@ -111,7 +116,7 @@ export function createSettings(db: Db, workspaceId: string, secrets: SecretStore
       // Merge into the current values and validate the whole, so no invalid state is ever stored.
       // The derived `judge.api_key_set` is stripped by the schema.
       const next = storedSchema.parse({ ...(await get()), ...patch });
-      const now = new Date().toISOString();
+      const now = clock().toISOString();
       for (const key of Object.keys(patch) as (keyof SettingsPatch)[]) {
         await db
           .insertInto('setting')

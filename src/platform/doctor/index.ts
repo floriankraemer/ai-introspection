@@ -18,6 +18,8 @@ export interface DoctorReport {
 export interface DoctorInput {
   dataDir: string;
   watchPoll: boolean;
+  /** `INTROSPECT_NOW`: the app clock is fixed to start there (tests only). */
+  fixedNow?: string | undefined;
   /** The `redaction.enabled` setting; sessions stored while it is off never reach a judge. */
   redactionEnabled: boolean;
   /** `error` is set when the database cannot be read or is not migrated. */
@@ -90,6 +92,17 @@ const MOUNT_HINTS: Record<string, string> = {
 const mountFix = (path: string): string =>
   MOUNT_HINTS[path] ??
   'mount the folder into the container (volumes in compose.yaml) or correct the path in Settings';
+
+export function checkClock({ fixedNow }: Pick<DoctorInput, 'fixedNow'>): DoctorCheck | null {
+  if (fixedNow === undefined) return null;
+  return problem(
+    'warn',
+    'clock',
+    'Clock',
+    `INTROSPECT_NOW=${fixedNow} is set: every time in the app starts from that instant`,
+    'Unset INTROSPECT_NOW and run `make up` to use the real time.',
+  );
+}
 
 export function checkData({ dataDir, db }: DoctorInput): DoctorCheck {
   const label = 'Data folder and database';
@@ -365,7 +378,8 @@ export async function runDoctor(input: DoctorInput): Promise<DoctorReport> {
     ...checkRubrics(input),
     ...checkChangeScan(input),
     checkOwnership(input),
-  ];
+    checkClock(input),
+  ].filter((c): c is DoctorCheck => c !== null);
   return { checks };
 }
 

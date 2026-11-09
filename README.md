@@ -33,6 +33,9 @@ Sessions stored while redaction was off, or with older redaction rules, are neve
 A rubric counts as trusted once the judge agrees with at least 8 of your 10 hand labels (Rubrics screen); untrusted rubrics are graded but marked.
 
 `INTROSPECT_JUDGE=fake` (environment only) swaps in a deterministic judge for tests and demos.
+`INTROSPECT_NOW=2026-11-09T08:00:00Z` (environment only) starts the app clock at that instant; it then advances in real time.
+Every business time (flagging and sampling windows, sweeps, schedules, budget windows, trends, retention, stored timestamps, and the dates of Introspect's own git commits) follows it, so E2E runs are repeatable.
+`make doctor` warns while it is set.
 
 ## Improving
 
@@ -64,7 +67,7 @@ Run it in the stack with `docker compose exec introspect introspect improve --no
   Rejecting a proposal with an open pull request closes it (`gh pr close --delete-branch`); if that fails you get the command to run by hand.
   A merge that fails for a reason other than a conflict is reported as an error and leaves the proposal open.
   An accepted proposal writes a change event that the Trends screen marks.
-- **Trends** (`GET /v1/trends`, `/v1/trends/changes`): pass rate per rubric per day or ISO week, with a marker for every accepted proposal, every manual edit of instruction files in a registered repository (found by a scan every 15 minutes; Introspect's own merges and pull requests are skipped; `make doctor` shows what the scan could not follow) and every rubric change.
+- **Trends** (`GET /v1/trends`, `/v1/trends/changes`): pass rate per rubric per day or ISO week, with a marker for every accepted proposal, every manual edit of instruction files in a registered repository (found by a scan every 15 minutes, or at once with `POST /v1/trends/scan` or `introspect scan`; Introspect's own merges and pull requests are skipped; `make doctor` shows what the scan could not follow) and every rubric change.
   A rubric or judge-model change is a baseline reset.
   The change log compares the 7 days (`trends.window_days`) before and after each change and gives a verdict per rubric on distinct sessions (Fisher's exact test below 30 sessions per side, else a z-test; 90%; Holm-corrected across rubrics), `too_early` below `trends.min_graded` (10) sessions on either side.
 - **Reference set**: up to 20 pinned sessions (`POST` or `DELETE /v1/sessions/{id}/reference`) that are re-graded after a rubric or judge change, or on `POST /v1/trends/reference-regrade`.

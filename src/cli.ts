@@ -7,6 +7,7 @@ import {
   runGradeCommand,
   runImportCommand,
   runImproveCommand,
+  runScanCommand,
   startServer,
 } from './platform/bootstrap.js';
 import { formatReport, hasFailure } from './platform/doctor/index.js';
@@ -90,6 +91,11 @@ async function gradeCommand(): Promise<void> {
   if (summary.failed > 0) process.exit(1);
 }
 
+async function scanCommand(): Promise<void> {
+  const { queued } = await runScanCommand(loadConfig());
+  console.log(`Queued change scan ${queued}. The running server picks it up.`);
+}
+
 async function improveCommand(): Promise<void> {
   const now = process.argv.includes('--now');
   const out = await runImproveCommand(loadConfig(), { since: option('since') ?? '24h', now });
@@ -158,6 +164,11 @@ if (command === 'serve') {
     console.error(e instanceof Error ? e.message : e);
     process.exit(1);
   });
+} else if (command === 'scan') {
+  scanCommand().catch((e: unknown) => {
+    console.error(e instanceof Error ? e.message : e);
+    process.exit(1);
+  });
 } else if (command === 'grade') {
   gradeCommand().catch((e: unknown) => {
     console.error(e instanceof Error ? e.message : e);
@@ -165,7 +176,7 @@ if (command === 'serve') {
   });
 } else {
   console.error(
-    'Usage: introspect serve | open | doctor | judge-login | import [--agent <agent> --path <folder>] | grade --session <id> | --since <7d> | --all [--policy] | improve [--now] [--since 24h]',
+    'Usage: introspect serve | open | doctor | judge-login | import [--agent <agent> --path <folder>] | grade --session <id> | --since <7d> | --all [--policy] | improve [--now] [--since 24h] | scan',
   );
   process.exit(1);
 }

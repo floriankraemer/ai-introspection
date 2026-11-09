@@ -2,7 +2,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { git, initRepo, minimalEnv } from './index.js';
+import { writeFileSync } from 'node:fs';
+import { commitPaths, git, initRepo, minimalEnv, setCommitClock } from './index.js';
 
 describe('minimalEnv', () => {
   const source = {
@@ -58,5 +59,18 @@ describe('git runner', () => {
     expect(await git(dir, ['config', 'core.hooksPath'])).toBe('/dev/null');
     expect(await git(dir, ['config', 'commit.gpgsign'])).toBe('false');
     expect(await git(dir, ['config', 'core.fsmonitor'])).toBe('false');
+  });
+
+  it('dates a commit from the commit clock, so the same content and identity give the same id', async () => {
+    setCommitClock(() => new Date('2026-11-09T08:00:00Z'));
+    try {
+      writeFileSync(join(dir, 'a.md'), 'a');
+      await commitPaths(dir, ['a.md'], 'add a');
+      expect(await git(dir, ['log', '-1', '--format=%aI|%cI'])).toBe(
+        '2026-11-09T08:00:00+00:00|2026-11-09T08:00:00+00:00',
+      );
+    } finally {
+      setCommitClock(() => new Date());
+    }
   });
 });

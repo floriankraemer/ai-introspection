@@ -140,6 +140,8 @@ const listSessions = createRoute({
       agent: agentSchema.optional(),
       result: z.enum(['failed_any', 'all', 'not_graded']).optional(),
       cursor: z.string().max(300).optional(),
+      /** Only sessions that started at or after this instant. */
+      since: z.iso.datetime({ offset: true }).optional(),
       limit,
     }),
   },
@@ -242,9 +244,9 @@ const startImport = createRoute({
 const trendSummary = createRoute({
   method: 'get',
   path: '/v1/trends/summary',
-  summary: 'Counts and pass rates for the Sessions header',
+  summary: 'Counts and pass rates for the Sessions header (days=0 means all time)',
   security,
-  request: { query: z.object({ days: z.coerce.number().int().min(1).max(365).default(7) }) },
+  request: { query: z.object({ days: z.coerce.number().int().min(0).max(365).default(7) }) },
   responses: { 200: json(trendSummarySchema, 'The summary'), ...problemResponses },
 });
 

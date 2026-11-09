@@ -71,7 +71,7 @@ export function createIngest(deps: IngestDeps) {
     settings: deps.settings,
     now,
   };
-  const sources = createSources(db, workspaceId, deps.userId, deps.pollMode);
+  const sources = createSources(db, workspaceId, deps.userId, deps.pollMode, now);
   const sessions = createSessionQueries(db, workspaceId);
 
   type EnabledSource = Awaited<ReturnType<typeof sources.enabledRows>>[number];

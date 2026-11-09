@@ -1,5 +1,7 @@
 import { fromJson } from '../../platform/db/json.js';
 import { ConflictError, NotFoundError } from '../../platform/errors.js';
+import { newId } from '../../platform/db/ids.js';
+import type { JobQueue } from '../../platform/jobs/queue.js';
 import type { Db } from '../../platform/db/schema.js';
 import type { JobHandler } from '../../platform/jobs/worker.js';
 import type { Schedule } from '../../platform/jobs/scheduler.js';
@@ -24,6 +26,16 @@ export { bucketsFor } from './buckets.js';
 const DAY_MS = 86_400_000;
 const WEEK_MS = 7 * DAY_MS;
 export const TRENDS_SCAN_JOB = 'trends_scan';
+/** Queues a change scan under a key of its own, so it runs even when one ran a moment ago. Returns the job id. */
+export async function enqueueTrendsScan(queue: JobQueue, workspaceId: string): Promise<string> {
+  const id = await queue.enqueue({
+    workspaceId,
+    kind: TRENDS_SCAN_JOB,
+    idempotencyKey: `trends-scan:manual:${newId()}`,
+  });
+  if (!id) throw new Error('The scan job was not queued');
+  return id;
+}
 /** Manual edits are noticed within this time (the build plan asks for 15 minutes). */
 const SCAN_CRON = '*/15 * * * *';
 /** The reference set is a fixed, small sample: it is re-graded in full after every change. */
@@ -360,7 +372,8 @@ export function createTrends(deps: TrendsDeps) {
 
     /** Header counts and pass-rate cards of the Sessions screen; same counting as the series. */
     async summary(days: number): Promise<TrendSummary> {
-      const since = new Date(now().getTime() - days * DAY_MS);
+      // 0 means all time.
+      const since = days === 0 ? new Date(0) : new Date(now().getTime() - days * DAY_MS);
       const sessionsCollected = await deps.ingest.sessions.countStartedSince(since);
       const { sessionsGraded, rubrics } = await deps.grading.trendRubrics(since);
       return { days, sessionsCollected, sessionsGraded, rubrics };

@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   checkChangeScan,
+  checkClock,
   checkData,
   checkGh,
   checkGitIdentity,
@@ -189,6 +190,15 @@ describe('judge check', () => {
   });
   it('warns when the fake judge is active', async () => {
     expect((await checkJudge(input({ judge: judge({ fake: true }) }))).status).toBe('warn');
+  });
+});
+
+describe('clock check', () => {
+  it('is silent on the real clock and warns on a fixed one', () => {
+    expect(checkClock({ fixedNow: undefined })).toBeNull();
+    const c = checkClock({ fixedNow: '2026-11-09T08:00:00Z' });
+    expect(c?.status).toBe('warn');
+    expect(c?.detail).toContain('2026-11-09T08:00:00Z');
   });
 });
 

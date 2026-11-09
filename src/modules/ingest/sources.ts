@@ -81,7 +81,13 @@ const trimSlash = (path: string): string => (path.length > 1 ? path.replace(/\/+
 const overlaps = (a: string, b: string): boolean =>
   a === b || a.startsWith(`${b}${sep}`) || b.startsWith(`${a}${sep}`);
 
-export function createSources(db: Db, workspaceId: string, userId: string, pollMode: boolean) {
+export function createSources(
+  db: Db,
+  workspaceId: string,
+  userId: string,
+  pollMode: boolean,
+  now: () => Date = () => new Date(),
+) {
   const toDto = (row: {
     id: string;
     agent: string;
@@ -143,7 +149,7 @@ export function createSources(db: Db, workspaceId: string, userId: string, pollM
           user_id: userId,
           agent,
           path,
-          created_at: new Date().toISOString(),
+          created_at: now().toISOString(),
         })
         .onConflict((oc) => oc.columns(['workspace_id', 'agent', 'path']).doNothing())
         .execute();

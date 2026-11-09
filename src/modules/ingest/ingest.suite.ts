@@ -353,6 +353,36 @@ export function ingestSuite(name: string, make: TestDbFactory): void {
       expect(await ingest.purgePayloads(100_000)).toBe(0);
     });
 
+    it('lists sessions from a start time on, together with the other filters and cursor paging', async () => {
+      await importAll();
+      const all = await ingest.sessions.list({ limit: 50 });
+      expect(all.items).toHaveLength(2);
+      const [newest, oldest] = all.items;
+      expect(
+        (await ingest.sessions.list({ since: '2026-09-01T00:00:00.000Z', limit: 50 })).items,
+      ).toHaveLength(2);
+      expect(
+        (await ingest.sessions.list({ since: '2026-11-01T00:00:00.000Z', limit: 50 })).items,
+      ).toEqual([]);
+      // The boundary is inclusive: a session that started exactly at `since` is listed.
+      const at = await ingest.sessions.list({ since: newest?.startedAt ?? '', limit: 50 });
+      expect(at.items.map((s) => s.id)).toContain(newest?.id);
+      // Paging keeps the filter.
+      const first = await ingest.sessions.list({ since: oldest?.startedAt ?? '', limit: 1 });
+      expect(first.items).toHaveLength(1);
+      const second = await ingest.sessions.list({
+        since: oldest?.startedAt ?? '',
+        limit: 1,
+        ...(first.nextCursor && { cursor: first.nextCursor }),
+      });
+      expect(second.items.every((s) => s.startedAt >= (oldest?.startedAt ?? ''))).toBe(true);
+      expect(
+        (
+          await ingest.sessions.list({ since: newest?.startedAt ?? '', agent: 'codex', limit: 50 })
+        ).items.every((s) => s.agent === 'codex'),
+      ).toBe(true);
+    });
+
     it('counts sessions in a time window and exposes the raw file path', async () => {
       await importAll();
       const id = await sessionIdOf('claude_code');

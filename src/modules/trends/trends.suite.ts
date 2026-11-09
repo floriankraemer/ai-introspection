@@ -310,6 +310,12 @@ export function trendsSuite(name: string, make: TestDbFactory): void {
         expect(all.every((p) => p.graded === 0)).toBe(true);
       });
 
+      it('summarizes all time for days = 0', async () => {
+        await batch('efficiency', '2026-08-01T10:00:00.000Z', [true]);
+        expect((await trends.summary(0)).sessionsGraded).toBe(1);
+        expect((await trends.summary(14)).sessionsGraded).toBe(0);
+      });
+
       it('agrees with the summary for the same range', async () => {
         await batch('efficiency', '2026-11-10T10:00:00.000Z', [true, true, false]);
         await batch('efficiency', '2026-11-03T10:00:00.000Z', [false]);

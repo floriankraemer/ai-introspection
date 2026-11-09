@@ -14,6 +14,8 @@ export interface SessionQuery {
   agent?: Agent | undefined;
   result?: SessionResultFilter | undefined;
   cursor?: string | undefined;
+  /** Only sessions that started at or after this instant (ISO). */
+  since?: string | undefined;
   limit: number;
 }
 
@@ -144,6 +146,7 @@ export function createSessionQueries(db: Db, workspaceId: string) {
         ])
         .where('session.workspace_id', '=', workspaceId);
       if (q.agent) qb = qb.where('session.agent', '=', q.agent);
+      if (q.since) qb = qb.where('session.started_at', '>=', new Date(q.since).toISOString());
       if (q.result === 'failed_any') qb = qb.where(FAILED_ANY);
       if (q.result === 'not_graded') qb = qb.where(NOT_GRADED);
       if (q.q) {

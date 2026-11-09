@@ -1,6 +1,19 @@
 import { spawn } from 'node:child_process';
 import { realpath, stat } from 'node:fs/promises';
 
+let commitClock: () => Date = () => new Date();
+
+/** Where commit dates come from; the app clock is set once at start so a fixed clock gives repeatable commit ids. */
+export function setCommitClock(clock: () => Date): void {
+  commitClock = clock;
+}
+
+/** Author and committer date for commands that create a commit. */
+const commitEnv = (): NodeJS.ProcessEnv => {
+  const date = commitClock().toISOString();
+  return { GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date };
+};
+
 const GIT_TIMEOUT_MS = 30_000;
 const FALLBACK_IDENTITY = ['-c', 'user.name=Introspect', '-c', 'user.email=introspect@localhost'];
 
@@ -48,6 +61,8 @@ export class GitError extends Error {
 export interface GitOptions {
   /** Passes GH_TOKEN and friends: only for push and `gh`. */
   network?: boolean;
+  /** Extra environment variables for this call. */
+  env?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -63,7 +78,7 @@ export function gitRaw(
   return new Promise((resolve, reject) => {
     const child = spawn('git', [...SAFE_CONFIG, ...args], {
       cwd,
-      env: minimalEnv(opts.network === true),
+      env: { ...minimalEnv(opts.network === true), ...opts.env },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     const out: Buffer[] = [];
@@ -135,7 +150,9 @@ export async function commitPaths(
   message: string,
 ): Promise<void> {
   await git(repo, ['add', '--', ...paths]);
-  await git(repo, [...(await identityArgs(repo)), 'commit', '-m', message, '--', ...paths]);
+  await git(repo, [...(await identityArgs(repo)), 'commit', '-m', message, '--', ...paths], {
+    env: commitEnv(),
+  });
 }
 
 export const revParse = (repo: string, rev: string): Promise<string> =>
@@ -198,7 +215,9 @@ export class NothingToCommitError extends Error {
 export async function commitAll(worktree: string, message: string): Promise<string> {
   await git(worktree, ['add', '-A']);
   if ((await git(worktree, ['status', '--porcelain'])) === '') throw new NothingToCommitError();
-  await git(worktree, [...(await identityArgs(worktree)), 'commit', '-q', '-m', message]);
+  await git(worktree, [...(await identityArgs(worktree)), 'commit', '-q', '-m', message], {
+    env: commitEnv(),
+  });
   return git(worktree, ['rev-parse', 'HEAD']);
 }
 
@@ -235,15 +254,11 @@ export async function mergeNoFf(
   message: string,
 ): Promise<'merged' | 'conflict'> {
   try {
-    await git(repo, [
-      ...(await identityArgs(repo)),
-      'merge',
-      '--no-ff',
-      '--no-verify',
-      '-m',
-      message,
-      branch,
-    ]);
+    await git(
+      repo,
+      [...(await identityArgs(repo)), 'merge', '--no-ff', '--no-verify', '-m', message, branch],
+      { env: commitEnv() },
+    );
     return 'merged';
   } catch (e) {
     const halfDone = await mergeInProgress(repo);

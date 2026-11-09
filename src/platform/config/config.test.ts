@@ -15,6 +15,7 @@ describe('loadConfig', () => {
       timeZone: 'UTC',
       judgeOverride: undefined,
       improverOverride: undefined,
+      fixedNow: undefined,
     });
   });
 
@@ -23,6 +24,13 @@ describe('loadConfig', () => {
       loadConfig({ INTROSPECT_DATA_DIR: '/data', INTROSPECT_JUDGE: 'fake' }).judgeOverride,
     ).toBe('fake');
     expect(() => loadConfig({ INTROSPECT_DATA_DIR: '/data', INTROSPECT_JUDGE: 'real' })).toThrow();
+  });
+
+  it('takes a fixed clock start from INTROSPECT_NOW and rejects other text', () => {
+    expect(
+      loadConfig({ INTROSPECT_DATA_DIR: '/data', INTROSPECT_NOW: '2026-11-09T08:00:00Z' }).fixedNow,
+    ).toBe('2026-11-09T08:00:00Z');
+    expect(() => loadConfig({ INTROSPECT_DATA_DIR: '/data', INTROSPECT_NOW: 'soon' })).toThrow();
   });
 
   it('polls for file changes when asked to, or when Docker sets CHOKIDAR_USEPOLLING', () => {
