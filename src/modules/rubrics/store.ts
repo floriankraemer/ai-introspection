@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { newId } from '../../platform/db/ids.js';
 import type { Db } from '../../platform/db/schema.js';
@@ -54,14 +54,31 @@ export function createRubrics(deps: RubricStoreDeps) {
   const now = deps.now ?? (() => new Date());
 
   let cached:
-    { at: number; value: Promise<{ rubrics: Rubric[]; problems: RubricProblem[] }> } | undefined;
+    | { at: number; key: string; value: Promise<{ rubrics: Rubric[]; problems: RubricProblem[] }> }
+    | undefined;
   const cacheMs = deps.cacheMs ?? 2000;
 
+  /**
+   * Cache key: the repository path plus the mtime of `rubrics/`, so setting a skills repo or adding
+   * or removing a rubric file (wizard init, starter rubrics) is seen at once. In-place edits made
+   * outside Introspect still wait for `cacheMs`.
+   */
+  async function cacheKey(): Promise<string> {
+    const repo = await deps.repoPath();
+    if (!repo) return '';
+    const mtime = await stat(join(repo, RUBRICS_DIR)).then(
+      (s) => s.mtimeMs,
+      () => 0,
+    );
+    return `${repo}|${String(mtime)}`;
+  }
+
   /** Reads `<repo>/rubrics/*.md`, records every new version in the table, returns the current ones. */
-  function sync(): Promise<{ rubrics: Rubric[]; problems: RubricProblem[] }> {
-    if (cached && Date.now() - cached.at < cacheMs) return cached.value;
+  async function sync(): Promise<{ rubrics: Rubric[]; problems: RubricProblem[] }> {
+    const key = await cacheKey();
+    if (cached && cached.key === key && Date.now() - cached.at < cacheMs) return cached.value;
     const value = read();
-    cached = { at: Date.now(), value };
+    cached = { at: Date.now(), key, value };
     value.catch(() => {
       cached = undefined;
     });
