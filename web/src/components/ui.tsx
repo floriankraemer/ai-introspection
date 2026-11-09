@@ -1,11 +1,12 @@
 import type { ComponentProps, ReactNode } from 'react';
 
-export type ChipTone = 'pass' | 'fail' | 'na';
+export type ChipTone = 'pass' | 'fail' | 'warn' | 'na';
 
 // Full class strings, never built dynamically, so Tailwind generates them.
 const CHIP: Record<ChipTone, string> = {
   pass: 'text-pass bg-pass-bg border-pass-line',
   fail: 'text-fail bg-fail-bg border-fail-line',
+  warn: 'text-warn bg-warn-bg border-warn-line',
   na: 'text-muted bg-sunken border-line',
 };
 
@@ -19,6 +20,27 @@ export function Chip({
       className={`inline-block rounded-full border px-2 py-0.5 text-xs leading-4 font-semibold ${CHIP[tone]} ${className}`}
       {...p}
     />
+  );
+}
+
+/** Pass / Fail / n/a chip, with the score in front when there is one ("0.2 · Fail"). */
+export function VerdictChip({
+  passed,
+  score,
+  className,
+}: {
+  passed: boolean | null;
+  score?: number | null;
+  className?: string;
+}) {
+  const label = passed === null ? 'n/a' : passed ? 'Pass' : 'Fail';
+  return (
+    <Chip
+      tone={passed === null ? 'na' : passed ? 'pass' : 'fail'}
+      {...(className ? { className } : {})}
+    >
+      {score == null ? label : `${String(score)} · ${label}`}
+    </Chip>
   );
 }
 

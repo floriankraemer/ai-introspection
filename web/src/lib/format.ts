@@ -24,7 +24,7 @@ export function formatDuration(s: number): string {
 }
 
 export function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
   return n >= 1000 ? `${String(Math.round(n / 1000))}k` : String(n);
 }
 

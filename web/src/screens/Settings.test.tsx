@@ -47,4 +47,16 @@ describe('Settings', () => {
     await user.tab();
     expect(await screen.findByText('All changes saved.')).toBeInTheDocument();
   });
+
+  it('shows how much of the token budget is used, and flags an exhausted one', async () => {
+    renderApp('/settings');
+    expect(await screen.findByText('Used 120k of 1M tokens today.')).toBeInTheDocument();
+  });
+
+  it('says grading is deferred when the daily budget is used up', async () => {
+    renderApp('/settings', 'overbudget');
+    expect(
+      await screen.findByText(/Used 1M of 1M tokens today\. Grading is deferred/),
+    ).toBeInTheDocument();
+  });
 });

@@ -7,20 +7,6 @@ const next = (
   </Link>
 );
 
-export function Rubrics() {
-  return (
-    <div className="flex flex-col gap-5">
-      <PageHeader title="Rubrics" />
-      <EmptyState title="Rubrics arrive with grading" actions={next}>
-        A rubric is a short Markdown file that says what a good session looks like, for example "no
-        silent workarounds". They will live in the <code>rubrics/</code> folder of your skills repo,
-        and you will edit and calibrate them here. Until then, browse your sessions and their
-        traces.
-      </EmptyState>
-    </div>
-  );
-}
-
 export function Proposals() {
   return (
     <div className="flex flex-col gap-5">

@@ -1,7 +1,8 @@
 import { Link } from '@tanstack/react-router';
-import { Fragment, useState, type ReactNode } from 'react';
-import { useSession, useSessionEvents } from '../api/queries.js';
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useGradeJob, useSession, useSessionEvents } from '../api/queries.js';
 import type { EventFilter, TraceEvent } from '../api/types.js';
+import { JobNote } from '../components/JobNote.js';
 import { BTN, Button, Chip, EmptyState, ErrorState, Loading } from '../components/ui.js';
 import {
   AGENT_LABEL,
@@ -14,6 +15,7 @@ import {
   titleText,
 } from '../lib/format.js';
 import { ApiError } from '../api/client.js';
+import { GradesPanel } from './GradesPanel.js';
 
 /** Renders `code` spans: the API marks code in the one-line summary with backticks. */
 function Inline({ text }: { text: string }) {
@@ -39,13 +41,14 @@ function Payload({ label, value }: { label: string; value: string }) {
   );
 }
 
-function EventRow({ e }: { e: TraceEvent }) {
+function EventRow({ e, evidence }: { e: TraceEvent; evidence: boolean }) {
   // Long summaries are clamped in the row; the disclosure carries the full text.
   const long = e.text.length > 100;
   const hasPayload = e.input !== null || e.output !== null || e.payloadPurged;
   return (
     <li
-      className={`grid grid-cols-[56px_92px_minmax(0,1fr)] gap-3 border-l-[3px] px-[13px] py-2.5 text-sm ${e.isError ? 'border-fail bg-fail-bg' : 'border-transparent'}`}
+      data-evidence={evidence ? 'true' : undefined}
+      className={`grid grid-cols-[56px_92px_minmax(0,1fr)] gap-3 border-l-[3px] px-[13px] py-2.5 text-sm ${evidence ? 'border-accent bg-accent-soft' : e.isError ? 'border-fail bg-fail-bg' : 'border-transparent'}`}
     >
       <span className="text-muted">{formatOffset(e.offsetS)}</span>
       <Chip tone={e.isError ? 'fail' : 'na'} className="self-start justify-self-start">
@@ -53,6 +56,7 @@ function EventRow({ e }: { e: TraceEvent }) {
       </Chip>
       <div className="min-w-0 break-words">
         <div className="line-clamp-2">
+          {evidence ? <span className="sr-only">Evidence: </span> : null}
           <Inline text={e.text} />
         </div>
         {hasPayload || long ? (
@@ -77,19 +81,54 @@ function EventRow({ e }: { e: TraceEvent }) {
   );
 }
 
+/** Evidence events of the grade the user asked to see; `ids` are highlighted and scrolled to. */
+export interface EvidenceFocus {
+  rubric: string;
+  ids: string[];
+}
+
 function Trace({
   id,
   eventCount,
   errorCount,
+  hasGrades,
+  filter,
+  onFilter,
+  focus,
+  onClearFocus,
 }: {
   id: string;
   eventCount: number;
   errorCount: number;
+  hasGrades: boolean;
+  filter: EventFilter;
+  onFilter: (f: EventFilter) => void;
+  focus: EvidenceFocus | null;
+  onClearFocus: () => void;
 }) {
-  const [filter, setFilter] = useState<EventFilter>('all');
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   const events = useSessionEvents(id, filter);
   const rows = collapseRuns(events.data?.pages.flatMap((p) => p.items) ?? []);
+  const section = useRef<HTMLElement>(null);
+  const scrolled = useRef<EvidenceFocus | null>(null);
+  const focused = new Set(focus?.ids);
+
+  // Bring the focused evidence into view once; open a collapsed run that hides some of it first.
+  useEffect(() => {
+    if (!focus || filter !== 'evidence' || events.isPending || scrolled.current === focus) return;
+    const hidden = rows.filter(
+      (r) =>
+        r.type === 'collapsed' &&
+        !open.has(r.key) &&
+        r.events.some((e) => focus.ids.includes(e.id)),
+    );
+    if (hidden.length) {
+      setOpen((o) => new Set([...o, ...hidden.map((r) => (r.type === 'collapsed' ? r.key : ''))]));
+      return;
+    }
+    scrolled.current = focus;
+    section.current?.querySelector('[data-evidence]')?.scrollIntoView({ block: 'center' });
+  });
   const tab = (f: EventFilter, label: string, disabled = false) => (
     <button
       type="button"
@@ -97,7 +136,7 @@ function Trace({
       disabled={disabled}
       title={disabled ? 'Available once the session is graded' : undefined}
       onClick={() => {
-        setFilter(f);
+        onFilter(f);
       }}
       className={`h-8 rounded-full border px-3 text-[13px] text-ink disabled:cursor-not-allowed disabled:opacity-60 ${filter === f ? 'border-accent bg-accent-soft' : 'border-line bg-surface hover:bg-sunken'}`}
     >
@@ -106,6 +145,7 @@ function Trace({
   );
   return (
     <section
+      ref={section}
       aria-label="Trace"
       className="flex min-w-0 flex-[3_1_480px] flex-col rounded-xl border border-line bg-surface"
     >
@@ -114,9 +154,21 @@ function Trace({
         <div className="flex flex-wrap gap-1.5">
           {tab('all', 'All')}
           {tab('errors', `Errors (${String(errorCount)})`)}
-          {tab('evidence', 'Evidence only', true)}
+          {tab('evidence', 'Evidence only', !hasGrades)}
         </div>
       </div>
+      {focus ? (
+        <p className="m-0 flex flex-wrap items-center gap-2 border-b border-line-soft px-4 py-2 text-[13px] text-muted">
+          Highlighted: evidence for {focus.rubric}
+          <button
+            type="button"
+            onClick={onClearFocus}
+            className="cursor-pointer border-0 bg-transparent p-0 text-[13px] text-accent underline"
+          >
+            Clear
+          </button>
+        </p>
+      ) : null}
       {events.isPending ? (
         <div className="px-4">
           <Loading label="Loading trace" />
@@ -130,8 +182,12 @@ function Trace({
       ) : (
         <ol className="m-0 flex list-none flex-col py-2 pl-0">
           {rows.map((r): ReactNode => {
-            if (r.type === 'event') return <EventRow key={r.event.id} e={r.event} />;
-            if (open.has(r.key)) return r.events.map((e) => <EventRow key={e.id} e={e} />);
+            if (r.type === 'event')
+              return <EventRow key={r.event.id} e={r.event} evidence={focused.has(r.event.id)} />;
+            if (open.has(r.key))
+              return r.events.map((e) => (
+                <EventRow key={e.id} e={e} evidence={focused.has(e.id)} />
+              ));
             return (
               <li
                 key={r.key}
@@ -167,6 +223,9 @@ function Trace({
 
 export function SessionDetail({ id }: { id: string }) {
   const q = useSession(id);
+  const [filter, setFilter] = useState<EventFilter>('all');
+  const [focus, setFocus] = useState<EvidenceFocus | null>(null);
+  const regrade = useGradeJob((api) => api.regradeSession(id));
   if (q.isPending) return <Loading label="Loading session" />;
   if (q.isError) {
     const gone = q.error instanceof ApiError && q.error.status === 404;
@@ -223,20 +282,42 @@ export function SessionDetail({ id }: { id: string }) {
           >
             Open raw JSONL
           </a>
-          <Button disabled title="Grading arrives with rubrics">
+          <Button
+            disabled={regrade.run.isPending}
+            onClick={() => {
+              regrade.run.mutate([id]);
+            }}
+          >
             Re-grade
           </Button>
+          <JobNote
+            job={regrade.job}
+            failed={regrade.run.isError}
+            className="basis-full text-right"
+          />
         </div>
       </div>
       <div className="flex flex-wrap items-start gap-5">
-        <Trace id={s.id} eventCount={s.eventCount} errorCount={s.errorCount} />
-        <aside aria-label="Grades" className="flex min-w-0 flex-[2_1_320px] flex-col gap-3">
-          <h2 className="m-0 text-base font-semibold">Grades</h2>
-          <EmptyState title="Not graded yet">
-            Grades, the judge's reason and the evidence events appear here once rubrics exist and
-            this session is graded. Add rubrics to your skills repo in Settings to get started.
-          </EmptyState>
-        </aside>
+        <Trace
+          id={s.id}
+          eventCount={s.eventCount}
+          errorCount={s.errorCount}
+          hasGrades={s.grades.length > 0}
+          filter={filter}
+          onFilter={setFilter}
+          focus={focus}
+          onClearFocus={() => {
+            setFocus(null);
+          }}
+        />
+        <GradesPanel
+          sessionId={s.id}
+          grades={s.grades}
+          onShowEvidence={(rubric, ids) => {
+            setFilter('evidence');
+            setFocus({ rubric, ids });
+          }}
+        />
       </div>
     </div>
   );

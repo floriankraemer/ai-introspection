@@ -60,5 +60,13 @@ export const realApi: Api = {
   getSession: (sid) => request('GET', `/sessions/${id(sid)}`),
   listEvents: (sid, q) => request('GET', `/sessions/${id(sid)}/events${qs({ ...q })}`),
   getDoctor: () => request('GET', '/doctor'),
+  regradeSession: (sid) => request('POST', `/sessions/${id(sid)}/grade`),
+  gradeBatch: (sessionIds) => request('POST', '/grades/batch', { sessionIds }),
+  listRubrics: () => request('GET', '/rubrics'),
+  getRubric: (name) => request('GET', `/rubrics/${id(name)}`),
+  putRubric: (name, body) => request('PUT', `/rubrics/${id(name)}`, body),
+  dryRunRubric: (name, body) => request('POST', `/rubrics/${id(name)}/dry-run`, body),
+  addLabel: (name, label) => request('POST', `/rubrics/${id(name)}/labels`, label),
+  getBudget: () => request('GET', '/budget'),
   exchangeToken: (token) => request('POST', '/auth/session', { token }),
 };

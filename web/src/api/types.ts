@@ -26,7 +26,25 @@ export type TrendSummary = Schemas['TrendSummary'];
 export type RubricRate = TrendSummary['rubrics'][number];
 export type SessionSummary = Schemas['SessionSummary'];
 export type SessionGrade = SessionSummary['grades'][number];
+
+export type GradeDetail = Schemas['GradeDetail'];
 export type SessionDetail = Schemas['SessionDetail'];
+export type RubricSummary = Schemas['RubricSummary'];
+export type RubricDetail = Schemas['RubricDetail'];
+export type CalibrationRow = Schemas['CalibrationRow'];
+export type DryRunVerdict = Schemas['DryRunVerdict'];
+export type DryRunResult = Schemas['DryRunResult'];
+export type Budget = Schemas['Budget'];
+/** The draft body is sent along, so a dry-run tests unsaved edits. */
+export type DryRunInput = NonNullable<
+  paths['/v1/rubrics/{name}/dry-run']['post']['requestBody']
+>['content']['application/json'] & { sessionIds: string[] };
+export interface LabelInput {
+  sessionId: string;
+  passed: boolean;
+  score?: number | undefined;
+  note: string;
+}
 export type TraceEvent = Schemas['TraceEvent'];
 export type EventKind = TraceEvent['kind'];
 export type SessionResultFilter = NonNullable<
@@ -81,4 +99,15 @@ export interface Api {
   listEvents(id: string, query: EventQuery): Promise<Page<TraceEvent> & { total: number }>;
   exchangeToken(token: string): Promise<void>;
   getDoctor(): Promise<Doctor>;
+  regradeSession(id: string): Promise<Job>;
+  gradeBatch(sessionIds: string[]): Promise<Job>;
+  listRubrics(): Promise<RubricSummary[]>;
+  getRubric(name: string): Promise<RubricDetail>;
+  putRubric(
+    name: string,
+    body: { body: string; passThreshold: number; message: string },
+  ): Promise<RubricDetail>;
+  dryRunRubric(name: string, body: DryRunInput): Promise<DryRunResult>;
+  addLabel(name: string, label: LabelInput): Promise<void>;
+  getBudget(): Promise<Budget>;
 }

@@ -35,7 +35,7 @@ function ThemeSelect() {
 export function Shell() {
   const path = useRouterState({ select: (s) => s.location.pathname });
   return (
-    <div className="flex min-h-screen flex-wrap bg-page text-ink">
+    <div className="flex min-h-screen flex-col bg-page text-ink lg:grid lg:grid-cols-[220px_minmax(0,1fr)]">
       <a
         href="#main"
         className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-10 focus:rounded-lg focus:bg-surface focus:p-3"
@@ -44,7 +44,7 @@ export function Shell() {
       </a>
       <nav
         aria-label="Main"
-        className="box-border flex flex-[1_1_100%] flex-row flex-wrap items-center gap-1 border-b border-line bg-surface px-4 py-3 lg:flex-[1_1_220px] lg:flex-col lg:items-stretch lg:border-r lg:border-b-0 lg:py-6"
+        className="box-border flex flex-row flex-wrap items-center gap-1 border-b border-line bg-surface px-4 py-3 lg:flex-col lg:items-stretch lg:border-r lg:border-b-0 lg:py-6"
       >
         <div className="w-full px-3 pb-2 text-base font-bold lg:pb-5">Introspect · local</div>
         {NAV.map((item) => {
@@ -65,7 +65,7 @@ export function Shell() {
       <main
         id="main"
         tabIndex={-1}
-        className="box-border flex min-w-0 flex-[999_1_560px] flex-col p-4 sm:p-8 outline-none"
+        className="box-border flex min-w-0 flex-col p-4 sm:p-8 outline-none"
       >
         <Outlet />
       </main>

@@ -1,20 +1,27 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { useEffect, useState } from 'react';
-import { useJob, useSessions, useStartImport, useTrendSummary } from '../api/queries.js';
+import { useEffect, useRef, useState } from 'react';
+import {
+  useGradeJob,
+  useJob,
+  useSessions,
+  useStartImport,
+  useTrendSummary,
+} from '../api/queries.js';
 import type { Agent, SessionResultFilter, SessionSummary, TrendSummary } from '../api/types.js';
 import {
   Button,
   BTN,
   Card,
-  Chip,
   EmptyState,
   ErrorState,
   Field,
   FIELD,
   Loading,
   PageHeader,
+  VerdictChip,
 } from '../components/ui.js';
+import { JobNote } from '../components/JobNote.js';
 import { AGENT_LABEL, formatPercent, formatWhen, titleText } from '../lib/format.js';
 
 function ImportButton() {
@@ -93,9 +100,28 @@ const RUBRIC_SHORT: Record<string, string> = {
   'Silent workaround': 'Workaround',
 };
 
-function SessionRow({ s, rubricCols }: { s: SessionSummary; rubricCols: string[] }) {
+function SessionRow({
+  s,
+  rubricCols,
+  checked,
+  onToggle,
+}: {
+  s: SessionSummary;
+  rubricCols: string[];
+  checked: boolean;
+  onToggle: () => void;
+}) {
   return (
-    <tr>
+    <tr className={checked ? 'bg-accent-soft' : ''}>
+      <td className="pr-0">
+        <input
+          type="checkbox"
+          aria-label={`Select ${titleText(s.title)}`}
+          checked={checked}
+          onChange={onToggle}
+          className="size-4 align-middle accent-accent"
+        />
+      </td>
       <td>
         <Link
           to="/sessions/$sessionId"
@@ -127,11 +153,7 @@ function SessionRow({ s, rubricCols }: { s: SessionSummary; rubricCols: string[]
           const g = s.grades.find((x) => x.rubric === name);
           return (
             <td key={name}>
-              {g?.passed == null ? (
-                <Chip tone="na">n/a</Chip>
-              ) : (
-                <Chip tone={g.passed ? 'pass' : 'fail'}>{g.passed ? 'Pass' : 'Fail'}</Chip>
-              )}
+              <VerdictChip passed={g?.passed ?? null} />
             </td>
           );
         })
@@ -146,6 +168,24 @@ export interface SessionsSearch {
   result?: SessionResultFilter | undefined;
 }
 
+/** Header checkbox: selects or clears every loaded row; shows a dash for a partial selection. */
+function SelectAll({ all, some, onChange }: { all: boolean; some: boolean; onChange: () => void }) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = some && !all;
+  }, [some, all]);
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      aria-label="Select all loaded sessions"
+      checked={all}
+      onChange={onChange}
+      className="size-4 align-middle accent-accent"
+    />
+  );
+}
+
 export function Sessions({
   search,
   onSearch,
@@ -154,6 +194,8 @@ export function Sessions({
   onSearch: (patch: SessionsSearch | null) => void;
 }) {
   const [resetKey, setResetKey] = useState(0);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const grade = useGradeJob((api, ids) => api.gradeBatch(ids));
   const summary = useTrendSummary(7);
   // Until something is graded, "Failed any rubric" would always be empty, so default to All.
   const defaultResult: SessionResultFilter =
@@ -170,6 +212,12 @@ export function Sessions({
   const items = sessions.data?.pages.flatMap((p) => p.items) ?? [];
   const names = s.rubrics.map((r) => r.name);
   const rubricCols = names.length ? names : ['Rubrics'];
+  const allSelected = items.length > 0 && items.every((r) => selected.has(r.id));
+  const toggle = (id: string) => {
+    const next = new Set(selected);
+    if (!next.delete(id)) next.add(id);
+    setSelected(next);
+  };
   const noData = s.sessionsCollected === 0 && !filtered;
 
   return (
@@ -180,9 +228,18 @@ export function Sessions({
         actions={
           <>
             <ImportButton />
-            <Button variant="primary" disabled title="Grading arrives with rubrics">
-              Grade selected
+            <Button
+              variant="primary"
+              disabled={selected.size === 0 || grade.run.isPending}
+              title={selected.size === 0 ? 'Select sessions in the table first' : undefined}
+              onClick={() => {
+                grade.run.mutate([...selected]);
+                setSelected(new Set());
+              }}
+            >
+              Grade selected{selected.size ? ` (${String(selected.size)})` : ''}
             </Button>
+            <JobNote job={grade.job} failed={grade.run.isError} className="basis-full text-right" />
           </>
         }
       />
@@ -268,10 +325,11 @@ export function Sessions({
             <>
               <Card className="overflow-x-auto">
                 <table
-                  className={`w-full table-fixed border-collapse ${names.length ? 'min-w-[56rem]' : 'min-w-[40rem]'}`}
+                  className={`w-full table-fixed border-collapse ${names.length ? 'min-w-[58.5rem]' : 'min-w-[42.5rem]'}`}
                 >
                   <caption className="sr-only">Sessions</caption>
                   <colgroup>
+                    <col className="w-10" />
                     <col />
                     <col className="w-[6.5rem]" />
                     <col className="w-28" />
@@ -283,6 +341,15 @@ export function Sessions({
                   </colgroup>
                   <thead>
                     <tr>
+                      <th scope="col" className="pr-0">
+                        <SelectAll
+                          all={allSelected}
+                          some={selected.size > 0}
+                          onChange={() => {
+                            setSelected(allSelected ? new Set() : new Set(items.map((r) => r.id)));
+                          }}
+                        />
+                      </th>
                       <th scope="col">Session</th>
                       <th scope="col">Agent</th>
                       <th scope="col">Repo</th>
@@ -299,7 +366,15 @@ export function Sessions({
                   </thead>
                   <tbody>
                     {items.map((row) => (
-                      <SessionRow key={row.id} s={row} rubricCols={rubricCols} />
+                      <SessionRow
+                        key={row.id}
+                        s={row}
+                        rubricCols={rubricCols}
+                        checked={selected.has(row.id)}
+                        onToggle={() => {
+                          toggle(row.id);
+                        }}
+                      />
                     ))}
                   </tbody>
                 </table>
