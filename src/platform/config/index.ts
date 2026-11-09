@@ -25,6 +25,17 @@ const envSchema = z.object({
   INTROSPECT_CLAUDE_CREDENTIALS: z.string().min(1).optional(),
   /** Test-only: `fake` swaps the judge for a deterministic one. Never reachable from the UI. */
   INTROSPECT_JUDGE: z.enum(['fake']).optional(),
+  /** Test-only: `fake` swaps the improver for a deterministic one. Environment only, never the UI. */
+  INTROSPECT_IMPROVER: z.enum(['fake']).optional(),
+  /** Test/E2E-only: an ISO timestamp the app clock starts at (it then advances in real time). Environment only, never the UI. */
+  INTROSPECT_NOW: z
+    .string()
+    .min(1)
+    .refine(
+      (v) => !Number.isNaN(Date.parse(v)),
+      'must be an ISO timestamp such as 2026-11-09T08:00:00Z',
+    )
+    .optional(),
   TZ: z
     .string()
     .min(1)
@@ -51,6 +62,9 @@ export interface Config {
   /** IANA time zone of the budget windows (env `TZ`, default UTC). */
   timeZone: string;
   judgeOverride: 'fake' | undefined;
+  improverOverride: 'fake' | undefined;
+  /** `INTROSPECT_NOW`: where the app clock starts; undefined means the real time. */
+  fixedNow: string | undefined;
 }
 
 /** Inside a container the process must bind 0.0.0.0; the published port stays on 127.0.0.1 (compose.yaml). */
@@ -85,6 +99,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     claudeSeedCredentials: INTROSPECT_CLAUDE_CREDENTIALS,
     timeZone: parsed.data.TZ,
     judgeOverride: INTROSPECT_JUDGE,
+    improverOverride: parsed.data.INTROSPECT_IMPROVER,
+    fixedNow: parsed.data.INTROSPECT_NOW,
     watchPoll:
       INTROSPECT_WATCH_POLL === '1' ||
       CHOKIDAR_USEPOLLING === '1' ||

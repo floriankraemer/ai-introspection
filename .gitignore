@@ -4,3 +4,5 @@ web/dist
 .env
 *.tsbuildinfo
 .playwright-mcp/
+e2e/.work/
+e2e/node_modules/

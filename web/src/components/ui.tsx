@@ -44,12 +44,15 @@ export function VerdictChip({
   );
 }
 
-const BTN_BASE =
-  'inline-flex h-11 items-center justify-center rounded-lg px-4 text-sm no-underline disabled:cursor-not-allowed disabled:opacity-60';
+// Disabled looks the same for every variant: flat tinted surface, muted but readable text (>= 3:1).
+const DISABLED =
+  'disabled:cursor-not-allowed disabled:border disabled:border-solid disabled:border-line-soft disabled:bg-disabled disabled:text-disabled-ink disabled:hover:bg-disabled disabled:hover:text-disabled-ink';
+const BTN_BASE = `inline-flex h-11 items-center justify-center rounded-lg px-4 text-sm no-underline ${DISABLED}`;
 export const BTN = {
   primary: `${BTN_BASE} border-0 bg-accent font-semibold text-accent-ink hover:bg-accent-hover hover:text-accent-ink`,
   secondary: `${BTN_BASE} border border-line bg-surface text-ink hover:bg-sunken hover:text-ink`,
   dashed: `${BTN_BASE} border border-dashed border-line-dashed bg-transparent text-ink hover:bg-sunken hover:text-ink`,
+  small: `inline-flex h-9 items-center justify-center rounded-lg border border-line bg-surface px-3 text-[13px] text-ink no-underline hover:bg-sunken hover:text-ink ${DISABLED}`,
 } as const;
 
 export function Button({
@@ -59,6 +62,17 @@ export function Button({
   ...p
 }: { variant?: keyof typeof BTN } & ComponentProps<'button'>) {
   return <button type={type} className={`${BTN[variant]} ${className}`} {...p} />;
+}
+
+/** Inline text action: looks like a link, behaves like a button. */
+export function LinkButton({ className = '', type = 'button', ...p }: ComponentProps<'button'>) {
+  return (
+    <button
+      type={type}
+      className={`cursor-pointer border-0 bg-transparent p-0 text-accent underline hover:text-accent-hover ${className}`}
+      {...p}
+    />
+  );
 }
 
 export function Card({ className = '', ...p }: ComponentProps<'div'>) {
@@ -152,6 +166,25 @@ export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () =>
           Try again
         </Button>
       ) : null}
+    </div>
+  );
+}
+
+/** Progress bar with a real fill; without a value (total not known yet) it is an indeterminate sweep. */
+export function ProgressBar({ value, label }: { value: number | null; label: string }) {
+  return (
+    <div
+      role="progressbar"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      {...(value === null ? {} : { 'aria-valuenow': value })}
+      className="h-2 w-full overflow-hidden rounded-full bg-sunken"
+    >
+      <div
+        className={`h-full rounded-full bg-accent ${value === null ? 'progress-indeterminate w-2/5' : ''}`}
+        style={value === null ? undefined : { width: `${String(value)}%` }}
+      />
     </div>
   );
 }

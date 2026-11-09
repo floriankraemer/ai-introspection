@@ -164,6 +164,8 @@ export interface Schema {
     status: Generated<'ok' | 'refused' | 'invalid' | 'stale'>;
     llm_call_id: string | null;
     graded_at: Ts;
+    /** `reference`: a re-grade of the reference set; it never counts in trends, so history stays as it was. */
+    origin: Generated<'standard' | 'reference'>;
   };
   improver_run: {
     id: string;
@@ -173,6 +175,9 @@ export interface Schema {
     status: string;
     clusters: Generated<number>;
     proposals_created: Generated<number>;
+    /** JSON `RunSummary`: clusters, excluded untrusted rubrics, skipped sessions. */
+    summary: Json | null;
+    error: string | null;
   };
   skill_repo: {
     id: string;
@@ -184,6 +189,22 @@ export interface Schema {
     allow_list: Json | null;
     accept_mode: string | null;
     enabled: Bool;
+    /** Hooks, settings and scripts may be proposed (default off). */
+    allow_executable: Bool;
+    /** Tip of the default branch at the last change scan; null until the first scan. */
+    last_seen_sha: string | null;
+    /** The last problem the change scan had here (rewritten history, unreadable commits); null when the last scan was clean. */
+    scan_warning: string | null;
+  };
+  cluster_outcome: {
+    id: string;
+    workspace_id: string;
+    target_repo_id: string;
+    /** Hash of the cluster's session ids. */
+    fingerprint: string;
+    outcome: 'declined' | 'failed';
+    detail: string;
+    at: Ts;
   };
   proposal: {
     id: string;
@@ -199,11 +220,15 @@ export interface Schema {
     rationale: string;
     evidence_session_ids: Json | null;
     rubric_names: Json | null;
-    status: Generated<'open' | 'accepted' | 'rejected' | 'conflict' | 'superseded'>;
+    status: Generated<'open' | 'accepted' | 'rejected' | 'conflict' | 'superseded' | 'failed'>;
     decided_by: string | null;
     decided_at: Ts | null;
     decision_note: string | null;
     pr_url: string | null;
+    /** JSON `ClusterSummary` the proposal answers. */
+    cluster_summary: Json | null;
+    /** SHA of the merge commit (local merge mode). */
+    merge_commit: string | null;
     created_at: Ts;
   };
   change_event: {
@@ -216,6 +241,8 @@ export interface Schema {
     description: string;
     files: Json | null;
     rubric_names: Json | null;
+    /** Idempotency key of detected events (commit, rubric version, judge pair); null for proposals. */
+    ref: string | null;
   };
   job: {
     id: string;

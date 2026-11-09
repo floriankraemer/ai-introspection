@@ -4,3 +4,5 @@ web/dist
 pnpm-lock.yaml
 docs
 .playwright-mcp/
+e2e/package-lock.json
+e2e/.work

@@ -1,8 +1,10 @@
 import { serveStatic } from '@hono/node-server/serve-static';
 import { OpenAPIHono } from '@hono/zod-openapi';
+import type { MiddlewareHandler } from 'hono';
 import { relative } from 'node:path';
-import { localGuard, requireToken } from './auth.js';
-import { BudgetExceededError, ConflictError, InvalidInputError } from '../errors.js';
+import { secureHeaders } from 'hono/secure-headers';
+import { AUTH_SCRIPT_HASH, localGuard, requireToken } from './auth.js';
+import { BudgetExceededError, ConflictError, InvalidInputError, NotFoundError } from '../errors.js';
 import { ApiError, problemResponse } from './problem.js';
 import { registerRoutes, type RouteDeps } from './routes.js';
 
@@ -36,6 +38,29 @@ export function createApp(deps: AppDeps): OpenAPIHono {
     },
   });
 
+  const headers = (scriptSrc: string[]): ReturnType<typeof secureHeaders> =>
+    secureHeaders({
+      contentSecurityPolicy: {
+        defaultSrc: ["'self'"],
+        scriptSrc,
+        // The favicon is a data: URI.
+        imgSrc: ["'self'", 'data:'],
+        frameAncestors: ["'none'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'none'"],
+        formAction: ["'self'"],
+      },
+      xFrameOptions: 'DENY',
+      referrerPolicy: 'no-referrer',
+      strictTransportSecurity: false,
+    });
+  const appHeaders = headers(["'self'"]);
+  const authHeaders = headers([AUTH_SCRIPT_HASH]);
+  const pick: MiddlewareHandler = (c, next) =>
+    c.req.path.replace(/\/+/g, '/').replace(/(?<=.)\/$/, '') === '/auth'
+      ? authHeaders(c, next)
+      : appHeaders(c, next);
+  app.use('*', pick);
   app.use('*', localGuard(deps.port));
   app.use('/v1/*', requireToken(deps.token, OPEN_PATHS));
   registerRoutes(app, deps);
@@ -44,14 +69,22 @@ export function createApp(deps: AppDeps): OpenAPIHono {
   app.onError((err, c) => {
     if (err instanceof ApiError)
       return problemResponse(c, err.status, err.title, { detail: err.message });
+    if (err instanceof NotFoundError)
+      return problemResponse(c, 404, 'Not found', { detail: err.message });
     if (err instanceof InvalidInputError)
-      return problemResponse(c, 422, 'Unprocessable request', { detail: err.message });
+      return problemResponse(c, 422, 'Unprocessable request', {
+        detail: err.message,
+        problems: [err.message],
+      });
     if (err instanceof BudgetExceededError)
       return problemResponse(c, 429, 'Budget used up', {
         detail: `${err.message}; it resets at ${err.runAfter.toISOString()}`,
       });
     if (err instanceof ConflictError)
-      return problemResponse(c, 409, 'Conflict', { detail: err.message });
+      return problemResponse(c, 409, 'Conflict', {
+        detail: err.message,
+        ...(err.fix !== undefined && { fix: err.fix }),
+      });
     console.error(err);
     return problemResponse(c, 500, 'Internal server error');
   });

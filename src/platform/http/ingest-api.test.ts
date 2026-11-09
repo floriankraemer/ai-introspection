@@ -18,8 +18,7 @@ import { createSkillRepos } from '../../modules/improvement/index.js';
 import { createIngest } from '../../modules/ingest/index.js';
 import { PLANTED, writeFixtureSources } from '../testkit/agent-fixtures.js';
 import { createSecretStore, createSettings } from '../../modules/settings/index.js';
-import { createTrends } from '../../modules/trends/index.js';
-import { wireGrading } from './wire-grading.js';
+import { wireGrading, wireImprovement, wireTrends } from './wire-grading.js';
 import { LOCAL_USER_ID, LOCAL_WORKSPACE_ID } from '../identity/index.js';
 import { createJobQueue } from '../jobs/queue.js';
 import { createWorker } from '../jobs/worker.js';
@@ -69,6 +68,7 @@ beforeAll(async () => {
     settings,
     queue,
     pollMode: true,
+    sourceRoots: [join(dir, 'claude'), join(dir, 'codex')],
   });
   const skillRepos = createSkillRepos(t.handle.db, LOCAL_WORKSPACE_ID, {
     mountRoots: [join(dir, 'repos')],
@@ -83,6 +83,15 @@ beforeAll(async () => {
   });
   const worker = createWorker({ queue, handlers: { ...ingest.handlers, ...grading.handlers } });
   tick = () => worker.tick();
+  const improvement = wireImprovement({
+    db: t.handle.db,
+    ingest,
+    settings,
+    queue,
+    skillRepos,
+    grading,
+    dataDir,
+  });
   app = createApp({
     webDir: join(dir, 'web'),
     port: PORT,
@@ -91,9 +100,10 @@ beforeAll(async () => {
     settings,
     ingest,
     grading,
+    improvement,
     rubrics,
     judges,
-    trends: createTrends(ingest, grading),
+    trends: wireTrends({ db: t.handle.db, ingest, settings, skillRepos, grading, rubrics, judges }),
     skillRepos,
     doctor: () => Promise.resolve({ checks: [] }),
   });
@@ -103,6 +113,13 @@ afterAll(async () => {
 });
 
 describe('sources and import', () => {
+  it('refuses source folders outside the log mount roots and the data folder', async () => {
+    for (const path of ['/', tmpdir(), dir, join(dir, 'data'), join(dir, 'web')]) {
+      const res = await call('POST', '/v1/sources', { agent: 'claude_code', path });
+      expect(res.status, path).toBe(422);
+    }
+  });
+
   it('rejects a source folder that does not exist with a 422 problem', async () => {
     const res = await call('POST', '/v1/sources', {
       agent: 'claude_code',
@@ -174,6 +191,18 @@ describe('sessions', () => {
       notGradedReason: expect.any(String),
     });
     expect((await call('GET', '/v1/sessions?limit=0')).status).toBe(400);
+    expect((await call('GET', '/v1/sessions?since=yesterday')).status).toBe(400);
+    const since = await json<{ items: unknown[] }>(
+      await call('GET', '/v1/sessions?since=2099-01-01T00:00:00Z'),
+    );
+    expect(since.items).toEqual([]);
+    expect(
+      (
+        await json<{ items: unknown[] }>(
+          await call('GET', '/v1/sessions?since=2000-01-01T00:00:00Z'),
+        )
+      ).items,
+    ).toHaveLength(2);
     expect((await call('GET', '/v1/sessions?agent=vim')).status).toBe(400);
   });
 
@@ -238,6 +267,12 @@ describe('sessions', () => {
       rubrics: [],
     });
     expect(await json(await call('GET', '/v1/trends/summary'))).toMatchObject({ days: 7 });
+    expect(await json(await call('GET', '/v1/trends/summary?days=0'))).toMatchObject({
+      days: 0,
+      sessionsCollected: 2,
+    });
+    expect((await call('GET', '/v1/trends/summary?days=366')).status).toBe(400);
+    expect((await call('GET', '/v1/trends/summary?days=-1')).status).toBe(400);
   });
 });
 

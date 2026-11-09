@@ -266,12 +266,74 @@ sequenceDiagram
   end
   Q->>T: record_change → change_event(at = merge time, files, rubrics)
   U->>UI: open Trends
-  UI->>T: GET /v1/trends?range=8w
-  T-->>UI: weekly pass rate per rubric + markers + before/after (7 d windows, n shown)
+  UI->>T: GET /v1/trends?weeks=12&bucket=week
+  T-->>UI: pass rate per rubric and bucket + markers + baseline resets
+  UI->>T: GET /v1/trends/changes
+  T-->>UI: per change: before and after (7 d windows, n shown) and a verdict
 ```
 
-Before/after in the change log compares pass rates on sessions in the 7 days before and the 7 days after the merge, and shows the session count of each window; a window with fewer than 10 graded sessions is labelled "insufficient data".
-A new rubric version or judge model starts a new series segment with a "baseline reset" marker, because pass rates across versions are not comparable.
+**What counts.**
+A pass rate counts the newest `ok` grade of each session and rubric name, grouped by the session's start.
+Stale, invalid and refused grades never count.
+Buckets are days or ISO weeks (Monday start) in the server's time zone (env `TZ`); empty buckets stay in the series with a null rate.
+The database does the work: one query with a window function returns one row per rubric and quarter-hour, and the server only maps those rows to buckets.
+Quarter-hour is the grain because every real time zone's offset is a multiple of it.
+The query starts at the sessions of the range (`session_workspace_started`) and reaches their grades through the unique `(session_id, rubric_version, judge_model)` index; SQLite has no statistics, so the SQL fixes that join order.
+NFR-05 is measured with 200,000 grades over one year on both dialects (`trends.nfr.test.ts`, `trends.nfr.pg.test.ts`, run by `make test-pg` because a timing test must not share the machine with parallel tests): p95 about 110 ms (limit 300 ms) for the default 12-week series.
+The 26-week requests (about 100,000 grades; by week or by day) measure 255 to 300 ms and are guarded at 450 ms.
+If the volume outgrows this, the upgrade path is a rollup table of closed days.
+
+**Where change events come from.**
+`change_event` rows have three sources.
+An accepted proposal writes its event in the accept transaction (kind `proposal_merged`).
+A scan job (`trends_scan`, every 15 minutes and once at start) finds the rest, and every event it writes has a unique `ref`, so a repeated or interrupted scan never doubles one:
+
+- *Manual edits.*
+  Per enabled repository the scan compares the tip of the default branch with `skill_repo.last_seen_sha`.
+  Each new first-parent commit that touches a file in the repository's allow-list becomes a `manual_edit` event with those files.
+  Introspect's own commits are skipped: the merge commit of an accepted proposal (subject `Merge proposal: `, or its sha), the head of any proposal that has a branch or pull request, and any merge whose parent is such a head.
+  Any status counts: GitHub merges a pull request before the poller marks the proposal accepted, and that merge must not be read as a person's edit.
+  If a `manual_edit` for that commit was recorded anyway, accepting the proposal deletes it, so the change has exactly one event (`proposal_merged`).
+  The first scan only remembers the tip.
+  Enabling a repository again resets its tip (commits made while it was off are not replayed); while it is off the tip is left alone.
+  A scan looks at 500 commits per repository at most (oldest first, the rest in the next scan).
+  A commit it cannot read is skipped, and a history rewrite (the old tip is no ancestor of the new one) only moves the tip.
+  Both leave a `skill_repo.scan_warning` ("History rewritten on ...; edits between X and Y are not tracked"), which `introspect doctor` shows as `change-scan` until a later scan that finds new commits ends without a problem.
+  The rubrics of the event are those of proposals made in the last 30 days for one of the same files; else none.
+  A pull request squash-merged on GitHub looks like a manual edit.
+- *Rubric changes.*
+  A second or later `rubric` row for the same name is a `rubric_changed` event, and a baseline reset for that rubric.
+- *Judge changes.*
+  The scan keeps a watermark, the setting row `trends.last_judge_model` (`{model, at, seq}`): the model the judge used last and since when.
+  A switch is found when the effective model differs from it, by the settings hook (a `PATCH /v1/settings` that touches a `judge.*` key; the event time is that moment) and, as a fallback, by the scan (the time is that of the first grade by the new model after the watermark, else now).
+  Each switch writes a `judge_changed` event (a baseline reset for every rubric) with the ref `judge-<seq>`, so A to B to A to B are three events, and its re-grade job is keyed by that ref, not by the model names.
+  Without a watermark it starts from the model of the newest grade.
+
+A rubric change and a judge change re-grade the reference set (below) once, through a keyed job.
+A rubric change re-grades only that rubric; a judge change re-grades all.
+Everything one scan finds goes into one job (the union of the rubrics, or all of them).
+The first scan after an upgrade (no `trends.last_scan_at` yet) records the rubric versions it finds but queues no re-grade: they are history.
+
+**Before and after.**
+Per change the log compares the graded sessions that started in the `trends.window_days` (default 7) before the change with those that started in the same span after it, separately for each rubric the change was meant to move (every current rubric when none is known).
+The unit is the distinct session: a session counts once per rubric (its newest `ok` grade) and rubrics are never pooled.
+Reference re-grades (`grade.origin = 'reference'`) are not counted anywhere, so re-judging old sessions with today's rubric and judge cannot rewrite past buckets or windows.
+A baseline reset of a rubric inside a window cuts that rubric's side of the window at the reset, so two yardsticks are never compared.
+A rubric change has no "before"; its verdict is `too_early`.
+A rubric needs `trends.min_graded` (default 10) distinct sessions on BOTH sides; with fewer it is `too_early` and has no p-value.
+For the others the p-value is two-sided: Fisher's exact test when either side has fewer than 30 sessions, else the pooled z-test.
+The Holm step-down correction at 10% runs over the rubrics that passed the gate: the smallest p-value must be at most 0.10 / m, the next 0.10 / (m - 1), and so on.
+A rubric that passes is `improved` or `worse` by the direction of its rates, the others are `no_change`.
+The change is `worse` if any rubric is worse, else `improved` if any improved, else `no_change`; it is `too_early` when no rubric passed the gate.
+`perRubric` carries every rubric's before, after, verdict (after Holm) and p-value; the top-level `before` and `after` are those of the rubric with the smallest p-value.
+The ceiling is power: with 10 sessions on each side only a gap of 40 to 50 points is significant (6/10 against 10/10, 3/10 against 8/10; 7/10 against 10/10 is `no_change`), and each further rubric makes Holm stricter, so small real gains read as `no_change` until more sessions are graded.
+
+**Reference set.**
+Up to 20 sessions are marked as reference (`POST` and `DELETE /v1/sessions/{id}/reference`); members are pinned and a removal keeps the pin.
+`POST /v1/trends/reference-regrade` queues a forced re-grade of all members with every current rubric (a normal `grade_batch` job whose grades carry `origin = reference`).
+A reference grade never replaces a standard grade of the same session, rubric version and judge model, and a standard grade replaces a reference one.
+The 20-member cap is enforced under a row lock on Postgres (`SELECT ... FOR UPDATE` on the workspace), so two concurrent adds cannot both take the last place.
+The same job is queued once, by key, after a rubric version change or a judge model change, and not at all while the set is empty.
 
 ## 7. Data model
 
@@ -289,11 +351,11 @@ All IDs are UUIDs (sessions UUIDv5, others UUIDv7); every table carries `workspa
 | `signal` | ingest | session_id, failed_tool_calls, retries, repeated_commands, files_touched, tests_run, signal_version* | Computed at session end |
 | `rubric` | rubrics | id, name, version (blob SHA), ordinal*, commit_sha*, scale, pass_threshold, target_pass_rate*, applies_to*, body_md | Unique (workspace_id, name, version) |
 | `calibration_label`* | rubrics | id, rubric_name, session_id, user_id, label (pass / fail), note | Rubrics "You" column; "Judge was wrong" creates one |
-| `grade` | grading | id, session_id, rubric_id, rubric_version, score, passed, reason, evidence_event_ids, judge_model, transport*, status* (ok / refused / invalid), llm_call_id*, graded_at | Unique (session_id, rubric_version, judge_model); latest per rubric is current |
-| `proposal` | improvement | id, run_id*, title*, target_repo_id*, target_path, branch*, base_sha*, head_sha*, diff, rationale, evidence_session_ids, rubric_names*, status, decided_by*, decided_at*, decision_note*, pr_url* | Status: open / accepted / rejected / conflict / superseded |
-| `skill_repo`* | improvement | id, kind (global / project), path, remote_url, default_branch, allow_list, accept_mode (override), enabled | One global row from Settings, project rows registered on first target |
-| `improver_run`* | improvement | id, started_at, finished_at, status, clusters, proposals_created | Settings shows last and next run |
-| `change_event` | trends | id, at, kind* (proposal_merged / manual_edit / judge_changed / rubric_changed), proposal_id?, repo_id*, description, files, rubric_names* | Trend markers |
+| `grade` | grading | id, session_id, rubric_id, rubric_version, score, passed, reason, evidence_event_ids, judge_model, transport*, status* (ok / refused / invalid), llm_call_id*, graded_at | Unique (session_id, rubric_version, judge_model); latest per rubric is current; `origin`* (standard / reference): reference re-grades are not counted in trends |
+| `proposal` | improvement | id, run_id*, title*, target_repo_id*, target_path, branch*, base_sha*, head_sha*, diff, rationale, evidence_session_ids, rubric_names*, status, decided_by*, decided_at*, decision_note*, pr_url*, cluster_summary*, merge_commit* | Status: open / accepted / rejected / conflict / superseded / failed (diff refused) |
+| `skill_repo`* | improvement | id, kind (global / project), path, remote_url, default_branch, allow_list, accept_mode (override), enabled, last_seen_sha*, scan_warning* | One global row from Settings, project rows registered on first target |
+| `improver_run`* | improvement | id, started_at, finished_at, status, clusters, proposals_created, summary*, error* | Settings shows last and next run; `summary` lists clusters, excluded untrusted rubrics and skipped sessions |
+| `change_event` | trends | id, at, kind* (proposal_merged / manual_edit / judge_changed / rubric_changed), proposal_id?, repo_id*, description, files, rubric_names*, ref* | Trend markers. Unique (workspace_id, kind, ref); `ref` is null for proposals. `skill_repo.last_seen_sha` is the scan's watermark |
 | `llm_call`* | platform/llm | id, at, purpose (grade / dry_run / cluster / improve), model, transport, tokens_in, cache_read_tokens, tokens_out, cost_estimate, ref_id | Budget ledger |
 | `job`* | platform/jobs | see ADR-0005 | Durable queue |
 | `schedule_state`* | platform/jobs | name, last_fired_period | Catch-up after sleep |
@@ -397,13 +459,15 @@ flowchart LR
 | Rubrics | Calibration table, n/10, gate | `GET /v1/rubrics/{name}/calibration` | grading |
 | Settings | Test the judge transport (a tiny real request) | `POST /v1/judge/test {transport, apiKey?}` | grading |
 | Settings | Tokens today, spend this month against the active limits | `GET /v1/budget` | grading |
-| Proposals | Nav badge, Open / Accepted / Rejected tabs, list | `GET /v1/proposals?status=` | improvement |
+| Proposals | Nav badge, Open / Accepted / Rejected tabs, list (`total` of `?status=open` is the badge) | `GET /v1/proposals?status=` | improvement |
+| Settings | Last runs, next run, run now | `GET /v1/improver/runs`, `GET /v1/improver/schedule`, `POST /v1/improver/runs` | improvement |
 | Proposals | Detail: branch, target repo and file, why, evidence, diff | `GET /v1/proposals/{id}` | improvement |
 | Proposals | Accept and merge / Edit first / Reject with reason | `POST /v1/proposals/{id}/accept`, `PATCH /v1/proposals/{id}`, `POST /v1/proposals/{id}/reject` | improvement |
-| Trends | Range, weekly series, target line, merge markers | `GET /v1/trends?range=8w|90d&rubric=` | trends |
-| Trends | Change log with before → after | `GET /v1/change-events?range=` | trends |
+| Trends | Range, series per day or week, markers, baseline resets | `GET /v1/trends?weeks=4|12|26&bucket=week|day` | trends |
+| Trends | Change log with before → after and a verdict | `GET /v1/trends/changes` | trends |
+| Trends | Reference set: members, add, remove, re-grade | `GET /v1/trends/reference`, `POST` and `DELETE /v1/sessions/{id}/reference`, `POST /v1/trends/reference-regrade` (202 Job) | trends, grading |
 | Settings | Sources, redaction, retention days, judge "Runs via" (API key default or claude CLI), sampling, budget mode and limits, schedule, accept mode | `GET /v1/settings`, `PATCH /v1/settings`, `GET /v1/sources`, `POST /v1/sources` | settings, ingest |
-| Settings | Global skills repo, registered project repos (enable, accept-mode override) | `GET /v1/skill-repos`, `GET /v1/skill-repos/detected`, `PUT /v1/skill-repos/global`, `POST /v1/skill-repos/global/init`, `PATCH /v1/skill-repos/{id}` | improvement |
+| Settings | Global skills repo, registered project repos (enable, accept-mode override) | `GET /v1/skill-repos`, `GET /v1/skill-repos/detected`, `PUT /v1/skill-repos/global`, `POST /v1/skill-repos/projects`, `POST /v1/skill-repos/global/init`, `PATCH /v1/skill-repos/{id}` | improvement |
 | Settings | Last / next improver run, dead jobs | `GET /v1/jobs?status=dead` | platform/jobs |
 | Settings | Team mode: server URL, share toggle, Connect with SSO | `PATCH /v1/settings` (team.*), device flow against the team server | settings, identity |
 | (team) | Shipper intake | `POST /v1/sessions` (idempotent upsert) | ingest |
@@ -430,7 +494,7 @@ The plan's four contract roots (`/v1/sessions`, `/v1/grades`, `/v1/proposals`, `
 | Team trust | Aggregates by rubric/workspace/repo only; per-user share opt-out enforced at shipper and server; RLS |
 | Agent log formats change (added) | Versioned adapters with fixtures per agent version; `unknown` events and ingest-warning counter instead of crashes |
 | Laptop asleep at schedule time (added) | Durable schedule state with single catch-up on start; last/next run visible |
-| Damage to the user's skills or project repos (added) | Worktrees for improver; project allow-list limited to `.claude/**`, `CLAUDE.md`, `AGENTS.md` (never source code); merges only on explicit accept with a clean tree on the default branch, or via PR; rubric saves commit only their own path |
+| Damage to the user's skills or project repos (added) | Worktrees for improver; allow-lists limited to skills, commands, agents, `CLAUDE.md` and `AGENTS.md` (never source code, hooks, settings or scripts unless a repository sets `allowExecutable`); merges only on explicit accept with a clean tree on the default branch, or via PR; rubric saves commit only their own path |
 | Fix lands in the wrong place (added) | Target resolution from loaded instruction files' real paths; one target repo per cluster; target shown in the inbox before accept |
 | Dual-dialect drift (added) | One Kysely migration set; repository tests on SQLite and Postgres in CI from Phase 1 |
 | CLI transport instability (added) | Pinned CLI version range with contract tests; API transport as fallback |

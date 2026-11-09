@@ -1,0 +1,66 @@
+import { realpath } from 'node:fs/promises';
+import { basename, dirname } from 'node:path';
+import { git } from '../../platform/git/index.js';
+import type { SkillRepoRow } from './skill-repos.js';
+
+/** The repository name in the project's `origin` URL (`git@host:o/api.git` gives `api`), or null without a remote. */
+const remoteName = (path: string): Promise<string | null> =>
+  git(path, ['remote', 'get-url', 'origin']).then(
+    (url) => /([^/:]+?)(?:\.git)?\/?$/.exec(url)?.[1] ?? null,
+    () => null,
+  );
+
+const real = (p: string): Promise<string> => realpath(p).catch(() => p);
+
+/**
+ * The repository a failing session's instructions live in (ADR-0010): the registered project
+ * repository the session ran in, else the global skills repository.
+ *
+ * A session records the host path of its repository, which inside the container is mounted
+ * elsewhere (`/repos/projects/<name>`). A project therefore matches when the session's folder
+ * (or one of its parents) is the registered path, or when the repository root has the same folder name (only when exactly one registered
+ * project has it and its `origin` remote, if any, carries the same name; with several, or a
+ * mismatch, the session is skipped, never guessed).
+ *
+ * ponytail: instruction files loaded in the session (ADR-0010 rule 1) are not consulted, so a
+ * failure caused by a global skill inside a registered project still targets the project. Upgrade
+ * path: read the session's `skill` and instruction-file events and map their real paths.
+ */
+export async function resolveTarget(
+  session: { repoRoot: string | null; cwd: string | null },
+  repos: readonly SkillRepoRow[],
+): Promise<{ repo: SkillRepoRow } | { skip: string }> {
+  const enabled = repos.filter((r) => r.enabled);
+  const projects = enabled.filter((r) => r.kind === 'project');
+  const start = session.repoRoot ?? session.cwd;
+  if (start) {
+    const known = await Promise.all(
+      projects.map(async (row) => ({ row, paths: new Set([row.path, await real(row.path)]) })),
+    );
+    for (let dir = start; ; dir = dirname(dir)) {
+      const hit = known.find((k) => k.paths.has(dir));
+      if (hit) return { repo: hit.row };
+      if (dirname(dir) === dir) break;
+    }
+  }
+  if (session.repoRoot) {
+    const name = basename(session.repoRoot);
+    const byName = projects.filter((p) => basename(p.path) === name);
+    const [only] = byName;
+    if (only && byName.length === 1) {
+      // A folder name alone is weak evidence: when the project has a remote, its name must agree too.
+      const remote = await remoteName(only.path);
+      if (remote !== null && remote !== name)
+        return {
+          skip: `the only project repository named "${name}" has the remote "${remote}"; it is not taken for the session's repository`,
+        };
+      return { repo: only };
+    }
+    if (byName.length > 1)
+      return {
+        skip: `${String(byName.length)} registered project repositories are named "${name}"; the session's repository cannot be told apart`,
+      };
+  }
+  const global = enabled.find((r) => r.kind === 'global');
+  return global ? { repo: global } : { skip: 'no global skills repository is set' };
+}

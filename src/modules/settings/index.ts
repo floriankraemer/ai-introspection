@@ -29,6 +29,10 @@ const keys = {
   'schedule.grade': z.enum(['session_end', 'pr_merge']),
   'schedule.improver': z.enum(['daily', 'weekly', 'manual']),
   'proposals.accept_mode': z.enum(['merge', 'pr']),
+  /** Days before and after a change that the Trends change log compares. */
+  'trends.window_days': z.number().int().min(1).max(60),
+  /** Fewest graded sessions on EACH side of a change before a verdict is given. */
+  'trends.min_graded': z.number().int().min(1).max(1000),
 } as const;
 
 export const settingsPatchSchema = z.object(keys).partial().strict();
@@ -55,6 +59,8 @@ const DEFAULTS: Omit<Settings, 'judge.api_key_set'> = {
   'schedule.grade': 'session_end',
   'schedule.improver': 'daily',
   'proposals.accept_mode': 'merge',
+  'trends.window_days': 7,
+  'trends.min_graded': 10,
 };
 
 /**
@@ -75,9 +81,16 @@ export interface SettingsService {
   update(patch: SettingsPatch): Promise<Settings>;
   /** Write-only; the key never comes back through `get`. */
   setJudgeKey(apiKey: string): void;
+  /** Calls `listener` after every successful update with the keys that changed; a failing listener never fails the update. */
+  onUpdate(listener: (keys: readonly string[]) => Promise<void>): void;
 }
 
-export function createSettings(db: Db, workspaceId: string, secrets: SecretStore): SettingsService {
+export function createSettings(
+  db: Db,
+  workspaceId: string,
+  secrets: SecretStore,
+  clock: () => Date = () => new Date(),
+): SettingsService {
   async function get(): Promise<Settings> {
     const rows = await db
       .selectFrom('setting')
@@ -92,13 +105,18 @@ export function createSettings(db: Db, workspaceId: string, secrets: SecretStore
     });
   }
 
+  const listeners: ((keys: readonly string[]) => Promise<void>)[] = [];
+
   return {
     get,
+    onUpdate: (listener) => {
+      listeners.push(listener);
+    },
     async update(patch) {
       // Merge into the current values and validate the whole, so no invalid state is ever stored.
       // The derived `judge.api_key_set` is stripped by the schema.
       const next = storedSchema.parse({ ...(await get()), ...patch });
-      const now = new Date().toISOString();
+      const now = clock().toISOString();
       for (const key of Object.keys(patch) as (keyof SettingsPatch)[]) {
         await db
           .insertInto('setting')
@@ -110,7 +128,12 @@ export function createSettings(db: Db, workspaceId: string, secrets: SecretStore
           )
           .execute();
       }
-      return get();
+      const saved = await get();
+      for (const listener of listeners)
+        await listener(Object.keys(patch)).catch((e: unknown) => {
+          console.error('a settings listener failed', e);
+        });
+      return saved;
     },
     setJudgeKey: (apiKey) => {
       secrets.setJudgeKey(apiKey);

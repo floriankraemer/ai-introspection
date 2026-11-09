@@ -59,6 +59,8 @@ export interface SessionQuery {
   q?: string | undefined;
   agent?: Agent | undefined;
   result?: SessionResultFilter | undefined;
+  /** ISO instant: only sessions that started at or after it. */
+  since?: string | undefined;
   cursor?: string | undefined;
   limit?: number | undefined;
 }
@@ -76,6 +78,25 @@ export interface EventQuery {
   limit?: number | undefined;
 }
 
+export type Proposal = Schemas['Proposal'];
+export type ProposalStatus = Proposal['status'];
+export type ProposalList = Schemas['ProposalList'];
+export type ImproverRun = Schemas['ImproverRun'];
+export type ImproverSchedule = Json200<paths['/v1/improver/schedule']['get']>;
+
+export type Trends = Json200<paths['/v1/trends']['get']>;
+export type TrendMarker = Trends['markers'][number];
+export type TrendMarkerKind = TrendMarker['kind'];
+export type TrendChange = Schemas['TrendChange'];
+export type ChangeVerdict = TrendChange['verdict'];
+export type TrendBucketSize = 'week' | 'day';
+export type ReferenceSet = Schemas['ReferenceSet'];
+export interface TrendQuery {
+  /** Range in weeks (4, 12 or 26); the server turns it into from/to. */
+  weeks: number;
+  bucket: TrendBucketSize;
+}
+
 /** The API surface the SPA uses. `client.ts` implements it over HTTP, `mock.ts` over fixtures. */
 export interface Api {
   getSettings(): Promise<Settings>;
@@ -90,10 +111,24 @@ export interface Api {
   putGlobalSkillRepo(path: string): Promise<SkillRepo>;
   initGlobalSkillRepo(path: string): Promise<SkillRepo>;
   copyStarterRubrics(): Promise<{ copied: string[] }>;
-  patchSkillRepo(id: string, body: { enabled: boolean }): Promise<SkillRepo>;
+  patchSkillRepo(
+    id: string,
+    body: {
+      enabled?: boolean;
+      acceptMode?: SkillRepo['acceptMode'];
+      allowExecutable?: boolean;
+    },
+  ): Promise<SkillRepo>;
   startImport(): Promise<Job>;
   getJob(id: string): Promise<Job>;
+  /** `days` 0 means all time. */
   getTrendSummary(days: number): Promise<TrendSummary>;
+  getTrends(query: TrendQuery): Promise<Trends>;
+  listTrendChanges(): Promise<TrendChange[]>;
+  startReferenceRegrade(): Promise<Job>;
+  getReferenceSet(): Promise<ReferenceSet>;
+  addToReferenceSet(sessionId: string): Promise<void>;
+  removeFromReferenceSet(sessionId: string): Promise<void>;
   listSessions(query: SessionQuery): Promise<Page<SessionSummary>>;
   getSession(id: string): Promise<SessionDetail>;
   listEvents(id: string, query: EventQuery): Promise<Page<TraceEvent> & { total: number }>;
@@ -110,4 +145,13 @@ export interface Api {
   dryRunRubric(name: string, body: DryRunInput): Promise<DryRunResult>;
   addLabel(name: string, label: LabelInput): Promise<void>;
   getBudget(): Promise<Budget>;
+  listProposals(status?: ProposalStatus): Promise<ProposalList>;
+  getProposal(id: string): Promise<Proposal>;
+  patchProposal(id: string, diff: string): Promise<Proposal>;
+  acceptProposal(id: string): Promise<Proposal>;
+  rejectProposal(id: string, reason: string): Promise<Proposal>;
+  startImprover(since?: string): Promise<Job>;
+  listImproverRuns(): Promise<ImproverRun[]>;
+  getImproverSchedule(): Promise<ImproverSchedule>;
+  addProjectRepo(path: string): Promise<SkillRepo>;
 }

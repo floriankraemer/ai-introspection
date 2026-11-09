@@ -4,16 +4,25 @@ import { useState, type ReactNode } from 'react';
 import { useApi } from '../api/context.js';
 import {
   invalidateKeys,
+  useAddProjectRepo,
   useBudget,
-  useDoctor,
   usePatchSettings,
+  usePatchSkillRepo,
   useSettings,
   useSkillRepos,
   useSources,
 } from '../api/queries.js';
 import { formatTokens } from '../lib/format.js';
-import type { Agent, BudgetMode, Settings as SettingsData, SourceStatus } from '../api/types.js';
+import type {
+  Agent,
+  BudgetMode,
+  Settings as SettingsData,
+  SkillRepo,
+  SourceStatus,
+} from '../api/types.js';
+import { NextRun } from '../components/NextRun.js';
 import { HealthCheck } from '../components/HealthCheck.js';
+import { CliLogin } from '../components/CliLogin.js';
 import { JudgeTest } from '../components/JudgeTest.js';
 import {
   BTN,
@@ -30,7 +39,9 @@ import {
 type Writable = Omit<SettingsData, 'judge.api_key_set'>;
 type Patch = Partial<Writable>;
 
-const SECTION = 'flex flex-col gap-3 rounded-xl border border-line bg-surface p-[18px]';
+// break-inside-avoid + mb-5: the cards flow down two balanced CSS columns, so no row leaves a gap.
+const SECTION =
+  'mb-5 flex break-inside-avoid flex-col gap-3 rounded-xl border border-line bg-surface p-[18px]';
 const H2 = 'm-0 text-base font-semibold';
 
 const STATUS: Record<SourceStatus, [string, ChipTone]> = {
@@ -78,6 +89,7 @@ function NumberSetting({
   hint,
   value,
   min,
+  max = Infinity,
   onCommit,
   placeholder,
 }: {
@@ -85,21 +97,35 @@ function NumberSetting({
   hint?: ReactNode;
   value: number | null;
   min: number;
+  max?: number;
   onCommit: (n: number | null) => void;
   placeholder?: string;
 }) {
   const [draft, setDraft] = useState(value === null ? '' : String(value));
   const parsed = draft.trim() === '' ? null : Number(draft);
-  const invalid = parsed !== null && (!Number.isFinite(parsed) || parsed < min);
+  const invalid = parsed !== null && (!Number.isFinite(parsed) || parsed < min || parsed > max);
   return (
     <Field
       label={label}
-      hint={invalid ? <span className="text-fail">Enter a number of at least {min}.</span> : hint}
+      hint={
+        invalid ? (
+          <span className="text-fail">
+            Enter a number{' '}
+            {max === Infinity
+              ? `of at least ${String(min)}`
+              : `from ${String(min)} to ${String(max)}`}
+            .
+          </span>
+        ) : (
+          hint
+        )
+      }
     >
       <input
         type="number"
         inputMode="numeric"
         min={min}
+        {...(max === Infinity ? {} : { max })}
         className={FIELD}
         value={draft}
         placeholder={placeholder}
@@ -174,7 +200,7 @@ function PatternsSetting({
   );
 }
 
-function SourcesCard({ settings, save }: { settings: SettingsData; save: (p: Patch) => void }) {
+function SourcesCard() {
   const api = useApi();
   const qc = useQueryClient();
   const sources = useSources();
@@ -272,6 +298,14 @@ function SourcesCard({ settings, save }: { settings: SettingsData; save: (p: Pat
           + Add source folder
         </Button>
       )}
+    </section>
+  );
+}
+
+function RedactionCard({ settings, save }: { settings: SettingsData; save: (p: Patch) => void }) {
+  return (
+    <section aria-label="Redaction and retention" className={SECTION}>
+      <h2 className={H2}>Redaction and retention</h2>
       <label className="flex items-center gap-2.5 text-sm">
         <input
           type="checkbox"
@@ -302,47 +336,6 @@ function SourcesCard({ settings, save }: { settings: SettingsData; save: (p: Pat
   );
 }
 
-/** CLI transport: the login lives in the container, so show what the doctor found and how to log in. */
-function CliLogin() {
-  const doctor = useDoctor();
-  const check = doctor.data?.checks.find((c) => c.id === 'judge');
-  const ok = check?.status === 'ok';
-  return (
-    <div
-      aria-label="Claude login"
-      role="group"
-      className="flex flex-col gap-1.5 rounded-lg border border-line-soft bg-surface-alt p-3 text-sm"
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <strong>Claude login in the container</strong>
-        {doctor.isPending ? (
-          <span className="text-muted">Checking…</span>
-        ) : doctor.isError || !check ? (
-          <Chip>Unknown</Chip>
-        ) : (
-          <Chip tone={ok ? 'pass' : check.status === 'fail' ? 'fail' : 'warn'}>
-            {ok ? 'Logged in' : 'Not logged in'}
-          </Chip>
-        )}
-        <Button
-          className="ml-auto h-10"
-          disabled={doctor.isFetching}
-          onClick={() => void doctor.refetch()}
-        >
-          {doctor.isFetching ? 'Checking…' : 'Check again'}
-        </Button>
-      </div>
-      {check ? <p className="m-0 text-muted">{check.detail}</p> : null}
-      {ok ? null : (
-        <p className="m-0 text-ink-soft">
-          To log in, run <code>make claude-login</code> in your project folder, then press Check
-          again.
-        </p>
-      )}
-    </div>
-  );
-}
-
 function JudgeCard({ settings, save }: { settings: SettingsData; save: (p: Patch) => void }) {
   const api = useApi();
   const qc = useQueryClient();
@@ -357,7 +350,7 @@ function JudgeCard({ settings, save }: { settings: SettingsData; save: (p: Patch
   const mode = settings['budget.mode'];
   return (
     <section aria-label="Judge" className={SECTION}>
-      <h2 className={H2}>Judge and sampling</h2>
+      <h2 className={H2}>Judge and budget</h2>
       <Select
         label="Runs via"
         name="judge.transport"
@@ -479,14 +472,177 @@ function BudgetUsage({ mode }: { mode: BudgetMode }) {
           {usdOver ? ' Grading is deferred until next month.' : ''}
         </p>
       ) : null}
+      {b.improver.tokensToday > 0 || b.improver.usdMonth > 0 ? (
+        <p className="m-0 text-muted">
+          The improver used {formatTokens(b.improver.tokensToday)} tokens today and $
+          {b.improver.usdMonth.toFixed(2)} this month. This counts toward the budget above.
+        </p>
+      ) : null}
     </div>
   );
 }
 
+const MODE_VALUE = { default: '', merge: 'merge', pr: 'pr' } as const;
+
+const MODE_LABEL = { merge: 'Merging locally', pr: 'Opening a pull request' } as const;
+
+/** Every skills repo (global first) with its own accept override and executable-files toggle. */
+function RepoList({ repos, defaultMode }: { repos: SkillRepo[]; defaultMode: 'merge' | 'pr' }) {
+  const patch = usePatchSkillRepo();
+  const sorted = [...repos].sort(
+    (a, b) => Number(b.kind === 'global') - Number(a.kind === 'global'),
+  );
+  return (
+    <>
+      {patch.isError ? (
+        <p role="alert" className="m-0 text-sm text-fail">
+          Could not save: {patch.error.message}
+        </p>
+      ) : null}
+      <ul aria-label="Skills repos" className="m-0 flex list-none flex-col gap-4 p-0 text-sm">
+        {sorted.map((r) => (
+          <li key={r.id} className="flex flex-wrap items-center justify-between gap-2">
+            <span className="flex min-w-0 items-center gap-2">
+              <code className="break-all">{r.path}</code>
+              <Chip>{r.kind === 'global' ? 'Global' : r.enabled ? 'Project' : 'Disabled'}</Chip>
+            </span>
+            <select
+              aria-label={`Accept mode for ${r.path}`}
+              className={`${FIELD} w-auto`}
+              value={r.acceptMode ?? MODE_VALUE.default}
+              disabled={patch.isPending}
+              onChange={(e) => {
+                patch.mutate({
+                  id: r.id,
+                  acceptMode: e.target.value === '' ? null : (e.target.value as 'merge' | 'pr'),
+                });
+              }}
+            >
+              <option value="">Use default ({MODE_LABEL[defaultMode]})</option>
+              <option value="merge">{MODE_LABEL.merge}</option>
+              <option value="pr">{MODE_LABEL.pr}</option>
+            </select>
+            {r.kind === 'global' && !r.hasRubrics ? (
+              <span className="basis-full text-xs text-muted">
+                This folder has no rubrics/ folder yet. Run the setup wizard to copy the starter
+                rubrics.
+              </span>
+            ) : null}
+            <ExecutableToggle r={r} patch={patch} />
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
+/** Turning this on needs an inline confirmation: Claude Code executes the files it unlocks. */
+function ExecutableToggle({
+  r,
+  patch,
+}: {
+  r: SkillRepo;
+  patch: ReturnType<typeof usePatchSkillRepo>;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  return (
+    <div className="flex basis-full flex-col gap-1 text-xs text-muted">
+      <label className="flex items-center gap-2 text-sm text-ink">
+        <input
+          type="checkbox"
+          checked={r.allowExecutable}
+          disabled={patch.isPending}
+          onChange={(e) => {
+            if (e.target.checked) setConfirming(true);
+            else patch.mutate({ id: r.id, allowExecutable: false });
+          }}
+        />
+        Allow hooks, settings and scripts
+        <span className="sr-only"> for {r.path}</span>
+      </label>
+      <span className="text-warn">
+        Claude Code executes these files. Proposals that touch them will be flagged and need an
+        explicit confirmation to accept.
+      </span>
+      {confirming && !r.allowExecutable ? (
+        <div
+          role="alertdialog"
+          aria-label={`Confirm executable files for ${r.path}`}
+          className="flex flex-col gap-2 rounded-lg border border-warn-line bg-warn-bg p-3 text-sm text-ink"
+        >
+          <span>
+            Allow hooks, settings and scripts in <code className="break-all">{r.path}</code>? Claude
+            Code executes these files. Proposals that change them will be flagged for review.
+          </span>
+          <div className="flex gap-2">
+            <Button
+              variant="primary"
+              onClick={() => {
+                setConfirming(false);
+                patch.mutate({ id: r.id, allowExecutable: true });
+              }}
+            >
+              Allow
+            </Button>
+            <Button
+              onClick={() => {
+                setConfirming(false);
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function AddProject() {
+  const add = useAddProjectRepo();
+  const [path, setPath] = useState('');
+  return (
+    <form
+      className="flex flex-col gap-1"
+      onSubmit={(e) => {
+        e.preventDefault();
+        add.mutate(path.trim(), {
+          onSuccess: () => {
+            setPath('');
+          },
+        });
+      }}
+    >
+      <div className="flex items-end gap-2">
+        <Field label="Project repo path" className="flex-1">
+          <input
+            className={FIELD}
+            placeholder="/repos/projects/<name>"
+            value={path}
+            onChange={(e) => {
+              setPath(e.target.value);
+            }}
+          />
+        </Field>
+        <Button type="submit" disabled={add.isPending || path.trim() === ''}>
+          Add project repo
+        </Button>
+      </div>
+      <p className="m-0 text-xs text-muted">
+        A folder inside the mounted projects folder, for example{' '}
+        <code>/repos/projects/web-app</code>. The improver only changes .claude/**, CLAUDE.md and
+        AGENTS.md in project repos.
+      </p>
+      {add.isError ? (
+        <p role="alert" className="m-0 text-[13px] text-fail">
+          {add.error.message}
+        </p>
+      ) : null}
+    </form>
+  );
+}
+
 function ScheduleCard({ settings, save }: { settings: SettingsData; save: (p: Patch) => void }) {
-  const repos = useSkillRepos();
-  const global = repos.data?.find((r) => r.kind === 'global');
-  const projects = repos.data?.filter((r) => r.kind === 'project') ?? [];
   return (
     <section aria-label="Schedule" className={SECTION}>
       <h2 className={H2}>Schedule</h2>
@@ -511,47 +667,78 @@ function ScheduleCard({ settings, save }: { settings: SettingsData; save: (p: Pa
           ['manual', 'Manually'],
         ]}
       />
-      <div className="flex flex-col gap-1 text-xs text-muted">
-        <span>Skills repo for patches</span>
-        {repos.isPending ? (
-          <span className="text-sm">Loading…</span>
-        ) : global ? (
-          <>
-            <code className="text-sm break-all text-ink">{global.path}</code>
-            {!global.hasRubrics ? (
-              <span>
-                This folder has no rubrics/ folder yet. Run the setup wizard to copy the starter
-                rubrics.
-              </span>
-            ) : null}
-          </>
-        ) : (
-          <span className="text-sm text-ink-soft">
-            Not set. Choose one in the Health check above or the{' '}
-            <Link to="/setup">setup wizard</Link>.
-          </span>
-        )}
-      </div>
+      <NextRun />
+    </section>
+  );
+}
+
+function ReposCard({ settings, save }: { settings: SettingsData; save: (p: Patch) => void }) {
+  const repos = useSkillRepos();
+  const hasGlobal = repos.data?.some((r) => r.kind === 'global') ?? false;
+  return (
+    <section aria-label="Skills repositories" className={SECTION}>
+      <h2 className={H2}>Skills repositories</h2>
       <Select
-        label="Accept a proposal by"
+        label="Accept proposals by"
         name="proposals.accept_mode"
         settings={settings}
         save={save}
         options={[
-          ['merge', 'Merging locally'],
-          ['pr', 'Opening a pull request'],
+          ['merge', MODE_LABEL.merge],
+          ['pr', MODE_LABEL.pr],
         ]}
       />
-      {projects.length > 0 ? (
-        <ul className="m-0 flex list-none flex-col gap-1 p-0 text-sm">
-          {projects.map((r) => (
-            <li key={r.id} className="flex justify-between gap-3">
-              <code className="break-all">{r.path}</code>
-              <Chip>{r.enabled ? 'Enabled' : 'Disabled'}</Chip>
-            </li>
-          ))}
-        </ul>
-      ) : null}
+      {repos.isPending ? (
+        <p className="m-0 text-sm text-muted">Loading…</p>
+      ) : (
+        <>
+          {!hasGlobal ? (
+            <p className="m-0 text-sm text-ink-soft">
+              No global skills repo yet. Choose one in the Health check above or the{' '}
+              <Link to="/setup">setup wizard</Link>.
+            </p>
+          ) : null}
+          <RepoList
+            repos={repos.data ?? []}
+            defaultMode={settings['proposals.accept_mode'] === 'pr' ? 'pr' : 'merge'}
+          />
+        </>
+      )}
+      <AddProject />
+    </section>
+  );
+}
+
+function TrendsCard({ settings, save }: { settings: SettingsData; save: (p: Patch) => void }) {
+  return (
+    <section aria-label="Trends" className={SECTION}>
+      <h2 className={H2}>Trends</h2>
+      <NumberSetting
+        label="Compare windows of (days)"
+        hint="1 to 60. Pass rate is compared over this many days before and after each change."
+        value={settings['trends.window_days']}
+        min={1}
+        max={60}
+        onCommit={(n) => {
+          if (n !== null) save({ 'trends.window_days': n });
+        }}
+      />
+      <NumberSetting
+        label="Minimum graded sessions per side"
+        hint="Fewer than this and the verdict is “too early”."
+        value={settings['trends.min_graded']}
+        min={1}
+        onCommit={(n) => {
+          if (n !== null) save({ 'trends.min_graded': n });
+        }}
+      />
+      <p className="m-0 text-xs leading-normal text-muted">
+        Each rubric is tested separately (Fisher’s exact test for small samples) at 90 % confidence;
+        both sides need at least this many graded sessions. A change counts as improved or worse
+        only when the gap is unlikely to be chance. With 10 sessions per side, only gaps of 40 to 50
+        points are significant. Small improvements need many more sessions, so raise the minimum or
+        the window to see them.
+      </p>
     </section>
   );
 }
@@ -560,7 +747,7 @@ function TeamCard() {
   return (
     <section
       aria-label="Team mode"
-      className="flex flex-col gap-3 rounded-xl border border-dashed border-line-dashed bg-surface-alt p-[18px]"
+      className="mb-5 flex break-inside-avoid flex-col gap-3 rounded-xl border border-dashed border-line-dashed bg-surface-alt p-[18px]"
     >
       <div className="flex items-center justify-between">
         <h2 className={H2}>Team mode</h2>
@@ -577,7 +764,7 @@ function TeamCard() {
         <input type="checkbox" className="size-[18px]" disabled />
         Share my sessions with the workspace
       </label>
-      <Button disabled className="self-start bg-sunken text-muted">
+      <Button disabled className="self-start">
         Connect with SSO
       </Button>
     </section>
@@ -587,10 +774,20 @@ function TeamCard() {
 export function Settings() {
   const q = useSettings();
   const patch = usePatchSettings();
+  const [pending, setPending] = useState<Patch>({});
   if (q.isPending) return <Loading label="Loading settings" />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
+  // Optimistic values live in component state, not the query cache: a controlled checkbox snaps back
+  // at the end of its click handler unless React state already holds the new value, and cache
+  // subscribers are only notified a tick later.
+  const settings = { ...q.data, ...pending };
   const save = (p: Patch) => {
-    patch.mutate(p);
+    setPending((x) => ({ ...x, ...p }));
+    const clear = () => {
+      setPending((x) => Object.fromEntries(Object.entries(x).filter(([k]) => !(k in p))));
+    };
+    // The hook writes the saved values into the cache first; a failure just drops the optimistic ones.
+    patch.mutateAsync(p).then(clear, clear);
   };
   return (
     <div className="flex flex-col gap-5">
@@ -614,10 +811,13 @@ export function Settings() {
         )}
       </p>
       <HealthCheck />
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-        <SourcesCard settings={q.data} save={save} />
-        <JudgeCard settings={q.data} save={save} />
-        <ScheduleCard settings={q.data} save={save} />
+      <div className="lg:columns-2 lg:gap-5">
+        <SourcesCard />
+        <RedactionCard settings={settings} save={save} />
+        <JudgeCard settings={settings} save={save} />
+        <ScheduleCard settings={settings} save={save} />
+        <ReposCard settings={settings} save={save} />
+        <TrendsCard settings={settings} save={save} />
         <TeamCard />
       </div>
     </div>

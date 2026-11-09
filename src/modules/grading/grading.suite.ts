@@ -23,6 +23,7 @@ import {
   GRADE_SESSION_JOB,
   type Grading,
 } from './index.js';
+import { STALE_RESERVATION_MS } from './budget.js';
 import type { FakeDecision } from './judge-fake.js';
 import { JudgeCallError, type Judge, type JudgeRequest, type Usage } from './types.js';
 
@@ -485,8 +486,8 @@ export function gradingSuite(name: string, make: TestDbFactory): void {
       });
 
       it('lets reservations that no process will settle expire', async () => {
-        const at = new Date(Date.now() - 31 * 60_000);
-        if (at.getUTCDate() !== new Date().getUTCDate()) return; // the window would start after it
+        // A fixed morning, so the reservation and the check fall on the same budget day.
+        const at = new Date('2026-11-09T01:00:00Z');
         await t.handle.db
           .insertInto('llm_call')
           .values({
@@ -500,7 +501,13 @@ export function gradingSuite(name: string, make: TestDbFactory): void {
             status: 'reserved',
           })
           .execute();
-        expect((await grading.budget.status()).tokensToday).toBe(0);
+        const later = (ms: number) => new Date(at.getTime() + ms);
+        expect(
+          (await grading.budget.status(later(STALE_RESERVATION_MS - 60_000))).tokensToday,
+        ).toBe(1_000_000);
+        expect(
+          (await grading.budget.status(later(STALE_RESERVATION_MS + 60_000))).tokensToday,
+        ).toBe(0);
       });
     });
 
@@ -611,6 +618,38 @@ export function gradingSuite(name: string, make: TestDbFactory): void {
         const job = await queue().get(id);
         await grading.handlers[GRADE_BATCH_JOB]?.run({ id, payload: job?.payload } as never);
         expect(await gradeCount()).toBe(4);
+      });
+    });
+
+    describe('reference re-grades', () => {
+      const runBatch = async (input: Parameters<typeof grading.enqueueBatch>[0]) => {
+        const id = await grading.enqueueBatch(input);
+        const job = await queue().get(id);
+        await grading.handlers[GRADE_BATCH_JOB]?.run({ id, payload: job?.payload } as never);
+      };
+      const rows = () =>
+        t.handle.db.selectFrom('grade').select(['id', 'origin', 'judge_model']).execute();
+
+      it('never replace a standard grade, are stored apart for a new judge model, and a standard grade replaces them', async () => {
+        await grading.gradeNow({ sessionIds: [claudeId], policy: false });
+        const standard = await rows();
+        expect(standard.every((r) => r.origin === 'standard')).toBe(true);
+
+        await runBatch({ sessionIds: [claudeId], force: true, origin: 'reference' });
+        expect(await rows()).toEqual(standard); // same key: the standard grade stands
+
+        activeJudge = { ...activeJudge, model: 'judge-b' };
+        await runBatch({ sessionIds: [claudeId], force: true, origin: 'reference' });
+        const after = await rows();
+        expect(after).toHaveLength(standard.length * 2);
+        expect(after.filter((r) => r.origin === 'reference').map((r) => r.judge_model)).toEqual(
+          Array<string>(standard.length).fill('judge-b'),
+        );
+
+        await grading.gradeNow({ sessionIds: [claudeId], policy: false });
+        const last = await rows();
+        expect(last).toHaveLength(after.length);
+        expect(last.every((r) => r.origin === 'standard')).toBe(true);
       });
     });
 

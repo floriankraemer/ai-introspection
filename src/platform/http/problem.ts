@@ -10,6 +10,10 @@ export const problemSchema = z
     status: z.number().int(),
     detail: z.string().optional(),
     errors: z.array(z.object({ path: z.string(), message: z.string() })).optional(),
+    /** 422: what is wrong with the input, one entry per problem. */
+    problems: z.array(z.string()).optional(),
+    /** 409: the actionable fix. */
+    fix: z.string().optional(),
   })
   .openapi('Problem');
 export type Problem = z.infer<typeof problemSchema>;
@@ -29,7 +33,7 @@ export function problemResponse(
   c: Context,
   status: ContentfulStatusCode,
   title: string,
-  extra: Pick<Problem, 'detail' | 'errors'> = {},
+  extra: Pick<Problem, 'detail' | 'errors' | 'problems' | 'fix'> = {},
 ): Response {
   const body: Problem = { type: 'about:blank', title, status, ...extra };
   return c.body(JSON.stringify(body), status, { 'content-type': 'application/problem+json' });

@@ -18,6 +18,8 @@ export interface DoctorReport {
 export interface DoctorInput {
   dataDir: string;
   watchPoll: boolean;
+  /** `INTROSPECT_NOW`: the app clock is fixed to start there (tests only). */
+  fixedNow?: string | undefined;
   /** The `redaction.enabled` setting; sessions stored while it is off never reach a judge. */
   redactionEnabled: boolean;
   /** `error` is set when the database cannot be read or is not migrated. */
@@ -25,6 +27,8 @@ export interface DoctorInput {
   sources: { agent: string; path: string; enabled: boolean }[];
   /** Registered skills repositories (global and project). */
   repos: { kind: 'global' | 'project'; path: string; hasRubrics: boolean }[];
+  /** Problems the trends change scan had with a repository (rewritten history, unreadable commits). */
+  scanWarnings: { path: string; warning: string }[];
   /** Parse errors of rubric files in the global skills repository. */
   rubricProblems: string[];
   judge: {
@@ -88,6 +92,17 @@ const MOUNT_HINTS: Record<string, string> = {
 const mountFix = (path: string): string =>
   MOUNT_HINTS[path] ??
   'mount the folder into the container (volumes in compose.yaml) or correct the path in Settings';
+
+export function checkClock({ fixedNow }: Pick<DoctorInput, 'fixedNow'>): DoctorCheck | null {
+  if (fixedNow === undefined) return null;
+  return problem(
+    'warn',
+    'clock',
+    'Clock',
+    `INTROSPECT_NOW=${fixedNow} is set: every time in the app starts from that instant`,
+    'Unset INTROSPECT_NOW and run `make up` to use the real time.',
+  );
+}
 
 export function checkData({ dataDir, db }: DoctorInput): DoctorCheck {
   const label = 'Data folder and database';
@@ -314,6 +329,19 @@ export function checkRubrics({ rubricProblems, repos }: DoctorInput): DoctorChec
   ];
 }
 
+export function checkChangeScan({ scanWarnings }: DoctorInput): DoctorCheck[] {
+  if (scanWarnings.length === 0) return [];
+  return [
+    problem(
+      'warn',
+      'change-scan',
+      'Change tracking',
+      scanWarnings.map((w) => w.warning).join('; '),
+      'Edits in the span named above do not appear in the Trends change log. The warning goes away after the next scan that finds new commits; nothing else needs fixing unless the repository is damaged (`git fsck`).',
+    ),
+  ];
+}
+
 export function checkOwnership({ repos, uid }: DoctorInput): DoctorCheck {
   const label = 'File ownership';
   if (uid === undefined) return ok('ownership', label, 'Not applicable on this platform');
@@ -348,8 +376,10 @@ export async function runDoctor(input: DoctorInput): Promise<DoctorReport> {
     await checkJudge(input),
     checkRedaction(input),
     ...checkRubrics(input),
+    ...checkChangeScan(input),
     checkOwnership(input),
-  ];
+    checkClock(input),
+  ].filter((c): c is DoctorCheck => c !== null);
   return { checks };
 }
 

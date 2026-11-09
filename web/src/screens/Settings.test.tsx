@@ -1,15 +1,68 @@
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { render } from '@testing-library/react';
+import { createMemoryHistory } from '@tanstack/react-router';
+import { App } from '../App.js';
+import { createMockApi } from '../api/mock.js';
+import type { Api } from '../api/types.js';
 import { renderApp } from '../test-utils.js';
 
 describe('Settings', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('confirms inline before allowing executable files, and turns it off without asking', async () => {
+    const user = userEvent.setup();
+    renderApp('/settings');
+    const toggle = await screen.findByRole('checkbox', {
+      name: /Allow hooks, settings and scripts for ~\/dev\/agent-skills/,
+    });
+    expect(toggle).not.toBeChecked();
+    expect(screen.getAllByText(/Claude Code executes these files/)).not.toHaveLength(0);
+    await user.click(toggle);
+    const ask = await screen.findByRole('alertdialog');
+    await user.click(within(ask).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(toggle).not.toBeChecked();
+    await user.click(toggle);
+    await user.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Allow' }),
+    );
+    await waitFor(() => {
+      expect(toggle).toBeChecked();
+    });
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    await user.click(toggle);
+    await waitFor(() => {
+      expect(toggle).not.toBeChecked();
+    });
+  });
+
+  it('autosaves the trends window and explains the per-rubric test', async () => {
+    const user = userEvent.setup();
+    renderApp('/settings');
+    const days = await screen.findByLabelText('Compare windows of (days)');
+    expect(days).toHaveValue(7);
+    expect(screen.getByLabelText('Minimum graded sessions per side')).toHaveValue(10);
+    expect(screen.getByText(/Fisher’s exact test for small samples/)).toBeVisible();
+    await user.clear(days);
+    await user.type(days, '99');
+    await user.tab();
+    expect(screen.getByText('Enter a number from 1 to 60.')).toBeVisible();
+    await user.clear(days);
+    await user.type(days, '14');
+    await user.tab();
+    expect(await screen.findByText('All changes saved.')).toBeVisible();
+  });
+
   it('shows defaults, autosaves a change and keeps team mode disabled', async () => {
     const user = userEvent.setup();
     renderApp('/settings');
     expect(await screen.findByLabelText('Keep event payloads for (days)')).toHaveValue(90);
     expect(screen.getByLabelText('Daily token budget')).toHaveValue(1_000_000);
-    expect(screen.getByLabelText('Accept a proposal by')).toHaveValue('merge');
+    expect(screen.getByLabelText('Accept proposals by')).toHaveValue('merge');
     expect(screen.getByLabelText('Server URL')).toBeDisabled();
 
     await user.selectOptions(screen.getByLabelText('Budget'), 'usd_month');
@@ -77,5 +130,54 @@ describe('Settings', () => {
     expect(
       await screen.findByText(/Used 1M of 1M tokens today\. Grading is deferred/),
     ).toBeInTheDocument();
+  });
+
+  it('overrides the accept mode per repo and adds a project repo', async () => {
+    const user = userEvent.setup();
+    renderApp('/settings');
+    const mode = await screen.findByLabelText('Accept mode for ~/dev/agent-skills');
+    await user.selectOptions(mode, 'pr');
+    expect(await screen.findByLabelText('Accept mode for ~/dev/agent-skills')).toHaveValue('pr');
+    expect(screen.getByText(/^Next run /)).toBeVisible();
+    expect(
+      screen.getAllByRole('option', { name: 'Use default (Merging locally)' })[0],
+    ).toBeInTheDocument();
+
+    const add = screen.getByRole('button', { name: 'Add project repo' });
+    expect(add).toBeDisabled();
+    await user.type(screen.getByLabelText('Project repo path'), 'nope');
+    await user.click(add);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Enter an absolute path');
+    await user.clear(screen.getByLabelText('Project repo path'));
+    await user.type(screen.getByLabelText('Project repo path'), '~/projects/api');
+    await user.click(add);
+    expect(await screen.findByLabelText('Accept mode for ~/projects/api')).toHaveValue('');
+  });
+
+  it('shows what the improver used inside the budget line', async () => {
+    renderApp('/settings');
+    expect(await screen.findByText(/The improver used 48k tokens today/)).toBeVisible();
+  });
+
+  it('flips an autosave checkbox at once and reverts it with a message when the save fails', async () => {
+    const user = userEvent.setup();
+    const mock = createMockApi('graded', 0);
+    let fail!: (e: Error) => void;
+    const api: Api = {
+      ...mock,
+      patchSettings: () =>
+        new Promise((_, reject) => {
+          fail = reject;
+        }),
+    };
+    render(<App api={api} history={createMemoryHistory({ initialEntries: ['/settings'] })} />);
+    const box = await screen.findByRole('checkbox', { name: /Redact secrets at ingest/ });
+    const was = (box as HTMLInputElement).checked;
+    await user.click(box);
+    // The request is still pending, yet the control already shows the click.
+    expect(box).toHaveProperty('checked', !was);
+    fail(new Error('Server said no'));
+    expect(await screen.findByText(/Could not save: Server said no/)).toBeInTheDocument();
+    expect(box).toHaveProperty('checked', was);
   });
 });

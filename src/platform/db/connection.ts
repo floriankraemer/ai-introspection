@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { mkdirSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 import {
   CompiledQuery,
@@ -82,14 +82,32 @@ class ImmediateSqliteDialect extends SqliteDialect {
   }
 }
 
+/** The data directory and the database files are for this user only: they hold traces. */
 function openSqlite(path: string): DbHandle {
-  if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
-  const raw = new Database(path);
-  // auto_vacuum only takes effect on a fresh file, before the first table exists (ADR-0003).
-  raw.pragma('auto_vacuum = INCREMENTAL');
-  raw.pragma('journal_mode = WAL');
+  const files = [path, `${path}-wal`, `${path}-shm`];
+  const priv = path !== ':memory:';
+  if (priv) {
+    const dir = dirname(path);
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    // A container volume root belongs to root and stays as it is; our own folder is tightened.
+    if (statSync(dir).uid === process.getuid?.()) chmodSync(dir, 0o700);
+    for (const f of files) if (existsSync(f)) chmodSync(f, 0o600);
+  }
+  // SQLite creates the WAL and SHM files with the mode of the database file, and the database with the umask.
+  const oldMask = priv ? process.umask(0o077) : undefined;
+  let raw: Database.Database;
+  try {
+    raw = new Database(path);
+    // auto_vacuum only takes effect on a fresh file, before the first table exists (ADR-0003).
+    raw.pragma('auto_vacuum = INCREMENTAL');
+    raw.pragma('journal_mode = WAL');
+  } finally {
+    if (oldMask !== undefined) process.umask(oldMask);
+  }
   raw.pragma('synchronous = NORMAL');
   raw.pragma('foreign_keys = ON');
+  // Purged payloads and titles are overwritten with zeros, not left in free pages.
+  raw.pragma('secure_delete = ON');
   raw.pragma('busy_timeout = 5000');
   const db = new Kysely<Schema>({ dialect: new ImmediateSqliteDialect(wrapSqlite(raw)) });
   return { db, dialect: 'sqlite', close: () => db.destroy() };

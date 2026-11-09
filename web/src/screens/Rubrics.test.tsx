@@ -1,9 +1,23 @@
-import { screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
+import { createMemoryHistory } from '@tanstack/react-router';
+import { App } from '../App.js';
+import { createMockApi } from '../api/mock.js';
+import type { Api } from '../api/types.js';
 import { renderApp } from '../test-utils.js';
 
-const editor = () => screen.findByRole('textbox', { name: 'Rubric body (markdown)' });
+// The editor is a lazily loaded chunk and CodeMirror applies text asynchronously, so under load
+// both the element and its content can lag the default 1 s timeout.
+const SLOW = { timeout: 8000 };
+// CodeMirror lives in a shadow root (to keep its styles inside the CSP), which queries do not enter.
+const content = () =>
+  screen.getByTestId('markdown-editor').shadowRoot?.querySelector('.cm-content');
+const editor = () => screen.findByTestId('markdown-editor', {}, SLOW);
+const editorHas = (text: string) =>
+  waitFor(() => {
+    expect(content()).toHaveTextContent(text);
+  }, SLOW);
 
 describe('Rubrics', () => {
   it('lists rubrics with their calibration gate and shows the selected one', async () => {
@@ -14,7 +28,7 @@ describe('Rubrics', () => {
     );
     expect(within(nav).getAllByText('trusted')).toHaveLength(2);
     // The lazily loaded CodeMirror editor shows the file, frontmatter included.
-    expect(await editor()).toHaveTextContent('pass_threshold: 0.6');
+    await editorHas('pass_threshold: 0.6');
     expect(screen.getByLabelText('Pass threshold')).toHaveValue(0.6);
   });
 
@@ -28,7 +42,7 @@ describe('Rubrics', () => {
     const threshold = screen.getByLabelText('Pass threshold');
     await user.clear(threshold);
     await user.type(threshold, '0.8');
-    expect(await editor()).toHaveTextContent('pass_threshold: 0.8');
+    await editorHas('pass_threshold: 0.8');
     const message = screen.getByLabelText('Commit message');
     await user.clear(message);
     await user.type(message, 'Raise the bar');
@@ -36,8 +50,8 @@ describe('Rubrics', () => {
 
     expect(await screen.findByText(/Saved as v4 and committed/)).toBeInTheDocument();
     // The whole file was sent, so the frontmatter survives the round trip.
-    expect(await editor()).toHaveTextContent('name: efficiency');
-    expect(await editor()).toHaveTextContent('pass_threshold: 0.8');
+    await editorHas('name: efficiency');
+    await editorHas('pass_threshold: 0.8');
     expect(screen.getByRole('button', { name: 'Save as v5 (commit)' })).toBeDisabled();
     await user.click(screen.getByText(/History \(4 versions\)/));
     expect(screen.getByText(/Raise the bar/)).toBeInTheDocument();
@@ -85,7 +99,20 @@ describe('Rubrics', () => {
     renderApp('/rubrics');
     const aside = await screen.findByRole('complementary', { name: 'Calibration' });
     await user.click(await within(aside).findByRole('button', { name: 'Add label…' }));
-    await user.selectOptions(await within(aside).findByLabelText('Session to label'), 'sess-11');
+    const picker = await within(aside).findByLabelText('Session to label');
+    // Only sessions the judge graded with this rubric, each with its verdict.
+    await waitFor(() => {
+      expect(within(picker).getAllByRole('option').length).toBeGreaterThan(1);
+    });
+    const labels = within(picker)
+      .getAllByRole('option')
+      .map((o) => o.textContent);
+    expect(labels.every((l) => l === 'Pick a session…' || /— judge: (Pass|Fail)$/.test(l))).toBe(
+      true,
+    );
+    await user.selectOptions(picker, 'sess-11');
+    // No verdict preselected: saving needs an explicit choice.
+    expect(within(aside).getByRole('button', { name: 'Save label' })).toBeDisabled();
     await user.click(within(aside).getByLabelText('Fail'));
     await user.click(within(aside).getByRole('button', { name: 'Save label' }));
     expect(await within(aside).findByText('7 / 11')).toBeInTheDocument();
@@ -123,5 +150,41 @@ describe('Rubrics', () => {
     expect(
       await screen.findByText(/Dry-run failed: The daily token budget is used up/),
     ).toBeInTheDocument();
+  });
+
+  it('does not keep a rubric detail that was fetched before a label and answered after it', async () => {
+    const user = userEvent.setup();
+    const mock = createMockApi('graded', 0);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let first = true;
+    // The first detail request reads the server before the label exists, but answers after it.
+    const api: Api = {
+      ...mock,
+      async getRubric(name) {
+        const snapshot = await mock.getRubric(name);
+        if (first) {
+          first = false;
+          await gate;
+        }
+        return snapshot;
+      },
+    };
+    render(<App api={api} history={createMemoryHistory({ initialEntries: ['/rubrics'] })} />);
+    await screen.findByRole('navigation', { name: 'Rubrics' });
+    await user.click(screen.getByRole('link', { name: 'Sessions' }));
+    await user.click(await screen.findByRole('link', { name: /Fix flaky e2e login test/ }));
+    const grades = await screen.findByRole('complementary', { name: 'Grades' });
+    const wrong = await within(grades).findAllByRole('button', { name: 'Judge was wrong…' });
+    await user.click(wrong[0] ?? grades);
+    await user.click(within(grades).getByLabelText('Fail'));
+    await user.click(within(grades).getByRole('button', { name: 'Save label' }));
+    const link = await within(grades).findByRole('link', { name: /calibration of/ });
+    release();
+    await user.click(link);
+    const panel = await screen.findByRole('complementary', { name: 'Calibration' });
+    expect(await within(panel).findByText('8 / 10')).toBeInTheDocument();
   });
 });

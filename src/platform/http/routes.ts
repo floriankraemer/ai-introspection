@@ -7,7 +7,9 @@ import {
 import type { JobQueue } from '../jobs/queue.js';
 import { ApiError, problemResponses } from './problem.js';
 import { registerGradingRoutes, type GradingRouteDeps } from './routes-grading.js';
+import { registerImprovementRoutes, type ImprovementRouteDeps } from './routes-improvement.js';
 import { registerIngestRoutes, type IngestRouteDeps } from './routes-ingest.js';
+import { registerTrendsRoutes } from './routes-trends.js';
 import { registerSetupRoutes, type SetupRouteDeps } from './routes-setup.js';
 import { DEFAULT_PAGE, jobSchema, MAX_PAGE, security, toJobDto } from './schemas.js';
 import { AUTH_PAGE, setTokenCookie, tokenMatches } from './auth.js';
@@ -125,8 +127,10 @@ const retryJob = createRoute({
   },
 });
 
-export interface RouteDeps extends IngestRouteDeps, SetupRouteDeps, GradingRouteDeps {
-  token: string;
+export interface RouteDeps
+  extends IngestRouteDeps, SetupRouteDeps, GradingRouteDeps, ImprovementRouteDeps {
+  /** The token, or a function returning the current one (it changes when `rotate-token` runs). */
+  token: string | (() => string);
   queue: JobQueue;
   settings: SettingsService;
 }
@@ -142,9 +146,10 @@ export function registerRoutes(app: OpenAPIHono, deps: RouteDeps): void {
   app.openapi(health, (c) => c.json({ status: 'ok' as const }, 200));
 
   app.openapi(createSession, (c) => {
-    if (!tokenMatches(token, c.req.valid('json').token))
+    const current = typeof token === 'function' ? token() : token;
+    if (!tokenMatches(current, c.req.valid('json').token))
       throw new ApiError(401, 'Unauthorized', 'Invalid token');
-    setTokenCookie(c, token);
+    setTokenCookie(c, current);
     return c.body(null, 204);
   });
   app.get('/auth', (c) =>
@@ -186,5 +191,7 @@ export function registerRoutes(app: OpenAPIHono, deps: RouteDeps): void {
 
   registerIngestRoutes(app, deps);
   registerGradingRoutes(app, deps);
+  registerImprovementRoutes(app, deps);
+  registerTrendsRoutes(app, deps);
   registerSetupRoutes(app, deps);
 }

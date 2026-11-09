@@ -87,6 +87,15 @@ Session identity: `session.id = UUIDv5(namespace, agent + ":" + native_session_i
 In team mode the shipper sends the repository's remote URL instead of local paths.
 Outcome linking: after session end, a `link_outcome` job matches `repo` + `branch` to a commit or PR through `gh` (local) or the GitHub App (team) and sets `outcome_kind` and `outcome_ref`.
 
+## Implementation notes
+
+- JSON payloads are parsed, walked and re-serialised only when a rule fired (version 4).
+  The round-trip is lossy: integers beyond 2^53 lose precision, and duplicate keys collapse to the last one.
+  A payload that nothing redacted is stored byte for byte, so the loss only touches payloads that already changed.
+- The walk is iterative and marks everything below a secret key (including numbers), the `value` next to a `{"name": "API_KEY"}` pair, and the argument after flags such as `--password`.
+  Token counters (`max_tokens`, `input_tokens`, ...) and a plural `tokens` are not secrets.
+- A document with more than 50,000 leaves, or one too deep to serialise, is redacted as plain text instead of failing.
+
 ## Consequences
 
 - Positive: the store, judge, team server and UI only ever see redacted data; this is testable with a seeded-secret corpus.

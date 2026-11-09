@@ -1,5 +1,8 @@
 import type { Agent, EventKind, SessionDetail, TraceEvent } from '../api/types.js';
 
+/** "1 session", "2 sessions". */
+export const plural = (n: number, word: string) => `${String(n)} ${word}${n === 1 ? '' : 's'}`;
+
 export const AGENT_LABEL: Record<Agent, string> = { claude_code: 'Claude Code', codex: 'Codex' };
 
 /** "2 h ago", "Yesterday", "3 days ago" (the wording of the Sessions mockup). */

@@ -1,171 +1,195 @@
-import { mkdir, readdir, realpath, stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { dirname, join, relative, resolve, sep } from 'node:path';
-import { newId } from '../../platform/db/ids.js';
-import { asBool } from '../../platform/db/json.js';
-import type { Db } from '../../platform/db/schema.js';
-import { ConflictError, InvalidInputError } from '../../platform/errors.js';
-import { initRepo, isGitRepoRoot } from '../../platform/git/index.js';
-import { copyStarterRubrics, hasRubrics } from '../rubrics/index.js';
+import { Cron } from 'croner';
+import { fromJson } from '../../platform/db/json.js';
+import { InvalidInputError } from '../../platform/errors.js';
+import { createKeyedMutex } from '../../platform/keyed-mutex.js';
+import { DeferJob, type JobHandler } from '../../platform/jobs/worker.js';
+import type { Schedule } from '../../platform/jobs/scheduler.js';
+import type { ImprovementDeps } from './context.js';
+import { createProposals, type ProposalStatus } from './proposals.js';
+import { sweepOrphans } from './housekeeping.js';
+import { createRunner, type RunSummary } from './runner.js';
 
-export interface SkillRepoDto {
+export {
+  createSkillRepos,
+  detectSkillRepos,
+  type DetectedSkillRepo,
+  type SkillRepoDto,
+  type SkillRepoRow,
+  type SkillRepos,
+  type SkillReposOptions,
+} from './skill-repos.js';
+export type { GhRunner, ImprovementDeps } from './context.js';
+export { createImproverProvider, type ImproverProvider } from './improvers.js';
+export { createFakeImprover } from './improver-fake.js';
+export { createApiImprover } from './improver-api.js';
+export { createCliImprover } from './improver-cli.js';
+export {
+  IMPROVER_MODEL,
+  ImproverCallError,
+  type Improver,
+  type ImproveRequest,
+  type ImproveResult,
+} from './types.js';
+export type { ClusterSummary, ProposalDto, ProposalList, ProposalStatus } from './proposals.js';
+export type { RunResult, RunSummary } from './runner.js';
+export { inspectDiff, DiffRejectedError, globToRegExp } from './diff.js';
+export { allowListOf } from './policy.js';
+
+export const IMPROVER_RUN_JOB = 'improve';
+const PR_SYNC_JOB = 'proposal_pr_sync';
+/** Open pull requests are polled this often (ADR-0010). */
+const PR_SYNC_CRON = '*/10 * * * *';
+const DAY_MS = 86_400_000;
+const CRONS = { daily: '0 6 * * *', weekly: '0 6 * * 1' } as const;
+const RUNS_SHOWN = 20;
+/** A scheduled run never looks back further than this, however long ago the last good run was. */
+const MAX_LOOKBACK_DAYS = 14;
+
+/** `24h`, `7d` or `2w` as a point in time that long ago. */
+export function parseSince(text: string, now = new Date()): Date {
+  const m = /^(\d+)([hdw])$/.exec(text);
+  if (!m) throw new InvalidInputError('since takes a number and a unit: 24h, 7d or 2w');
+  const unit = { h: 3_600_000, d: DAY_MS, w: 7 * DAY_MS }[m[2] as 'h' | 'd' | 'w'];
+  return new Date(now.getTime() - Number(m[1]) * unit);
+}
+
+export interface ImproverRunDto {
   id: string;
-  kind: 'global' | 'project';
-  path: string;
-  /** True when `<path>/rubrics/` exists and holds at least one rubric file. */
-  hasRubrics: boolean;
-  enabled: boolean;
-  acceptMode: 'merge' | 'pr' | null;
+  startedAt: string;
+  finishedAt: string | null;
+  status: string;
+  clusters: number;
+  proposalsCreated: number;
+  /** Same as `proposalsCreated`. */
+  proposals: number;
+  /** Clusters that got no proposal (skipped, declined, failed, deferred). */
+  clustersSkipped: number;
+  untrustedRubrics: string[];
+  error: string | null;
+  summary: RunSummary | null;
 }
 
-export interface DetectedSkillRepo {
-  path: string;
-  isGitRepo: boolean;
-  hasRubrics: boolean;
-  /** A folder with no entries at all (not even hidden ones): Introspect may initialise it. */
-  isEmpty: boolean;
-}
+export function createImprovement(deps: ImprovementDeps) {
+  const now = deps.now ?? (() => new Date());
+  // Every mutating git operation on a repository (accept, reject, edit, worktrees) takes its lock here.
+  const locks = createKeyedMutex();
+  const proposals = createProposals(deps, locks);
+  const runner = createRunner(deps, locks);
 
-/** The fixed mount point of compose.yaml first, then the host-native default for the npm install. */
-const SKILL_REPO_CANDIDATES = ['/repos/skills', join(homedir(), '.claude')];
-/** Folders below which Introspect may create a repository: the compose mounts, and the data folder of a host install. */
-const MOUNT_ROOTS = ['/repos', join(homedir(), '.introspect')];
-
-export interface SkillReposOptions {
-  /** Init is only allowed below one of these (tests inject their own). */
-  mountRoots?: readonly string[];
-  candidates?: readonly string[];
-}
-
-/** Existing folders where a global skills repository usually lives, for the setup wizard to propose. */
-export async function detectSkillRepos(
-  candidates: readonly string[] = SKILL_REPO_CANDIDATES,
-): Promise<DetectedSkillRepo[]> {
-  const found: DetectedSkillRepo[] = [];
-  const seen = new Set<string>();
-  for (const path of candidates) {
-    const real = await realpath(path).catch(() => null);
-    if (!real || seen.has(real) || !(await stat(real)).isDirectory()) continue;
-    seen.add(real);
-    found.push({
-      path,
-      isGitRepo: await isGitRepoRoot(real),
-      hasRubrics: await hasRubrics(real),
-      isEmpty: (await readdir(real)).length === 0,
-    });
+  async function cronOf(): Promise<string | null> {
+    const mode = (await deps.settings.get())['schedule.improver'];
+    return mode === 'manual' ? null : CRONS[mode];
   }
-  return found;
-}
 
-/** The real path `target` would have: symlinks of the nearest existing ancestor are resolved, so `..` and links cannot leave a root. */
-async function resolveEventually(target: string): Promise<string> {
-  let existing = target;
-  while (
-    !(await stat(existing).then(
-      () => true,
-      () => false,
-    ))
-  )
-    existing = dirname(existing);
-  return join(await realpath(existing), relative(existing, target));
-}
+  /**
+   * The look-back window of a scheduled run: the period since the previous one, widened to the
+   * start of the last successful run so a night the server was off or the run failed is not lost.
+   */
+  async function scheduledSince(): Promise<Date> {
+    const mode = (await deps.settings.get())['schedule.improver'];
+    const at = now().getTime();
+    const period = at - (mode === 'weekly' ? 7 : 1) * DAY_MS;
+    const last = await deps.db
+      .selectFrom('improver_run')
+      .select('started_at')
+      .where('workspace_id', '=', deps.workspaceId)
+      .where('status', '=', 'succeeded')
+      .orderBy('started_at', 'desc')
+      .executeTakeFirst();
+    const lastAt = last ? new Date(last.started_at).getTime() : period;
+    return new Date(Math.max(Math.min(period, lastAt), at - MAX_LOOKBACK_DAYS * DAY_MS));
+  }
 
-export function createSkillRepos(db: Db, workspaceId: string, options: SkillReposOptions = {}) {
-  const mountRoots = options.mountRoots ?? MOUNT_ROOTS;
-  const select = () =>
-    db
-      .selectFrom('skill_repo')
-      .select(['id', 'kind', 'path', 'enabled', 'accept_mode'])
-      .where('workspace_id', '=', workspaceId);
-  type Row = Awaited<ReturnType<ReturnType<typeof select>['execute']>>[number];
+  /** Runs the improver; a budget stop defers the job, so the next window picks it up. */
+  async function runAndDefer(since: Date): Promise<void> {
+    const result = await runner.run(since);
+    if (result.deferUntil)
+      throw new DeferJob(result.deferUntil, result.deferReason ?? 'the budget is used up');
+  }
 
-  const toDto = async (r: Row): Promise<SkillRepoDto> => ({
-    id: r.id,
-    kind: r.kind,
-    path: r.path,
-    hasRubrics: await hasRubrics(r.path),
-    enabled: asBool(r.enabled),
-    acceptMode: r.accept_mode === 'merge' || r.accept_mode === 'pr' ? r.accept_mode : null,
-  });
+  const handlers: Record<string, JobHandler> = {
+    [IMPROVER_RUN_JOB]: {
+      concurrency: 1,
+      run: async (job) => {
+        const p = (job.payload ?? {}) as { since?: string };
+        await runAndDefer(p.since ? new Date(p.since) : await scheduledSince());
+      },
+    },
+    [PR_SYNC_JOB]: {
+      concurrency: 1,
+      run: async () => {
+        await proposals.syncPullRequests();
+      },
+    },
+  };
+
+  const schedules: Schedule[] = [
+    { name: 'improver', cron: cronOf, kind: IMPROVER_RUN_JOB },
+    { name: 'proposal-pr-sync', cron: () => Promise.resolve(PR_SYNC_CRON), kind: PR_SYNC_JOB },
+  ];
 
   return {
-    async list(): Promise<SkillRepoDto[]> {
-      const rows = await select().orderBy('kind').orderBy('path').execute();
-      return Promise.all(rows.map(toDto));
-    },
+    handlers,
+    schedules,
+    proposals,
 
-    async getGlobal(): Promise<SkillRepoDto | null> {
-      const row = await select().where('kind', '=', 'global').executeTakeFirst();
-      return row ? toDto(row) : null;
-    },
+    /** At startup: removes worktree folders and `introspect/*` branches that no open proposal owns (a crash leaves them). */
+    sweep: () => sweepOrphans(deps, locks),
 
-    /** There is one global repo; setting another path replaces it. The path must be the root of a git work tree. */
-    async putGlobal(path: string): Promise<SkillRepoDto> {
-      if (!path.startsWith('/')) throw new InvalidInputError('The path must be absolute');
-      const real = await realpath(path).catch(() => null);
-      if (!real || !(await isGitRepoRoot(real))) {
-        throw new InvalidInputError(`"${path}" is not the root of a git repository`);
-      }
-      const existing = await select().where('kind', '=', 'global').executeTakeFirst();
-      if (existing) {
-        await db
-          .updateTable('skill_repo')
-          .set({ path: real })
-          .where('id', '=', existing.id)
-          .execute();
-      } else {
-        await db
-          .insertInto('skill_repo')
-          .values({ id: newId(), workspace_id: workspaceId, kind: 'global', path: real })
-          .execute();
-      }
-      const saved = await this.getGlobal();
-      if (!saved) throw new Error('The global skills repository vanished after saving');
-      return saved;
-    },
+    /** `introspect improve --now`: in the foreground. */
+    run: (since: Date) => runner.run(since),
 
-    detect: (): Promise<DetectedSkillRepo[]> => detectSkillRepos(options.candidates),
-
-    /**
-     * Creates the global repository for users who have none: `git init` on `main`, the starter
-     * rubrics, one commit. Only an empty (or missing) folder below a mounted root qualifies, so
-     * this can never touch existing files.
-     */
-    async initGlobal(given: string): Promise<SkillRepoDto> {
-      if (!given.startsWith('/')) throw new InvalidInputError('The path must be absolute');
-      const target = await resolveEventually(resolve(given));
-      const roots = await Promise.all(mountRoots.map((r) => realpath(r).catch(() => null)));
-      if (!roots.some((r) => r !== null && target.startsWith(r + sep))) {
-        throw new InvalidInputError(
-          `Introspect only creates a repository below ${mountRoots.join(' or ')}`,
-        );
-      }
-      const entries = await readdir(target).catch((e: unknown) => {
-        if ((e as NodeJS.ErrnoException).code === 'ENOENT') return [];
-        throw new InvalidInputError(`"${given}" is not a folder`);
+    /** Queues a manual run; returns the job id. */
+    async enqueueRun(since?: string): Promise<string> {
+      const id = await deps.queue.enqueue({
+        workspaceId: deps.workspaceId,
+        kind: IMPROVER_RUN_JOB,
+        payload: {
+          since: (since ? parseSince(since, now()) : await scheduledSince()).toISOString(),
+        },
+        maxAttempts: 3,
       });
-      if (entries.length > 0) {
-        throw new ConflictError(
-          `"${given}" is not empty; point Introspect at it as an existing repository instead`,
-        );
-      }
-      await mkdir(target, { recursive: true });
-      await initRepo(target);
-      await copyStarterRubrics(target);
-      return this.putGlobal(target);
+      if (!id) throw new Error('The improver job was not created');
+      return id;
     },
 
-    async setEnabled(id: string, enabled: boolean): Promise<SkillRepoDto | null> {
-      await db
-        .updateTable('skill_repo')
-        .set({ enabled })
-        .where('id', '=', id)
-        .where('workspace_id', '=', workspaceId)
+    async schedule(): Promise<{ mode: 'daily' | 'weekly' | 'manual'; nextRunAt: string | null }> {
+      const mode = (await deps.settings.get())['schedule.improver'];
+      return {
+        mode,
+        nextRunAt:
+          mode === 'manual' ? null : (new Cron(CRONS[mode]).nextRun(now())?.toISOString() ?? null),
+      };
+    },
+
+    async runs(): Promise<ImproverRunDto[]> {
+      const rows = await deps.db
+        .selectFrom('improver_run')
+        .selectAll()
+        .where('workspace_id', '=', deps.workspaceId)
+        .orderBy('started_at', 'desc')
+        .orderBy('id', 'desc')
+        .limit(RUNS_SHOWN)
         .execute();
-      const row = await select().where('id', '=', id).executeTakeFirst();
-      return row ? toDto(row) : null;
+      return rows.map((r) => {
+        const summary = r.summary === null ? null : (fromJson(r.summary) as RunSummary);
+        return {
+          id: r.id,
+          startedAt: r.started_at,
+          finishedAt: r.finished_at,
+          status: r.status,
+          clusters: r.clusters,
+          proposalsCreated: r.proposals_created,
+          proposals: r.proposals_created,
+          clustersSkipped: summary?.clusters.filter((c) => c.outcome !== 'proposed').length ?? 0,
+          untrustedRubrics: summary?.untrustedExcluded.map((u) => u.rubric) ?? [],
+          error: r.error,
+          summary,
+        };
+      });
     },
   };
 }
 
-export type SkillRepos = ReturnType<typeof createSkillRepos>;
+export type Improvement = ReturnType<typeof createImprovement>;
+export type { ProposalStatus as ProposalStatusFilter };

@@ -13,8 +13,8 @@ const FALLBACK_PRICE = { input: 2, output: 10, cacheRead: 0.2 };
 const CACHE_WRITE_FACTOR = 1.25;
 /** What one verdict costs in output, for the pre-call budget check. */
 export const ESTIMATED_OUTPUT_TOKENS = 1500;
-/** A reservation older than this belongs to a process that died; it stops counting against the budget. */
-const STALE_RESERVATION_MS = 30 * 60_000;
+/** A reservation older than this belongs to a process that died; it stops counting against the budget. Longer than any call can run (an improver loop is up to 10 API turns, a CLI call times out at 20 minutes). */
+export const STALE_RESERVATION_MS = 3 * 60 * 60_000;
 
 /** Estimated dollars at API list prices. For the CLI transport this is an estimate too (ADR-0006). */
 export function costOf(model: string, u: Usage): number {
@@ -50,7 +50,7 @@ function zonedParts(at: Date, timeZone: string): { y: number; m: number; d: numb
 }
 
 /** The instant at which the wall clock of `timeZone` reads midnight on the given date (month and day may overflow). */
-function zonedMidnight(y: number, m: number, d: number, timeZone: string): Date {
+export function zonedMidnight(y: number, m: number, d: number, timeZone: string): Date {
   const wall = Date.UTC(y, m, d);
   const offsetAt = (instant: number): number => {
     const p = new Intl.DateTimeFormat('en-US', {
@@ -107,6 +107,8 @@ export interface BudgetStatus {
   /** Estimated dollars since the first of the month, at API list prices. */
   usdMonth: number;
   usdPerMonth: number | null;
+  /** The improver's share of the two figures above (its calls are on the same ledger). */
+  improver: { tokensToday: number; usdMonth: number };
   deferredJobs: number;
   tokensResetAt: string;
   usdResetAt: string;
@@ -118,7 +120,7 @@ export interface Deferral {
 }
 
 export interface CallMeta {
-  purpose: 'grade' | 'dry_run';
+  purpose: 'grade' | 'dry_run' | 'improve';
   /** The model asked for; `settle` replaces it with the one that answered. */
   model: string;
   transport: string;
@@ -143,10 +145,13 @@ export function createBudget(
 ) {
   const w = windows(timeZone);
 
-  async function used(q: Db, now: Date): Promise<{ tokens: number; usd: number }> {
+  async function used(
+    q: Db,
+    now: Date,
+  ): Promise<{ tokens: number; usd: number; improver: { tokens: number; usd: number } }> {
     const live = new Date(now.getTime() - STALE_RESERVATION_MS).toISOString();
-    const sum = (since: Date) =>
-      q
+    const sum = (since: Date, onlyImprover: boolean) => {
+      let qb = q
         .selectFrom('llm_call')
         .select((eb) => [
           eb.fn.sum<number>('tokens_in').as('in'),
@@ -155,11 +160,21 @@ export function createBudget(
         ])
         .where('workspace_id', '=', workspaceId)
         .where('at', '>=', since.toISOString())
-        .where((eb) => eb.or([eb('status', '!=', 'reserved'), eb('at', '>=', live)]))
-        .executeTakeFirstOrThrow();
-    const day = await sum(w.startOfDay(now));
-    const month = await sum(w.startOfMonth(now));
-    return { tokens: num(day.in) + num(day.out), usd: num(month.usd) };
+        .where((eb) => eb.or([eb('status', '!=', 'reserved'), eb('at', '>=', live)]));
+      if (onlyImprover) qb = qb.where('purpose', 'in', ['improve', 'cluster']);
+      return qb.executeTakeFirstOrThrow();
+    };
+    const [day, month, iDay, iMonth] = [
+      await sum(w.startOfDay(now), false),
+      await sum(w.startOfMonth(now), false),
+      await sum(w.startOfDay(now), true),
+      await sum(w.startOfMonth(now), true),
+    ];
+    return {
+      tokens: num(day.in) + num(day.out),
+      usd: num(month.usd),
+      improver: { tokens: num(iDay.in) + num(iDay.out), usd: num(iMonth.usd) },
+    };
   }
 
   const limitsOf = (s: BudgetSettings) => ({
@@ -184,6 +199,7 @@ export function createBudget(
         tokensPerDay: limit.tokens,
         usdMonth: u.usd,
         usdPerMonth: limit.usd,
+        improver: { tokensToday: u.improver.tokens, usdMonth: u.improver.usd },
         deferredJobs: num(deferred.n),
         tokensResetAt: w.nextMidnight(now).toISOString(),
         usdResetAt: w.nextMonth(now).toISOString(),
@@ -197,10 +213,11 @@ export function createBudget(
      */
     async reserve(
       call: CallMeta,
-      estimate: { inputTokens: number; usd: number },
+      estimate: { inputTokens: number; usd: number; outputTokens?: number },
       now = new Date(),
     ): Promise<Reservation> {
-      const tokens = estimate.inputTokens + ESTIMATED_OUTPUT_TOKENS;
+      const outputTokens = estimate.outputTokens ?? ESTIMATED_OUTPUT_TOKENS;
+      const tokens = estimate.inputTokens + outputTokens;
       // Read before the transaction: on SQLite the transaction owns the only connection.
       const limit = limitsOf(await getSettings());
       if (limit.usd !== null && estimate.usd > limit.usd)
@@ -251,7 +268,7 @@ export function createBudget(
             model: call.model,
             transport: call.transport,
             tokens_in: estimate.inputTokens,
-            tokens_out: ESTIMATED_OUTPUT_TOKENS,
+            tokens_out: outputTokens,
             cost_estimate: estimate.usd,
             ref_id: call.refId,
             status: 'reserved',

@@ -4,7 +4,7 @@ import { Readable } from 'node:stream';
 import { createRoute, z, type OpenAPIHono } from '@hono/zod-openapi';
 import type { Grading } from '../../modules/grading/index.js';
 import type { IngestService } from '../../modules/ingest/index.js';
-import type { createTrends } from '../../modules/trends/index.js';
+import type { Trends } from '../../modules/trends/index.js';
 import type { JobQueue } from '../jobs/queue.js';
 import { ApiError, problemResponses } from './problem.js';
 import { gradeDetailSchema } from './routes-grading.js';
@@ -14,7 +14,7 @@ export interface IngestRouteDeps {
   queue: JobQueue;
   ingest: IngestService;
   grading: Grading;
-  trends: ReturnType<typeof createTrends>;
+  trends: Trends;
 }
 
 const json = <T extends z.ZodType>(schema: T, description: string) => ({
@@ -140,6 +140,8 @@ const listSessions = createRoute({
       agent: agentSchema.optional(),
       result: z.enum(['failed_any', 'all', 'not_graded']).optional(),
       cursor: z.string().max(300).optional(),
+      /** Only sessions that started at or after this instant. */
+      since: z.iso.datetime({ offset: true }).optional(),
       limit,
     }),
   },
@@ -242,9 +244,9 @@ const startImport = createRoute({
 const trendSummary = createRoute({
   method: 'get',
   path: '/v1/trends/summary',
-  summary: 'Counts and pass rates for the Sessions header',
+  summary: 'Counts and pass rates for the Sessions header (days=0 means all time)',
   security,
-  request: { query: z.object({ days: z.coerce.number().int().min(1).max(365).default(7) }) },
+  request: { query: z.object({ days: z.coerce.number().int().min(0).max(365).default(7) }) },
   responses: { 200: json(trendSummarySchema, 'The summary'), ...problemResponses },
 });
 
@@ -301,7 +303,7 @@ export function registerIngestRoutes(
   app.openapi(detectSources, async (c) => c.json(await ingest.sources.detect(), 200));
   app.openapi(addSource, async (c) => {
     const { agent, path } = c.req.valid('json');
-    return c.json(await ingest.sources.add(agent, path), 200);
+    return c.json(await ingest.sources.add(agent, path, { restrict: true }), 200);
   });
 
   app.openapi(startImport, async (c) => {

@@ -81,7 +81,36 @@ const trimSlash = (path: string): string => (path.length > 1 ? path.replace(/\/+
 const overlaps = (a: string, b: string): boolean =>
   a === b || a.startsWith(`${b}${sep}`) || b.startsWith(`${a}${sep}`);
 
-export function createSources(db: Db, workspaceId: string, userId: string, pollMode: boolean) {
+/**
+ * Where the API may register sources: the compose mount points, or the user's home in a native install.
+ * Inside the container HOME is `/tmp`, which is no place to read agent logs from.
+ */
+export function defaultSourceRoots(): string[] {
+  const home = homedir();
+  return home === '/' || home === '/tmp' ? ['/sources'] : ['/sources', home];
+}
+
+const within = (path: string, root: string): boolean =>
+  path === root || path.startsWith(`${root}${sep}`);
+
+export function createSources(
+  db: Db,
+  workspaceId: string,
+  userId: string,
+  pollMode: boolean,
+  now: () => Date = () => new Date(),
+  /** Set for registrations that come in over the API, which must not reach beyond log folders. */
+  guard: { roots: readonly string[]; dataDir: string } = { roots: [], dataDir: '' },
+) {
+  const refusal = async (path: string): Promise<string | null> => {
+    const roots = await Promise.all(guard.roots.map((r) => realpath(r).catch(() => r)));
+    const data = await realpath(guard.dataDir).catch(() => guard.dataDir);
+    if (path === '/' || overlaps(path, data))
+      return `"${path}" holds Introspect's own data and cannot be a log source`;
+    if (!roots.some((r) => within(path, r)))
+      return `"${path}" is outside the folders log sources may come from (${guard.roots.join(', ')})`;
+    return null;
+  };
   const toDto = (row: {
     id: string;
     agent: string;
@@ -115,12 +144,16 @@ export function createSources(db: Db, workspaceId: string, userId: string, pollM
      * Idempotent per (agent, real path): trailing slashes and symlinks name the same folder.
      * A folder inside or around another source of the same agent would ingest its files twice.
      */
-    async add(agent: Agent, given: string): Promise<SourceDto> {
+    async add(agent: Agent, given: string, opts: { restrict?: boolean } = {}): Promise<SourceDto> {
       if (!AGENTS.includes(agent)) throw new InvalidInputError(`Unknown agent "${agent}"`);
       if (!given.startsWith('/')) throw new InvalidInputError('The path must be absolute');
       const path = await realpath(given).catch(() => null);
       if (!path || !(await stat(path)).isDirectory()) {
         throw new InvalidInputError(`"${given}" is not a folder this server can read`);
+      }
+      if (opts.restrict) {
+        const why = await refusal(path);
+        if (why) throw new InvalidInputError(why);
       }
       for (const other of await db
         .selectFrom('source')
@@ -143,7 +176,7 @@ export function createSources(db: Db, workspaceId: string, userId: string, pollM
           user_id: userId,
           agent,
           path,
-          created_at: new Date().toISOString(),
+          created_at: now().toISOString(),
         })
         .onConflict((oc) => oc.columns(['workspace_id', 'agent', 'path']).doNothing())
         .execute();

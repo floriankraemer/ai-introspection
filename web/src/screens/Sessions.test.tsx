@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { renderApp } from '../test-utils.js';
@@ -78,7 +78,54 @@ describe('Sessions', () => {
     await user.click(
       await screen.findByRole('checkbox', { name: 'Select Add OAuth to API service' }),
     );
+    expect(await screen.findByText(/Daily token budget used up/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Grade selected (1)' }));
+    expect(screen.getByText(/uses about .* tokens; 0 left today/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /Grade all anyway/ }));
     expect(await screen.findByText(/Deferred: the daily token budget/)).toBeInTheDocument();
+  });
+
+  it('asks before a batch that does not fit the budget, and can grade only what fits', async () => {
+    const user = userEvent.setup();
+    renderApp('/', 'graded');
+    await screen.findByRole('link', { name: 'Add OAuth to API service' });
+    await user.click(screen.getByRole('checkbox', { name: 'Select all loaded sessions' }));
+    await user.click(screen.getByRole('button', { name: /^Grade selected/ }));
+    // Mock: 4 rubrics x 60k = 240k per session, 880k left.
+    expect(screen.getByText(/About 3 sessions fit\./)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Grade 3 that fit' }));
+    expect(await screen.findByText('Graded.', {}, { timeout: 3000 })).toBeInTheDocument();
+  });
+
+  it('shows short display names for rubric slugs in the table headers', async () => {
+    renderApp('/');
+    const table = await screen.findByRole('table', { name: 'Sessions' });
+    const heads = within(table)
+      .getAllByRole('columnheader')
+      .map((h) => h.textContent);
+    expect(heads.slice(-4)).toEqual(['Efficiency', 'Tests', 'Verbosity', 'Workaround']);
+    expect(within(table).getByRole('columnheader', { name: 'Tests' })).toHaveAttribute(
+      'title',
+      'Redundant tests',
+    );
+    expect(screen.getByText('Silent workaround · pass rate')).toBeInTheDocument();
+  });
+
+  it('drives the summary and the table from one period, 7 days by default', async () => {
+    const user = userEvent.setup();
+    renderApp('/?result=all');
+    expect(await screen.findByText(/^Last 7 days · \d+ sessions collected/)).toBeInTheDocument();
+    const week = (await screen.findAllByRole('checkbox', { name: /^Select (?!all)/ })).length;
+    expect(screen.getByLabelText('Period')).toHaveValue('7');
+    await user.selectOptions(screen.getByLabelText('Period'), 'all');
+    expect(await screen.findByText(/^All time · \d+ sessions collected/)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getAllByRole('checkbox', { name: /^Select (?!all)/ }).length).toBeGreaterThan(
+        week,
+      );
+    });
+    // The summary counts what the table lists.
+    const all = screen.getAllByRole('checkbox', { name: /^Select (?!all)/ }).length;
+    expect(screen.getByText(new RegExp(`· ${String(all)} sessions collected`))).toBeInTheDocument();
   });
 });

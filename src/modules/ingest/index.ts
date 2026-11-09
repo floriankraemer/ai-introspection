@@ -9,9 +9,15 @@ import { finalizeSession } from './finalize.js';
 import { adapterFor } from './adapters/index.js';
 import { ingestFile, SESSION_IDLE_MS, type PipelineDeps } from './pipeline.js';
 import { loadOrCreateRedactionKey, REDACTION_VERSION } from './redaction.js';
-import { purgeFinishedJobs, purgePayloads, pinSession } from './retention.js';
+import { purgeFinishedJobs, purgePayloads, pinSession, setReference } from './retention.js';
 import { createSessionQueries } from './sessions.js';
-import { createSources, detectSources, listSessionFiles, type SourceDto } from './sources.js';
+import {
+  createSources,
+  defaultSourceRoots,
+  detectSources,
+  listSessionFiles,
+  type SourceDto,
+} from './sources.js';
 import { createWatcher, type SourceWatcher } from './watcher.js';
 import type { Agent } from './types.js';
 
@@ -28,7 +34,13 @@ export type {
   SessionSummary,
   TraceEvent,
 } from './sessions.js';
-export { REDACTION_VERSION, redactionRefusal } from './redaction.js';
+export {
+  createRedactor,
+  loadOrCreateRedactionKey,
+  REDACTION_VERSION,
+  redactionRefusal,
+  type Redactor,
+} from './redaction.js';
 export { UnredactedSessionError } from './sessions.js';
 
 export const IMPORT_JOB = 'import_history';
@@ -49,6 +61,8 @@ export interface IngestDeps {
   queue: Pick<JobQueue, 'enqueue' | 'setProgress'>;
   /** Polling instead of inotify: containers, network and `/mnt/c` mounts. */
   pollMode: boolean;
+  /** Folders the API may register sources under; defaults to the mount roots and a native home. */
+  sourceRoots?: readonly string[];
   now?: () => Date;
 }
 
@@ -65,7 +79,10 @@ export function createIngest(deps: IngestDeps) {
     settings: deps.settings,
     now,
   };
-  const sources = createSources(db, workspaceId, deps.userId, deps.pollMode);
+  const sources = createSources(db, workspaceId, deps.userId, deps.pollMode, now, {
+    roots: deps.sourceRoots ?? defaultSourceRoots(),
+    dataDir: deps.dataDir,
+  });
   const sessions = createSessionQueries(db, workspaceId);
 
   type EnabledSource = Awaited<ReturnType<typeof sources.enabledRows>>[number];
@@ -285,8 +302,8 @@ export function createIngest(deps: IngestDeps) {
   return {
     sources: {
       list: (): Promise<SourceDto[]> => sources.list(),
-      add: (agent: Agent, path: string): Promise<SourceDto> =>
-        sources.add(agent, path).then((dto) => {
+      add: (agent: Agent, path: string, opts?: { restrict?: boolean }): Promise<SourceDto> =>
+        sources.add(agent, path, opts).then((dto) => {
           watcher?.add(dto.path);
           return dto;
         }),
@@ -298,6 +315,8 @@ export function createIngest(deps: IngestDeps) {
     handlers,
     schedules,
     pinSession: (id: string) => pinSession(db, workspaceId, id),
+    setReference: (id: string, member: boolean, max: number) =>
+      setReference(db, workspaceId, id, member, max),
     purgePayloads: (days: number) => purgePayloads(db, workspaceId, days, now()),
     reconcile,
     importAll,

@@ -6,7 +6,7 @@ import { unsafePatternReason } from '../../platform/regex/index.js';
 export { unsafePatternReason };
 
 /** Bump when rules change; `ingest_warnings` and re-ingest key off it (ADR-0007). */
-export const REDACTION_VERSION = '2';
+export const REDACTION_VERSION = '4';
 
 /** Why a session stored with this redaction version must not reach a judge, or null when it may. */
 export function redactionRefusal(version: string | null): string | null {
@@ -25,6 +25,8 @@ const RULE_CHUNK_CHARS = 64 * 1024;
 const CUSTOM_CHUNK_CHARS = 8 * 1024;
 /** Longest PEM body that is redacted as a unit; longer bodies are cut here and the rest is left to other rules. */
 const PEM_BODY_CHARS = 16 * 1024;
+const INVISIBLE_ALL = /[\u200B-\u200F\u2060-\u2064\uFEFF\u00AD]/g;
+const INVISIBLE = new RegExp(INVISIBLE_ALL.source);
 const ENTROPY_MIN_BITS = 4.0;
 export const REDACTION_FAILED = '[REDACTION_FAILED]';
 
@@ -45,6 +47,25 @@ interface Rule {
 /** `***`, `${VAR}`, `$VAR`, `<token>`, `{{ x }}`, already-redacted text and plain words that are no secrets. */
 const PLACEHOLDER_VALUE =
   /^(?:\*+$|x{4,}$|\$\{|\$[A-Za-z_]\w*$|<|\{\{|%\(|\[REDACTED|(?:true|false|null|none|nil|undefined|string|required|changeme)$)/i;
+
+/** Names whose value is a secret. The name must end the key. */
+const KEY_NAME_SOURCE =
+  '(?:password|passwd|pwd|secret|token|api[_-]?key|private[_-]?key|secret[_-]?key|access[_-]?key|account[_-]?key|credential)';
+/** Counters, not credentials: `max_tokens`, `input_tokens`, `cache_read_input_tokens`, `totalTokens`, ... */
+const TOKEN_COUNT_KEY =
+  /(?:max|min|input|output|prompt|completion|total|cache[_-]?(?:read|creation|write)\w*)[_-]?tokens?$/i;
+/** Same names for JSON object keys. A plural `tokens` is a list of model tokens, not a credential. */
+const SECRET_JSON_KEY = new RegExp(
+  `(?:${KEY_NAME_SOURCE.replace('token|', '')}s?|token)$|^(?:authorization|cookie|set-cookie)$`,
+  'i',
+);
+const isSecretKey = (key: string): boolean =>
+  SECRET_JSON_KEY.test(key) && !TOKEN_COUNT_KEY.test(key);
+/** A command-line flag whose next argument is a secret: `--password hunter2`, `--api-key abc`. */
+const SECRET_FLAG =
+  /^--[\w-]*(?:password|passwd|secret|token|api-?key|private-?key|access-?key|credential)s?$/i;
+/** More leaves than this and the JSON is redacted as plain text instead; it bounds the work for one field. */
+const MAX_JSON_LEAVES = 50_000;
 
 // A vendored subset of the gitleaks default rules (MIT), written as JS regexes, plus the generic entropy rule.
 const BUILT_IN_RULES: readonly Rule[] = [
@@ -114,7 +135,69 @@ const BUILT_IN_RULES: readonly Rule[] = [
     id: 'url-credentials',
     keywords: ['://'],
     // Every part is bounded: the scheme, user and password sit in windows of at most 20, 100 and 200 characters.
-    regex: /\b[a-z][a-z0-9+.-]{1,20}:\/\/[^\s/:@]{1,100}:(?<secret>[^\s/@]{3,200})@/gi,
+    // The password may hold `/`; `host:8080/@scope/pkg` is no credential (PORT_LIKE).
+    regex: /\b[a-z][a-z0-9+.-]{1,20}:\/\/[^\s/:@]{1,100}:(?<secret>[^\s@]{3,200})@/gi,
+    skip: /^\d{1,5}(?:\/|$)/,
+  },
+  { id: 'google-oauth-token', keywords: ['ya29.'], regex: /\bya29\.[0-9A-Za-z_-]{20,}/g },
+  { id: 'stripe-webhook-secret', keywords: ['whsec_'], regex: /\bwhsec_[0-9A-Za-z]{16,}/g },
+  {
+    id: 'azure-account-key',
+    keywords: ['accountkey', 'sharedaccesssignature'],
+    regex:
+      /(?:accountkey|sharedaccesssignature)\\*["']?=\\*["']?(?<secret>[A-Za-z0-9+/=%._&-]{16,})/gi,
+  },
+  {
+    id: 'sas-signature',
+    keywords: ['sig='],
+    regex: /[?&]sig=(?<secret>[A-Za-z0-9%+/=_-]{10,})/g,
+  },
+  {
+    id: 'authorization-header',
+    keywords: ['authorization'],
+    regex:
+      /authorization\\*["']?[ \t]{0,8}[:=][ \t]{0,8}\\*["']?[ \t]{0,8}(?:basic|token|bearer|negotiate|apikey|ntlm)[ \t]{1,8}(?<secret>[^\s"'\\]{6,})/gi,
+    skip: PLACEHOLDER_VALUE,
+  },
+  {
+    id: 'authorization-digest',
+    keywords: ['digest'],
+    regex: /\bdigest[ \t][^\n]{0,500}?\bresponse=\\*["']?(?<secret>[0-9a-f]{16,})/gi,
+  },
+  {
+    id: 'cookie-header',
+    keywords: ['cookie'],
+    regex: /\b(?:set-)?cookie\\*["']?[ \t]{0,8}[:=][ \t]{0,8}\\*["']?(?<secret>[^\n"'\\]{8,500})/gi,
+    skip: PLACEHOLDER_VALUE,
+  },
+  {
+    id: 'curl-user',
+    keywords: ['curl'],
+    regex:
+      /\bcurl\b[^\n|;&]{0,200}?[ \t](?:-u|--user)(?:[ \t]+|=)\\*["']?[^\s:"'\\]{1,100}:(?<secret>[^\s"'\\]{1,200})/g,
+    skip: PLACEHOLDER_VALUE,
+  },
+  {
+    id: 'mysql-password',
+    keywords: ['mysql', 'mariadb', 'psql'],
+    // `-p5432` is a port; a glued all-digit value of up to five characters is not taken for a password.
+    regex:
+      /\b(?:mysql|mysqldump|mysqladmin|mariadb|psql)\b[^\n|;&]{0,200}?[ \t]-p(?<secret>[^\s"'\\-][^\s"'\\]{2,100})/g,
+    skip: /^\d{1,5}$/,
+  },
+  {
+    id: 'cli-password-quoted',
+    keywords: ['--'],
+    regex:
+      /--(?:password|passwd|pass|token|secret|api-key|auth-token|client-secret)(?:=|[ \t]+)\\*(?<q>["'])(?<secret>[^"'\n]{1,200}?)\\*\k<q>/gi,
+    skip: PLACEHOLDER_VALUE,
+  },
+  {
+    id: 'cli-password',
+    keywords: ['--'],
+    regex:
+      /--(?:password|passwd|pass|token|secret|api-key|auth-token|client-secret)(?:=|[ \t]+)(?<secret>[^\s"'\\-][^\s"'\\]{2,200})/gi,
+    skip: PLACEHOLDER_VALUE,
   },
   {
     id: 'generic-secret',
@@ -125,11 +208,23 @@ const BUILT_IN_RULES: readonly Rule[] = [
   },
   {
     // The key name is the evidence, so short and low-entropy values go too. The name must end the key
-    // (`max_tokens` and `password_hash` are no secrets).
+    // (`max_tokens` and `password_hash` are no secrets). Quoted values run to the closing quote, spaces
+    // included; `\"` (a quote inside JSON text) counts as a quote.
+    id: 'keyed-secret-quoted',
+    keywords: ['secret', 'token', 'password', 'passwd', 'pwd', 'key', 'credential'],
+    regex: new RegExp(
+      String.raw`(?<!\[REDACTED:[\w-]{0,40})${KEY_NAME_SOURCE}\\*["']?[ \t]{0,8}[:=][ \t]{0,8}\\*(?<q>["'])(?<secret>[^"'\n]{1,200}?)\\*\k<q>`,
+      'gi',
+    ),
+    skip: PLACEHOLDER_VALUE,
+  },
+  {
     id: 'keyed-secret',
-    keywords: ['secret', 'token', 'password', 'passwd', 'pwd', 'key'],
-    regex:
-      /(?<!\[REDACTED:[\w-]{0,40})(?:password|passwd|pwd|secret|token|api[_-]?key|private[_-]?key)["']?[ \t]{0,8}[:=][ \t]{0,8}["']?(?<secret>[^\s"'`,;&|)}\]]{4,200})/gi,
+    keywords: ['secret', 'token', 'password', 'passwd', 'pwd', 'key', 'credential'],
+    regex: new RegExp(
+      String.raw`(?<!\[REDACTED:[\w-]{0,40})${KEY_NAME_SOURCE}\\*["']?[ \t]{0,8}[:=][ \t]{0,8}(?:\\*["'])?(?<secret>(?:[^\s"'\`,;&|)}\]\\]|\\(?!["'])){4,200})`,
+      'gi',
+    ),
     skip: PLACEHOLDER_VALUE,
   },
 ];
@@ -138,10 +233,19 @@ const SENSITIVE_NAME = [
   /^\.env(?:\..*)?$/,
   /\.(?:pem|key|p12|pfx)$/,
   /^id_(?!.*\.pub$).+/,
-  /^\.(?:credentials\.json|npmrc|netrc|git-credentials|pgpass)$/,
+  /^\.(?:credentials\.json|npmrc|netrc|git-credentials|pgpass|htpasswd|pypirc)$/,
   /^kubeconfig$/,
+  /\.tfvars(?:\.json)?$/,
+  /^terraform\.tfstate(?:\.backup)?$/,
+  /^secrets?\..+/i,
+  /^service[-_]?account.*\.json$/i,
+  /\.(?:keystore|jks)$/,
 ];
-const SENSITIVE_PATH = [/(?:^|\/)\.aws\/credentials$/, /(?:^|\/)\.kube\/config$/];
+const SENSITIVE_PATH = [
+  /(?:^|\/)\.aws\/credentials$/,
+  /(?:^|\/)\.kube\/config$/,
+  /(?:^|\/)\.docker\/config\.json$/,
+];
 
 /** Contents read from or written to these files are redacted completely, whatever they look like. */
 export function isSensitivePath(path: string): boolean {
@@ -150,15 +254,19 @@ export function isSensitivePath(path: string): boolean {
 }
 
 const READERS =
-  /^(?:cat|less|more|head|tail|grep|egrep|fgrep|rg|bat|strings|xxd|od|base64|source|sed|awk)$/;
+  /^(?:cat|less|more|head|tail|grep|egrep|fgrep|rg|bat|strings|xxd|od|base64|source|sed|awk|cp|jq|python3?|node|ruby|perl|php|deno|bun|tee|nl|tac|cut|sort|paste)$/;
 
 /**
  * Heuristic: a shell command (or the JSON of one) that reads a credential file with a common reader.
  * It is a coarse tokenizer, not a shell parser; `ponytail:` pipelines through unusual tools slip past.
  */
 export function readsSensitiveFile(command: string): boolean {
-  const words = command.split(/[\s'"`,;&|<>()[\]{}=]+/);
-  return words.some((w) => READERS.test(w)) && words.some(isSensitivePath);
+  const words = command.split(/[\s'"`,;&|<>()[\]{}=\\]+/);
+  // `$(<file)` and `cmd < file` read without a reader command.
+  const redirected = [...command.matchAll(/<\s*([^\s|;&<>()'"`\\]+)/g)].some((m) =>
+    isSensitivePath(m[1] ?? ''),
+  );
+  return redirected || (words.some((w) => READERS.test(w)) && words.some(isSensitivePath));
 }
 
 export function shannonEntropy(s: string): number {
@@ -185,7 +293,7 @@ export interface Redactor {
 /** Per-install key: identical secrets get identical placeholders without being recoverable (ADR-0007). */
 export function loadOrCreateRedactionKey(dataDir: string): Buffer {
   const path = join(dataDir, 'redaction.key');
-  mkdirSync(dataDir, { recursive: true });
+  mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   try {
     writeFileSync(path, randomBytes(32).toString('hex'), { flag: 'wx', mode: 0o600 });
   } catch (e) {
@@ -236,6 +344,11 @@ export function createRedactor(opts: {
   const placeholder = (id: string, secret: string): string =>
     `[REDACTED:${id}:${createHmac('sha256', opts.key).update(secret).digest('hex').slice(0, 8)}]`;
 
+  /** Thrown when a field runs past its time budget; the field then fails closed. */
+  class OutOfTime extends Error {}
+  /** Thrown when a JSON document has too many leaves to walk; it is then redacted as text. */
+  class TooBig extends Error {}
+
   return {
     redactWhole: (text) => placeholder('sensitive-file', text),
     redact(text) {
@@ -258,9 +371,9 @@ export function createRedactor(opts: {
           const at = match.lastIndexOf(secret);
           return match.slice(0, at) + replaced + match.slice(at + secret.length);
         };
-      try {
-        const lower = text.toLowerCase();
-        let out = text;
+      const redactText = (input: string): string => {
+        const lower = input.toLowerCase();
+        let out = input;
         for (const rule of rules) {
           if (rule.keywords.length > 0 && !rule.keywords.some((k) => lower.includes(k))) continue;
           const apply = replacer(rule);
@@ -268,12 +381,96 @@ export function createRedactor(opts: {
           // The budget is checked between windows, so no regex runs on more than one window.
           for (const part of chunksOf(out, rule.chunk ?? RULE_CHUNK_CHARS)) {
             next += part.replace(rule.regex, apply);
-            if (now() - started > FIELD_TIME_BUDGET_MS)
-              return { text: REDACTION_FAILED, failed: true, count };
+            if (now() - started > FIELD_TIME_BUDGET_MS) throw new OutOfTime();
           }
           out = next;
         }
-        return { text: out, failed: false, count };
+        return out;
+      };
+      /**
+       * String leaves are redacted as decoded text: in the JSON text a value starts with `\"`, which hides it
+       * from the rules. Iterative (hostile input can nest far deeper than the call stack); edits the parsed
+       * tree in place. A secret key marks everything below it, a `{name: "API_KEY", value}` pair marks the
+       * value, and the argument after `--password` style flags is a secret.
+       */
+      const walk = (root: unknown): unknown => {
+        const holder: Record<string, unknown> = { root };
+        const set = (parent: object, key: string, value: unknown): void => {
+          // defineProperty, not assignment: a JSON key `__proto__` must stay an own property.
+          Object.defineProperty(parent, key, {
+            value,
+            writable: true,
+            enumerable: true,
+            configurable: true,
+          });
+        };
+        const stack: { parent: object; key: string; value: unknown; secret: boolean }[] = [
+          { parent: holder, key: 'root', value: root, secret: false },
+        ];
+        let leaves = 0;
+        for (let item = stack.pop(); item; item = stack.pop()) {
+          const { parent, key, value, secret } = item;
+          if (typeof value === 'string' || typeof value === 'number') {
+            if (++leaves > MAX_JSON_LEAVES) throw new TooBig();
+            const text = String(value);
+            if (secret && text.length >= 4 && !PLACEHOLDER_VALUE.test(text)) {
+              count += 1;
+              set(parent, key, placeholder('keyed-secret', text));
+            } else if (typeof value === 'string') set(parent, key, redactText(value));
+          } else if (Array.isArray(value)) {
+            value.forEach((v: unknown, i) => {
+              const before: unknown = value[i - 1];
+              stack.push({
+                parent: value,
+                key: String(i),
+                value: v,
+                secret: secret || (typeof before === 'string' && SECRET_FLAG.test(before)),
+              });
+            });
+          } else if (typeof value === 'object' && value !== null) {
+            const entries = Object.entries(value);
+            const namesSecret = entries.some(
+              ([k, v]) => /^(?:name|key)$/i.test(k) && typeof v === 'string' && isSecretKey(v),
+            );
+            for (const [k, v] of entries)
+              stack.push({
+                parent: value,
+                key: k,
+                value: v,
+                secret: secret || isSecretKey(k) || (namesSecret && /^value$/i.test(k)),
+              });
+          }
+        }
+        return holder.root;
+      };
+      try {
+        // Zero-width characters inside a key name would hide it from the rules; they carry no meaning in a secret scan.
+        const clean = INVISIBLE.test(text) ? text.replace(INVISIBLE_ALL, '') : text;
+        const trimmed = clean.trim();
+        if (/^[{[]/.test(trimmed) && /[}\]]$/.test(trimmed)) {
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(trimmed);
+          } catch {
+            parsed = undefined;
+          }
+          if (parsed !== undefined) {
+            const before = count;
+            try {
+              const walked = walk(parsed);
+              return {
+                text: count === before ? clean : JSON.stringify(walked),
+                failed: false,
+                count,
+              };
+            } catch (error) {
+              if (error instanceof OutOfTime) throw error;
+              // Too many leaves, or too deep to serialise: the rules still see the whole text.
+              count = before;
+            }
+          }
+        }
+        return { text: redactText(clean), failed: false, count };
       } catch {
         return { text: REDACTION_FAILED, failed: true, count };
       }

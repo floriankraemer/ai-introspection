@@ -44,7 +44,9 @@ export function createJudgeProvider(deps: JudgeProviderDeps) {
     );
 
   const build = (transport: 'api' | 'cli', keyOverride?: string): Judge => {
-    if (deps.override === 'fake') return createFakeJudge();
+    // A model per transport, so that switching the transport is a judge model change the test stack can see.
+    if (deps.override === 'fake')
+      return createFakeJudge(undefined, transport === 'api' ? 'fake-judge' : 'fake-judge-cli');
     return transport === 'api'
       ? createApiJudge({ apiKey: () => apiKey(keyOverride) })
       : createCliJudge({

@@ -22,6 +22,8 @@
   --accent-hover: #1e3a8a;
   --accent-ink: #ffffff;
   --accent-soft: #eef2ff;
+  --disabled-bg: #e9e9e5;
+  --disabled-ink: #6b6b64;
   --pass-ink: #067647;
   --pass-bg: #ecfdf3;
   --pass-line: #abefc6;
@@ -31,6 +33,14 @@
   --warn-ink: #7a2e0e;
   --warn-bg: #fffaeb;
   --warn-line: #fedf89;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #6250d6;
+  --series-8: #e34948;
 }
 
 :root[data-theme='dark'] {
@@ -49,6 +59,8 @@
   --accent-hover: #b0c2ff;
   --accent-ink: #0b1020;
   --accent-soft: #1e2547;
+  --disabled-bg: #2a2a2f;
+  --disabled-ink: #8f8f98;
   --pass-ink: #6ee7a8;
   --pass-bg: #0f2a1e;
   --pass-line: #1f5a3f;
@@ -58,6 +70,14 @@
   --warn-ink: #fedf89;
   --warn-bg: #2b2008;
   --warn-line: #5c4410;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+  --series-7: #9085e9;
+  --series-8: #e66767;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -77,6 +97,8 @@
     --accent-hover: #b0c2ff;
     --accent-ink: #0b1020;
     --accent-soft: #1e2547;
+    --disabled-bg: #2a2a2f;
+    --disabled-ink: #8f8f98;
     --pass-ink: #6ee7a8;
     --pass-bg: #0f2a1e;
     --pass-line: #1f5a3f;
@@ -86,6 +108,14 @@
     --warn-ink: #fedf89;
     --warn-bg: #2b2008;
     --warn-line: #5c4410;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+    --series-7: #9085e9;
+    --series-8: #e66767;
   }
 }
 
@@ -106,6 +136,8 @@
   --color-accent-hover: var(--accent-hover);
   --color-accent-ink: var(--accent-ink);
   --color-accent-soft: var(--accent-soft);
+  --color-disabled: var(--disabled-bg);
+  --color-disabled-ink: var(--disabled-ink);
   --color-pass: var(--pass-ink);
   --color-pass-bg: var(--pass-bg);
   --color-pass-line: var(--pass-line);
@@ -115,6 +147,14 @@
   --color-warn: var(--warn-ink);
   --color-warn-bg: var(--warn-bg);
   --color-warn-line: var(--warn-line);
+  --color-series-1: var(--series-1);
+  --color-series-2: var(--series-2);
+  --color-series-3: var(--series-3);
+  --color-series-4: var(--series-4);
+  --color-series-5: var(--series-5);
+  --color-series-6: var(--series-6);
+  --color-series-7: var(--series-7);
+  --color-series-8: var(--series-8);
 }
 
 @layer base {
@@ -162,4 +202,23 @@
 }
 .row-disagree > :first-child {
   box-shadow: inset 3px 0 0 var(--fail-ink);
+}
+
+/* Indeterminate progress: a bar sweeping across the track; static when motion is reduced. */
+@keyframes progress-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+.progress-indeterminate {
+  animation: progress-sweep 1.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .progress-indeterminate {
+    animation: none;
+    transform: none;
+  }
 }

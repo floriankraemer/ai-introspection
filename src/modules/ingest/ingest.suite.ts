@@ -21,7 +21,7 @@ import { LOCAL_USER_ID, LOCAL_WORKSPACE_ID } from '../../platform/identity/index
 import { createJobQueue } from '../../platform/jobs/queue.js';
 import type { TestDb, TestDbFactory } from '../../platform/testkit/db.js';
 import { createSecretStore, createSettings } from '../settings/index.js';
-import { createIngest, type IngestService } from './index.js';
+import { createIngest, REDACTION_VERSION, type IngestService } from './index.js';
 import {
   CLAUDE_SESSION_ID,
   CLAUDE_TOKENS,
@@ -163,7 +163,7 @@ export function ingestSuite(name: string, make: TestDbFactory): void {
       expect(Boolean(session.flagged)).toBe(true);
       expect(session.status).toBe('ended');
       expect(fromJson(session.ingest_warnings)).toMatchObject({ unknown: 1 });
-      expect(session.redaction_version).toBe('2');
+      expect(session.redaction_version).toBe(REDACTION_VERSION);
     });
 
     it('stores no planted secret in any column of any table', async () => {
@@ -334,7 +334,45 @@ export function ingestSuite(name: string, make: TestDbFactory): void {
       const claude = await sessionIdOf('claude_code');
       const codex = await sessionIdOf('codex');
       expect(await ingest.pinSession(codex)).toBe(true);
+      const rubricId = newId();
+      await t.handle.db
+        .insertInto('rubric')
+        .values({
+          id: rubricId,
+          workspace_id: LOCAL_WORKSPACE_ID,
+          name: 'r',
+          version: rubricId,
+          ordinal: 1,
+          scale: '[0,1]',
+          pass_threshold: 0.5,
+          body_md: 'x',
+          created_at: new Date().toISOString(),
+        })
+        .execute();
+      for (const sessionId of [claude, codex])
+        await t.handle.db
+          .insertInto('grade')
+          .values({
+            id: newId(),
+            workspace_id: LOCAL_WORKSPACE_ID,
+            session_id: sessionId,
+            rubric_id: rubricId,
+            rubric_version: rubricId,
+            score: 0,
+            passed: false,
+            reason: 'quotes the prompt: hunter2',
+            judge_model: 'fake-judge',
+            transport: 'fake',
+            graded_at: new Date().toISOString(),
+          })
+          .execute();
       const purged = await ingest.purgePayloads(30);
+      const reasons = await t.handle.db
+        .selectFrom('grade')
+        .select(['session_id', 'reason'])
+        .execute();
+      expect(reasons.find((g) => g.session_id === claude)?.reason).toBe('(reason purged)');
+      expect(reasons.find((g) => g.session_id === codex)?.reason).toContain('hunter2');
       expect(purged).toBeGreaterThan(0);
       const page = await ingest.sessions.events(claude, { filter: 'all', limit: 500 });
       expect(
@@ -343,7 +381,8 @@ export function ingestSuite(name: string, make: TestDbFactory): void {
       expect(page?.total).toBeGreaterThan(0);
       const pinned = await ingest.sessions.events(codex, { filter: 'all', limit: 500 });
       expect(pinned?.items.some((e) => e.payloadPurged)).toBe(false);
-      expect((await ingest.sessions.get(claude))?.title).toContain('Fix the failing build');
+      expect((await ingest.sessions.get(claude))?.title).toBe('(title purged)');
+      expect((await ingest.sessions.get(codex))?.title).not.toBe('(title purged)');
     });
 
     it('keeps recent sessions when the window is long enough', async () => {
@@ -351,6 +390,36 @@ export function ingestSuite(name: string, make: TestDbFactory): void {
       const oldDate = new Date('2020-01-01');
       utimesSync(sources.claudeFile, oldDate, oldDate);
       expect(await ingest.purgePayloads(100_000)).toBe(0);
+    });
+
+    it('lists sessions from a start time on, together with the other filters and cursor paging', async () => {
+      await importAll();
+      const all = await ingest.sessions.list({ limit: 50 });
+      expect(all.items).toHaveLength(2);
+      const [newest, oldest] = all.items;
+      expect(
+        (await ingest.sessions.list({ since: '2026-09-01T00:00:00.000Z', limit: 50 })).items,
+      ).toHaveLength(2);
+      expect(
+        (await ingest.sessions.list({ since: '2026-11-01T00:00:00.000Z', limit: 50 })).items,
+      ).toEqual([]);
+      // The boundary is inclusive: a session that started exactly at `since` is listed.
+      const at = await ingest.sessions.list({ since: newest?.startedAt ?? '', limit: 50 });
+      expect(at.items.map((s) => s.id)).toContain(newest?.id);
+      // Paging keeps the filter.
+      const first = await ingest.sessions.list({ since: oldest?.startedAt ?? '', limit: 1 });
+      expect(first.items).toHaveLength(1);
+      const second = await ingest.sessions.list({
+        since: oldest?.startedAt ?? '',
+        limit: 1,
+        ...(first.nextCursor && { cursor: first.nextCursor }),
+      });
+      expect(second.items.every((s) => s.startedAt >= (oldest?.startedAt ?? ''))).toBe(true);
+      expect(
+        (
+          await ingest.sessions.list({ since: newest?.startedAt ?? '', agent: 'codex', limit: 50 })
+        ).items.every((s) => s.agent === 'codex'),
+      ).toBe(true);
     });
 
     it('counts sessions in a time window and exposes the raw file path', async () => {

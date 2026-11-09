@@ -1,17 +1,24 @@
 import { serve } from '@hono/node-server';
 import { fileURLToPath } from 'node:url';
 import { createGrading, createJudgeProvider } from '../modules/grading/index.js';
-import { createSkillRepos } from '../modules/improvement/index.js';
-import { createIngest } from '../modules/ingest/index.js';
+import {
+  createImprovement,
+  createImproverProvider,
+  createSkillRepos,
+  parseSince,
+} from '../modules/improvement/index.js';
+import { createIngest, createRedactor, loadOrCreateRedactionKey } from '../modules/ingest/index.js';
 import { createRubrics } from '../modules/rubrics/index.js';
 import { createSecretStore, createSettings } from '../modules/settings/index.js';
-import { createTrends } from '../modules/trends/index.js';
+import { createTrends, enqueueTrendsScan, TRENDS_SCAN_JOB } from '../modules/trends/index.js';
 import type { Config } from './config/index.js';
+import { createClock, type Clock } from './clock.js';
+import { setCommitClock } from './git/index.js';
 import { openDatabase } from './db/connection.js';
 import { migrateToLatest } from './db/migrate.js';
 import { runDoctor, runProgram, type DoctorReport } from './doctor/index.js';
 import { createApp } from './http/app.js';
-import { loadOrCreateToken } from './http/auth.js';
+import { tokenReader } from './http/auth.js';
 import { ensureLocalIdentity, LOCAL_USER_ID, LOCAL_WORKSPACE_ID } from './identity/index.js';
 import { createJobQueue } from './jobs/queue.js';
 import { createScheduler } from './jobs/scheduler.js';
@@ -22,6 +29,17 @@ const WEB_DIR = fileURLToPath(new URL('../../web/dist', import.meta.url));
 
 /** Rubric files are read from git at most this often; UI edits drop the cache at once. */
 const RUBRIC_CACHE_MS = 5 * 60_000;
+
+let clock: { fixedNow: string | undefined; now: Clock } | undefined;
+
+/** The one app clock of this process (real time unless `INTROSPECT_NOW` fixes its start); commit dates follow it too. */
+function appClock(config: Config): Clock {
+  if (clock?.fixedNow !== config.fixedNow || !clock) {
+    clock = { fixedNow: config.fixedNow, now: createClock(config.fixedNow) };
+  }
+  setCommitClock(clock.now);
+  return clock.now;
+}
 
 type SecretStoreLike = ReturnType<typeof createSecretStore>;
 
@@ -39,6 +57,7 @@ function buildGrading(
     db: handle.db,
     workspaceId: LOCAL_WORKSPACE_ID,
     repoPath: async () => (await skillRepos.getGlobal())?.path ?? null,
+    now: appClock(config),
     // The sweep runs every 5 minutes; rubric files are read from git at most that often.
     cacheMs: RUBRIC_CACHE_MS,
   });
@@ -61,11 +80,61 @@ function buildGrading(
     rubrics,
     judges,
     timeZone: config.timeZone,
+    now: appClock(config),
   });
   return { rubrics, judges, grading };
 }
 
 type GradingParts = ReturnType<typeof buildGrading>;
+
+/** The improver, wired like the judge: same transport setting, same budget ledger, same redaction rules. */
+function buildImprovement(
+  config: Config,
+  handle: ReturnType<typeof openDatabase>,
+  settings: ReturnType<typeof createSettings>,
+  secrets: SecretStoreLike,
+  ingest: ReturnType<typeof createIngest>,
+  queue: ReturnType<typeof createJobQueue>,
+  skillRepos: ReturnType<typeof createSkillRepos>,
+  grading: GradingParts['grading'],
+) {
+  const redactionKey = loadOrCreateRedactionKey(config.dataDir);
+  return createImprovement({
+    db: handle.db,
+    workspaceId: LOCAL_WORKSPACE_ID,
+    userId: LOCAL_USER_ID,
+    dataDir: config.dataDir,
+    settings,
+    queue,
+    skillRepos,
+    ingest,
+    grading,
+    now: appClock(config),
+    improvers: createImproverProvider({
+      secrets,
+      env: process.env,
+      transport: async () => (await settings.get())['judge.transport'],
+      claudeHome: config.claudeHome,
+      claudeSeedCredentials: config.claudeSeedCredentials,
+      sourcePaths: async () => (await ingest.sources.list()).map((s) => s.path),
+      override: config.improverOverride,
+    }),
+    // Diffs and repository files are scanned with the same rules as ingest, built-in and custom (ADR-0007).
+    redact: async (text) =>
+      createRedactor({
+        key: redactionKey,
+        customPatterns: (await settings.get())['redaction.custom_patterns'],
+      }).redact(text),
+    hasSecret: async (text) => {
+      const redactor = createRedactor({
+        key: redactionKey,
+        customPatterns: (await settings.get())['redaction.custom_patterns'],
+      });
+      const result = redactor.redact(text);
+      return result.failed || result.count > 0;
+    },
+  });
+}
 
 /** Gathers what the doctor checks look at. `dbError` is set when the database is not usable. */
 async function doctorReport(
@@ -80,9 +149,13 @@ async function doctorReport(
   let repos: Awaited<ReturnType<typeof skillRepos.list>> = [];
   let sourceList: Awaited<ReturnType<typeof sources.list>> = [];
   let rubricProblems: string[] = [];
+  let scanWarnings: { path: string; warning: string }[] = [];
   try {
     await handle.db.selectFrom('setting').select('key').limit(1).execute();
     repos = await skillRepos.list();
+    scanWarnings = (await skillRepos.rows()).flatMap((r) =>
+      r.scanWarning === null ? [] : [{ path: r.path, warning: r.scanWarning }],
+    );
     sourceList = await sources.list();
     rubricProblems = (await parts.rubrics.list()).problems.map((p) => `${p.name}: ${p.error}`);
   } catch (e) {
@@ -93,10 +166,12 @@ async function doctorReport(
   return runDoctor({
     dataDir: config.dataDir,
     watchPoll: config.watchPoll,
+    fixedNow: config.fixedNow,
     redactionEnabled: current?.['redaction.enabled'] ?? true,
     db: dbError === undefined ? {} : { error: dbError },
     sources: sourceList,
     repos,
+    scanWarnings,
     rubricProblems,
     judge: {
       transport: current?.['judge.transport'] ?? 'api',
@@ -119,8 +194,8 @@ export async function runDoctorCommand(config: Config): Promise<DoctorReport> {
   const handle = openDatabase(config.databaseUrl);
   try {
     const secrets = createSecretStore(config.dataDir);
-    const settings = createSettings(handle.db, LOCAL_WORKSPACE_ID, secrets);
-    const queue = createJobQueue(handle);
+    const settings = createSettings(handle.db, LOCAL_WORKSPACE_ID, secrets, appClock(config));
+    const queue = createJobQueue(handle, appClock(config));
     const ingest = createIngest({
       db: handle.db,
       workspaceId: LOCAL_WORKSPACE_ID,
@@ -129,6 +204,7 @@ export async function runDoctorCommand(config: Config): Promise<DoctorReport> {
       settings,
       queue,
       pollMode: config.watchPoll,
+      now: appClock(config),
     });
     const skillRepos = createSkillRepos(handle.db, LOCAL_WORKSPACE_ID);
     const parts = buildGrading(config, handle, settings, secrets, ingest, queue, skillRepos);
@@ -150,14 +226,14 @@ export async function startServer(config: Config): Promise<RunningServer> {
   const handle = openDatabase(config.databaseUrl);
   try {
     await migrateToLatest(handle);
-    await ensureLocalIdentity(handle.db);
+    await ensureLocalIdentity(handle.db, appClock(config)());
   } catch (e) {
     await handle.close();
     throw e;
   }
-  const queue = createJobQueue(handle);
+  const queue = createJobQueue(handle, appClock(config));
   const secrets = createSecretStore(config.dataDir);
-  const settings = createSettings(handle.db, LOCAL_WORKSPACE_ID, secrets);
+  const settings = createSettings(handle.db, LOCAL_WORKSPACE_ID, secrets, appClock(config));
   const ingest = createIngest({
     db: handle.db,
     workspaceId: LOCAL_WORKSPACE_ID,
@@ -177,9 +253,41 @@ export async function startServer(config: Config): Promise<RunningServer> {
     queue,
     skillRepos,
   );
+  const improvement = buildImprovement(
+    config,
+    handle,
+    settings,
+    secrets,
+    ingest,
+    queue,
+    skillRepos,
+    grading,
+  );
+  const trends = createTrends({
+    db: handle.db,
+    workspaceId: LOCAL_WORKSPACE_ID,
+    settings,
+    ingest,
+    grading,
+    rubrics,
+    judges,
+    skillRepos,
+    timeZone: config.timeZone,
+    now: appClock(config),
+  });
+  // A judge switch gets the time it happened, not the time of the next scan.
+  settings.onUpdate(async (keys) => {
+    if (keys.some((k) => k.startsWith('judge.'))) await trends.noteJudge();
+  });
   const worker = createWorker({
     queue,
-    handlers: { ...ingest.handlers, ...grading.handlers },
+    handlers: {
+      ...ingest.handlers,
+      ...grading.handlers,
+      ...improvement.handlers,
+      ...trends.handlers,
+    },
+    now: appClock(config),
     onError: (error, job) => {
       console.error(`job ${job.kind} ${job.id} failed`, error);
     },
@@ -188,26 +296,44 @@ export async function startServer(config: Config): Promise<RunningServer> {
     handle,
     queue,
     workspaceId: LOCAL_WORKSPACE_ID,
-    schedules: [...ingest.schedules, ...grading.schedules],
+    schedules: [
+      ...ingest.schedules,
+      ...grading.schedules,
+      ...improvement.schedules,
+      ...trends.schedules,
+    ],
+    now: appClock(config),
   });
   const app = createApp({
     webDir: WEB_DIR,
     port: config.port,
-    token: loadOrCreateToken(config.dataDir),
+    token: tokenReader(config.dataDir),
     queue,
     settings,
     ingest,
     grading,
+    improvement,
     rubrics,
     judges,
-    trends: createTrends(ingest, grading),
+    trends,
     skillRepos,
+    now: appClock(config),
     doctor: () =>
       doctorReport(config, handle, settings, ingest.sources, skillRepos, { rubrics, judges }),
   });
 
   const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host }, (info) => {
     console.log(`introspect listening on http://${info.address}:${String(info.port)}`);
+  });
+  // A crash can leave worktrees and branches behind; clear them before any job can use them.
+  await improvement.sweep().catch((e: unknown) => {
+    console.error('improver housekeeping failed', e);
+  });
+  // Remember where each skills repository stands now, so a commit made after this start is a manual edit.
+  await queue.enqueue({
+    workspaceId: LOCAL_WORKSPACE_ID,
+    kind: TRENDS_SCAN_JOB,
+    idempotencyKey: `trends-scan:start:${appClock(config)().toISOString()}`,
   });
   worker.start();
   scheduler.start();
@@ -239,11 +365,12 @@ export async function runImportCommand(
   const handle = openDatabase(config.databaseUrl);
   try {
     await migrateToLatest(handle);
-    await ensureLocalIdentity(handle.db);
+    await ensureLocalIdentity(handle.db, appClock(config)());
     const settings = createSettings(
       handle.db,
       LOCAL_WORKSPACE_ID,
       createSecretStore(config.dataDir),
+      appClock(config),
     );
     const ingest = createIngest({
       db: handle.db,
@@ -251,8 +378,9 @@ export async function runImportCommand(
       userId: LOCAL_USER_ID,
       dataDir: config.dataDir,
       settings,
-      queue: createJobQueue(handle),
+      queue: createJobQueue(handle, appClock(config)),
       pollMode: config.watchPoll,
+      now: appClock(config),
     });
     if (folder) await ingest.sources.add(folder.agent, folder.path);
     else if ((await ingest.sources.list()).length === 0) {
@@ -283,10 +411,10 @@ export async function runGradeCommand(
   const handle = openDatabase(config.databaseUrl);
   try {
     await migrateToLatest(handle);
-    await ensureLocalIdentity(handle.db);
+    await ensureLocalIdentity(handle.db, appClock(config)());
     const secrets = createSecretStore(config.dataDir);
-    const settings = createSettings(handle.db, LOCAL_WORKSPACE_ID, secrets);
-    const queue = createJobQueue(handle);
+    const settings = createSettings(handle.db, LOCAL_WORKSPACE_ID, secrets, appClock(config));
+    const queue = createJobQueue(handle, appClock(config));
     const ingest = createIngest({
       db: handle.db,
       workspaceId: LOCAL_WORKSPACE_ID,
@@ -295,6 +423,7 @@ export async function runGradeCommand(
       settings,
       queue,
       pollMode: config.watchPoll,
+      now: appClock(config),
     });
     const skillRepos = createSkillRepos(handle.db, LOCAL_WORKSPACE_ID);
     const { rubrics, grading } = buildGrading(
@@ -323,6 +452,68 @@ export async function runGradeCommand(
     );
   } finally {
     process.stderr.write('\n');
+    await handle.close();
+  }
+}
+
+export interface ImproveCommandOptions {
+  /** `24h`, `7d` or `2w`; default 24 hours. */
+  since: string;
+  /** Run in the foreground; otherwise queue a job for the running server. */
+  now: boolean;
+}
+
+/** `introspect improve`: a foreground run with `--now`, else a queued job for the server. */
+export async function runImproveCommand(
+  config: Config,
+  opts: ImproveCommandOptions,
+): Promise<{ queued: string } | Awaited<ReturnType<ReturnType<typeof createImprovement>['run']>>> {
+  const handle = openDatabase(config.databaseUrl);
+  try {
+    await migrateToLatest(handle);
+    await ensureLocalIdentity(handle.db, appClock(config)());
+    const secrets = createSecretStore(config.dataDir);
+    const settings = createSettings(handle.db, LOCAL_WORKSPACE_ID, secrets, appClock(config));
+    const queue = createJobQueue(handle, appClock(config));
+    const ingest = createIngest({
+      db: handle.db,
+      workspaceId: LOCAL_WORKSPACE_ID,
+      userId: LOCAL_USER_ID,
+      dataDir: config.dataDir,
+      settings,
+      queue,
+      pollMode: config.watchPoll,
+      now: appClock(config),
+    });
+    const skillRepos = createSkillRepos(handle.db, LOCAL_WORKSPACE_ID);
+    const { grading } = buildGrading(config, handle, settings, secrets, ingest, queue, skillRepos);
+    const improvement = buildImprovement(
+      config,
+      handle,
+      settings,
+      secrets,
+      ingest,
+      queue,
+      skillRepos,
+      grading,
+    );
+    if (!opts.now) return { queued: await improvement.enqueueRun(opts.since) };
+    return await improvement.run(parseSince(opts.since));
+  } finally {
+    await handle.close();
+  }
+}
+
+/** `introspect scan`: queues a change scan for the running server; returns the job id. */
+export async function runScanCommand(config: Config): Promise<{ queued: string }> {
+  const handle = openDatabase(config.databaseUrl);
+  try {
+    await migrateToLatest(handle);
+    await ensureLocalIdentity(handle.db, appClock(config)());
+    return {
+      queued: await enqueueTrendsScan(createJobQueue(handle, appClock(config)), LOCAL_WORKSPACE_ID),
+    };
+  } finally {
     await handle.close();
   }
 }

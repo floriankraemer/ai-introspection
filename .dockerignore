@@ -10,3 +10,4 @@ docs
 *.md
 compose*.yaml
 Makefile
+e2e

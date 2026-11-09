@@ -7,14 +7,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createSkillRepos } from '../../modules/improvement/index.js';
 import { createIngest } from '../../modules/ingest/index.js';
 import { createSecretStore, createSettings } from '../../modules/settings/index.js';
-import { createTrends } from '../../modules/trends/index.js';
 import { newId } from '../db/ids.js';
 import { LOCAL_USER_ID, LOCAL_WORKSPACE_ID } from '../identity/index.js';
 import { createJobQueue } from '../jobs/queue.js';
 import { createWorker } from '../jobs/worker.js';
 import { writeFixtureSources } from '../testkit/agent-fixtures.js';
 import { sqliteTestDb, type TestDb } from '../testkit/db.js';
-import { wireGrading } from './wire-grading.js';
+import { wireGrading, wireImprovement, wireTrends } from './wire-grading.js';
 import { createApp } from './app.js';
 import { loadOrCreateToken } from './auth.js';
 
@@ -68,6 +67,15 @@ beforeAll(async () => {
   });
   const worker = createWorker({ queue, handlers: { ...ingest.handlers, ...grading.handlers } });
   tick = () => worker.tick();
+  const improvement = wireImprovement({
+    db: t.handle.db,
+    ingest,
+    settings,
+    queue,
+    skillRepos,
+    grading,
+    dataDir,
+  });
   app = createApp({
     webDir: join(dir, 'web'),
     port: PORT,
@@ -76,9 +84,10 @@ beforeAll(async () => {
     settings,
     ingest,
     grading,
+    improvement,
     rubrics,
     judges,
-    trends: createTrends(ingest, grading),
+    trends: wireTrends({ db: t.handle.db, ingest, settings, skillRepos, grading, rubrics, judges }),
     skillRepos,
     doctor: () => Promise.resolve({ checks: [] }),
   });

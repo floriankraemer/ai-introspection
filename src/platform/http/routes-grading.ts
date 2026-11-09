@@ -10,6 +10,8 @@ export interface GradingRouteDeps {
   grading: Grading;
   rubrics: RubricStore;
   judges: Pick<JudgeProvider, 'test'>;
+  /** The app clock; the real time when unset. */
+  now?: () => Date;
 }
 
 const json = <T extends z.ZodType>(schema: T, description: string) => ({
@@ -138,6 +140,8 @@ const budgetSchema = z
     tokensPerDay: z.number().int().nullable(),
     usdMonth: z.number(),
     usdPerMonth: z.number().nullable(),
+    /** The improver's share of `tokensToday` and `usdMonth` (one ledger, one budget). */
+    improver: z.object({ tokensToday: z.number().int(), usdMonth: z.number() }),
     deferredJobs: z.number().int(),
     tokensResetAt: z.iso.datetime(),
     usdResetAt: z.iso.datetime(),
@@ -316,12 +320,12 @@ export const testJudgeRoute = createRoute({
 
 export function registerGradingRoutes(
   app: OpenAPIHono,
-  { queue, grading, rubrics, judges }: GradingRouteDeps,
+  { queue, grading, rubrics, judges, now = () => new Date() }: GradingRouteDeps,
 ): void {
   async function summaries(): Promise<z.infer<typeof rubricSummarySchema>[]> {
     const { rubrics: current } = await rubrics.list();
     const stats = await grading.calibrationStats();
-    const rates = await grading.trendRubrics(new Date(Date.now() - RATE_WINDOW_DAYS * DAY_MS));
+    const rates = await grading.trendRubrics(new Date(now().getTime() - RATE_WINDOW_DAYS * DAY_MS));
     return current.map((r) =>
       summary(r, stats.get(r.name), rates.rubrics.find((x) => x.name === r.name)?.passRate ?? null),
     );

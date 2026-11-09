@@ -42,15 +42,18 @@ const highlight = HighlightStyle.define([
   { tag: t.link, color: 'var(--accent)', textDecoration: 'underline' },
 ]);
 
-/** CodeMirror 6 in markdown mode, with the `---` YAML frontmatter highlighted as YAML. */
+/** CodeMirror 6 in markdown mode (or plain text), with the `---` YAML frontmatter highlighted as YAML. */
 export default function MarkdownEditor({
   value,
   onChange,
   label,
+  plain = false,
 }: {
   value: string;
   onChange: (v: string) => void;
   label: string;
+  /** No markdown highlighting: for diffs and other text where `- ` is not a list. */
+  plain?: boolean;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
@@ -61,15 +64,20 @@ export default function MarkdownEditor({
 
   useEffect(() => {
     if (!host.current) return;
+    // CodeMirror injects its styles as <style> elements, which the server's CSP (default-src 'self')
+    // blocks. In a shadow root it adopts a constructable stylesheet instead, which the CSP allows.
+    const root = host.current.shadowRoot ?? host.current.attachShadow({ mode: 'open' });
     const v = new EditorView({
-      parent: host.current,
+      parent: root,
+      root,
       state: EditorState.create({
         doc: value,
         extensions: [
           history(),
           keymap.of([...defaultKeymap, ...historyKeymap]),
-          yamlFrontmatter({ content: markdown() }),
-          syntaxHighlighting(highlight),
+          ...(plain
+            ? []
+            : [yamlFrontmatter({ content: markdown() }), syntaxHighlighting(highlight)]),
           EditorView.lineWrapping,
           EditorView.contentAttributes.of({ 'aria-label': label, 'aria-multiline': 'true' }),
           theme,
@@ -93,5 +101,5 @@ export default function MarkdownEditor({
       v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: value } });
   }, [value]);
 
-  return <div ref={host} />;
+  return <div ref={host} data-testid="markdown-editor" />;
 }

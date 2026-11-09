@@ -80,6 +80,12 @@ describe('claude CLI judge', () => {
     const run = calls.find((c) => c.args[0] === '-p');
     expect(run?.env.HOME).toBe(home);
     expect(run?.env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(run?.env).toMatchObject({
+      DISABLE_TELEMETRY: '1',
+      DISABLE_ERROR_REPORTING: '1',
+      DISABLE_AUTOUPDATER: '1',
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+    });
     expect(run?.cwd.startsWith(home)).toBe(true);
     expect(run?.args).toEqual(
       expect.arrayContaining(['--tools', '', '--no-session-persistence', '--json-schema']),

@@ -1,9 +1,53 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
+import { createMemoryHistory } from '@tanstack/react-router';
+import { render } from '@testing-library/react';
+import { App } from '../App.js';
+import { createMockApi } from '../api/mock.js';
 import { renderApp } from '../test-utils.js';
 
+/** The session fixture with an outcome link of the given URL. */
+function renderWithOutcomeUrl(url: string) {
+  const api = createMockApi('graded', 0);
+  const getSession: typeof api.getSession = async (id) => {
+    const s = await api.getSession(id);
+    return { ...s, outcome: { ...s.outcome, url } };
+  };
+  return render(
+    <App
+      api={{ ...api, getSession }}
+      history={createMemoryHistory({ initialEntries: ['/sessions/sess-1'] })}
+    />,
+  );
+}
+
 describe('Session detail', () => {
+  it('links an https outcome with rel noopener noreferrer, and never a javascript: URL', async () => {
+    const good = renderWithOutcomeUrl('https://github.com/o/r/pull/128');
+    const link = await screen.findByRole('link', { name: /merged/i }, { timeout: 5000 });
+    expect(link).toHaveAttribute('href', 'https://github.com/o/r/pull/128');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    good.unmount();
+    renderWithOutcomeUrl('javascript:alert(1)');
+    await screen.findByText(/merged/i, undefined, { timeout: 5000 });
+    expect(screen.queryByRole('link', { name: /merged/i })).toBeNull();
+  });
+
+  it('adds and removes the session from the reference set', async () => {
+    const user = userEvent.setup();
+    renderApp('/sessions/sess-1');
+    await user.click(
+      await screen.findByRole('button', { name: 'Remove from reference set' }, { timeout: 5000 }),
+    );
+    await user.click(
+      await screen.findByRole('button', { name: 'Add to reference set' }, { timeout: 5000 }),
+    );
+    expect(
+      await screen.findByRole('button', { name: 'Remove from reference set' }, { timeout: 5000 }),
+    ).toBeVisible();
+  });
+
   it('marks a stale grade and names the model that answered when it differs', async () => {
     renderApp('/sessions/sess-1');
     const grades = await screen.findByRole('complementary', { name: 'Grades' });
@@ -51,7 +95,7 @@ describe('Session detail', () => {
     expect(screen.getByRole('link', { name: 'Back to Sessions' })).toBeInTheDocument();
   });
 
-  it('shows each grade with score, reason, judge model and the untrusted marker', async () => {
+  it('shows each grade with score, reason, judge model and the uncalibrated marker', async () => {
     renderApp('/sessions/sess-1');
     const grades = await screen.findByRole('complementary', { name: 'Grades' });
     expect(
@@ -61,7 +105,7 @@ describe('Session detail', () => {
     expect(within(grades).getByText(/Spent ~7 min probing ports/)).toBeInTheDocument();
     expect(within(grades).getAllByText(/claude-sonnet-5-5 · API/).length).toBeGreaterThan(0);
     // Efficiency (7 / 10) and Silent workaround (6 / 10) have not passed the gate; they carry the marker.
-    expect(within(grades).getAllByText('untrusted')).toHaveLength(2);
+    expect(within(grades).getAllByText('uncalibrated')).toHaveLength(2);
     expect(within(grades).getByText('0.8 · Pass')).toBeInTheDocument();
   });
 
@@ -105,14 +149,14 @@ describe('Session detail', () => {
     const user = userEvent.setup();
     renderApp('/sessions/sess-1');
     const grades = await screen.findByRole('complementary', { name: 'Grades' });
-    const before = (await within(grades).findAllByText('untrusted')).length;
+    const before = (await within(grades).findAllByText('uncalibrated')).length;
     const wrong = await within(grades).findAllByRole('button', { name: 'Judge was wrong…' });
     await user.click(wrong[0] ?? grades);
     // Efficiency is at 7 / 10; agreeing with the judge's Fail makes 8 / 10.
     await user.click(within(grades).getByLabelText('Fail'));
     await user.click(within(grades).getByRole('button', { name: 'Save label' }));
     await waitFor(() => {
-      expect(within(grades).getAllByText('untrusted')).toHaveLength(before - 1);
+      expect(within(grades).getAllByText('uncalibrated')).toHaveLength(before - 1);
     });
   });
 

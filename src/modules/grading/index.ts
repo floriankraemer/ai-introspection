@@ -1,6 +1,5 @@
 import { BudgetExceededError, InvalidInputError } from '../../platform/errors.js';
 import type { Db } from '../../platform/db/schema.js';
-import { asBool } from '../../platform/db/json.js';
 import type { JobQueue } from '../../platform/jobs/queue.js';
 import { DeferJob, type JobHandler } from '../../platform/jobs/worker.js';
 import type { Schedule } from '../../platform/jobs/scheduler.js';
@@ -17,6 +16,13 @@ import type {
 import { parseRubric, serializeRubric, type Rubric, type RubricStore } from '../rubrics/index.js';
 import type { SettingsService } from '../settings/index.js';
 import { createBudget } from './budget.js';
+import {
+  gradedSessionCount,
+  passCounts,
+  passCountsInRanges,
+  type PassCountQuery,
+  type RangeCount,
+} from './pass-counts.js';
 import { createCalibration, type CalibrationStats } from './calibration.js';
 import type { JudgeProvider } from './judges.js';
 import { appliesTo, shouldGrade } from './policy.js';
@@ -25,12 +31,32 @@ import { createGrader, latestGrades, type GradeDetail, type Verdict } from './se
 
 export { createJudgeProvider, type JudgeProvider, type JudgeStatus } from './judges.js';
 export { createFakeJudge } from './judge-fake.js';
-export { isolationProblem, judgeLogin } from './judge-cli.js';
+export {
+  createCliInvoker,
+  credentialsPresent,
+  isolationProblem,
+  judgeLogin,
+  loginFile,
+  parseCliJson,
+  spawnRunner,
+  usageOf as cliUsageOf,
+  type CliRunner,
+} from './judge-cli.js';
+export { JudgeUnavailableError } from './types.js';
 export { JUDGE_MODEL, type Judge, type JudgeRequest, type JudgeResult } from './types.js';
 export { condenseTrace, MAX_TRACE_TOKENS } from './condense.js';
 export { GATE, gateStats, type CalibrationRow, type CalibrationTable } from './calibration.js';
-export type { BudgetStatus } from './budget.js';
+export {
+  costOf,
+  estimateCost,
+  type Budget,
+  type BudgetStatus,
+  type Reservation,
+} from './budget.js';
+export type { Usage } from './types.js';
 export type { GradeDetail, Verdict } from './service.js';
+export type { PassCount, PassCountQuery, RangeCount } from './pass-counts.js';
+export { zonedMidnight } from './budget.js';
 
 export const GRADE_SESSION_JOB = 'grade_session';
 export const GRADE_BATCH_JOB = 'grade_batch';
@@ -63,6 +89,14 @@ export interface GradingDeps {
   timeZone?: string;
 }
 
+export interface BatchInput {
+  sessionIds: readonly string[];
+  rubrics?: readonly string[];
+  force: boolean;
+  /** `reference`: the grades are re-grades of the reference set and never count in trends. */
+  origin?: 'standard' | 'reference';
+}
+
 export interface GradeSelection {
   sessionIds?: readonly string[];
   since?: Date;
@@ -81,6 +115,25 @@ export interface GradeRunSummary {
   errors: string[];
   /** Why work was skipped, with a count per reason ("already graded", "redaction is off", ...). */
   skippedReasons: Record<string, number>;
+}
+
+/** A failing grade of a trusted rubric, with what the improver needs to know about its session. */
+export interface FailedGrade {
+  sessionId: string;
+  rubric: string;
+  rubricSha: string;
+  reason: string;
+  evidenceEventIds: string[];
+  gradedAt: string;
+  sessionTitle: string;
+  repoRoot: string | null;
+  cwd: string | null;
+}
+
+export interface FailedGrades {
+  failures: FailedGrade[];
+  /** Failing grades of rubrics that have not passed the calibration gate: left out, and reported. */
+  untrusted: { rubric: string; failures: number }[];
 }
 
 export interface DryRunResult {
@@ -233,7 +286,7 @@ export function createGrading(deps: GradingDeps) {
   async function gradeRubrics(
     c: GradeCandidate,
     list: readonly Rubric[],
-    opts: { force: boolean; since?: Date },
+    opts: { force: boolean; since?: Date; origin?: 'standard' | 'reference' },
     count: (o: 'graded' | 'skipped') => void,
   ): Promise<void> {
     for (const rubric of list) {
@@ -243,6 +296,7 @@ export function createGrading(deps: GradingDeps) {
         purpose: 'grade',
         force: opts.force,
         ...(opts.since && { skipIfGradedSince: opts.since }),
+        ...(opts.origin && { origin: opts.origin }),
       });
       count(outcome.kind === 'graded' ? 'graded' : 'skipped');
     }
@@ -264,6 +318,7 @@ export function createGrading(deps: GradingDeps) {
           sessionIds: string[];
           rubrics?: string[];
           force: boolean;
+          origin?: 'standard' | 'reference';
           requestedAt: string;
         };
         const { rubrics: current } = await rubrics.list();
@@ -283,7 +338,11 @@ export function createGrading(deps: GradingDeps) {
               await gradeRubrics(
                 c,
                 list,
-                { force: p.force, since: new Date(p.requestedAt) },
+                {
+                  force: p.force,
+                  since: new Date(p.requestedAt),
+                  ...(p.origin && { origin: p.origin }),
+                },
                 count,
               );
             } else done += list.length;
@@ -316,6 +375,22 @@ export function createGrading(deps: GradingDeps) {
     { name: 'grade-sweep', cron: () => Promise.resolve(SWEEP_CRON), kind: GRADE_SWEEP_JOB },
   ];
 
+  function enqueueBatchJob(input: BatchInput, idempotencyKey?: string): Promise<string | null> {
+    return deps.queue.enqueue({
+      workspaceId,
+      kind: GRADE_BATCH_JOB,
+      payload: {
+        sessionIds: [...input.sessionIds],
+        ...(input.rubrics && { rubrics: [...input.rubrics] }),
+        force: input.force,
+        ...(input.origin && { origin: input.origin }),
+        requestedAt: now().toISOString(),
+      },
+      maxAttempts: 3,
+      ...(idempotencyKey && { idempotencyKey }),
+    });
+  }
+
   async function sessionDetailGrades(id: string): Promise<GradeDetail[]> {
     return (await latestGrades(db, workspaceId, [id], await trustedNames())).get(id) ?? [];
   }
@@ -324,29 +399,20 @@ export function createGrading(deps: GradingDeps) {
     handlers,
     schedules,
     sweep,
-    budget: { status: (at?: Date) => budget.status(at) },
+    /** The one ledger of all LLM calls; the improver reserves and settles through it too. */
+    budget,
     calibration,
 
     /** Queues a background batch (re-grade, "Grade selected"). Returns the job id. */
-    async enqueueBatch(input: {
-      sessionIds: readonly string[];
-      rubrics?: readonly string[];
-      force: boolean;
-    }): Promise<string> {
-      const id = await deps.queue.enqueue({
-        workspaceId,
-        kind: GRADE_BATCH_JOB,
-        payload: {
-          sessionIds: [...input.sessionIds],
-          ...(input.rubrics && { rubrics: [...input.rubrics] }),
-          force: input.force,
-          requestedAt: now().toISOString(),
-        },
-        maxAttempts: 3,
-      });
+    async enqueueBatch(input: BatchInput): Promise<string> {
+      const id = await enqueueBatchJob(input);
       if (!id) throw new Error('The grading job was not created');
       return id;
     },
+
+    /** Like `enqueueBatch`, but a second call with the same key is a no-op (returns null). */
+    enqueueBatchOnce: (input: BatchInput, idempotencyKey: string): Promise<string | null> =>
+      enqueueBatchJob(input, idempotencyKey),
 
     /**
      * `introspect grade`: runs in the foreground. Work that does not fit the budget is queued
@@ -503,46 +569,87 @@ export function createGrading(deps: GradingDeps) {
 
     gradesFor: sessionDetailGrades,
 
-    /** Pass rate per rubric over sessions that started since `since`, newest grade per session and rubric. */
+    /** Pass rate per rubric over sessions that started since `since` (see `passCounts` for what counts). */
     async trendRubrics(since: Date): Promise<{
       sessionsGraded: number;
       rubrics: { name: string; passRate: number | null; target: number; gradedCount: number }[];
     }> {
-      const rows = await db
-        .selectFrom('grade')
-        .innerJoin('rubric', 'rubric.id', 'grade.rubric_id')
-        .innerJoin('session', 'session.id', 'grade.session_id')
-        .select(['grade.session_id', 'grade.passed', 'rubric.name'])
-        .where('grade.workspace_id', '=', workspaceId)
-        .where('grade.status', '=', 'ok')
-        .where('session.started_at', '>=', since.toISOString())
-        .orderBy('grade.graded_at', 'desc')
-        .execute();
-      const seen = new Set<string>();
-      const stats = new Map<string, { passed: number; total: number }>();
-      const graded = new Set<string>();
-      for (const r of rows) {
-        const key = `${r.session_id}|${r.name}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        graded.add(r.session_id);
-        const s = stats.get(r.name) ?? { passed: 0, total: 0 };
-        s.total += 1;
-        if (r.passed !== null && asBool(r.passed)) s.passed += 1;
-        stats.set(r.name, s);
-      }
+      const counts = new Map(
+        (await passCounts(db, workspaceId, { from: since })).map((c) => [c.rubric, c]),
+      );
       const { rubrics: current } = await rubrics.list();
       return {
-        sessionsGraded: graded.size,
+        sessionsGraded: await gradedSessionCount(db, workspaceId, since),
         rubrics: current.map((r) => {
-          const s = stats.get(r.name);
+          const c = counts.get(r.name);
           return {
             name: r.name,
-            passRate: s && s.total > 0 ? s.passed / s.total : null,
+            passRate: c && c.graded > 0 ? c.passed / c.graded : null,
             target: r.target ?? DEFAULT_TARGET,
-            gradedCount: s?.total ?? 0,
+            gradedCount: c?.graded ?? 0,
           };
         }),
+      };
+    },
+
+    /** Pass and graded counts per rubric (and quarter-hour) for the trend series and change windows. */
+    passCounts: (q: PassCountQuery) => passCounts(db, workspaceId, q),
+
+    /** Totals for many (rubric, window) pairs in one pass; see `passCountsInRanges`. */
+    passCountsInRanges: (ranges: readonly RangeCount[]) =>
+      passCountsInRanges(db, workspaceId, ranges),
+
+    /**
+     * Failing grades (status ok, passed false, still the newest of their rubric for the session)
+     * made since `since`. Rubrics that have not passed the calibration gate are counted apart.
+     */
+    async failedGradesSince(since: Date): Promise<FailedGrades> {
+      const rows = await db
+        .selectFrom('grade')
+        .innerJoin('session', 'session.id', 'grade.session_id')
+        .select(['session.id', 'session.title', 'session.repo_root', 'session.cwd'])
+        .distinct()
+        .where('grade.workspace_id', '=', workspaceId)
+        .where('grade.status', '=', 'ok')
+        .where('grade.passed', '=', false)
+        .where('grade.graded_at', '>=', since.toISOString())
+        .execute();
+      const latest = await latestGrades(
+        db,
+        workspaceId,
+        rows.map((r) => r.id),
+        await trustedNames(),
+      );
+      const failures: FailedGrade[] = [];
+      const untrusted = new Map<string, number>();
+      for (const s of rows) {
+        for (const g of latest.get(s.id) ?? []) {
+          if (g.status !== 'ok' || g.passed !== false || g.gradedAt < since.toISOString()) continue;
+          if (!g.trusted) {
+            untrusted.set(g.rubric, (untrusted.get(g.rubric) ?? 0) + 1);
+            continue;
+          }
+          failures.push({
+            sessionId: s.id,
+            rubric: g.rubric,
+            rubricSha: g.rubricSha,
+            reason: g.reason,
+            evidenceEventIds: g.evidenceEventIds,
+            gradedAt: g.gradedAt,
+            sessionTitle: s.title ?? '',
+            repoRoot: s.repo_root,
+            cwd: s.cwd,
+          });
+        }
+      }
+      failures.sort(
+        (a, b) => a.sessionId.localeCompare(b.sessionId) || a.rubric.localeCompare(b.rubric),
+      );
+      return {
+        failures,
+        untrusted: [...untrusted]
+          .map(([rubric, n]) => ({ rubric, failures: n }))
+          .sort((a, b) => a.rubric.localeCompare(b.rubric)),
       };
     },
 

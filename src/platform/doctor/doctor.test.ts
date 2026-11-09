@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  checkChangeScan,
+  checkClock,
   checkData,
   checkGh,
   checkGitIdentity,
@@ -43,6 +45,7 @@ function input(over: Partial<DoctorInput> = {}): DoctorInput {
     db: {},
     sources: [],
     repos: [],
+    scanWarnings: [],
     rubricProblems: [],
     judge: judge(),
     env: {},
@@ -190,6 +193,15 @@ describe('judge check', () => {
   });
 });
 
+describe('clock check', () => {
+  it('is silent on the real clock and warns on a fixed one', () => {
+    expect(checkClock({ fixedNow: undefined })).toBeNull();
+    const c = checkClock({ fixedNow: '2026-11-09T08:00:00Z' });
+    expect(c?.status).toBe('warn');
+    expect(c?.detail).toContain('2026-11-09T08:00:00Z');
+  });
+});
+
 describe('redaction check', () => {
   it('warns when redaction is off and says what that means for grading', () => {
     expect(checkRedaction(input()).status).toBe('ok');
@@ -197,6 +209,16 @@ describe('redaction check', () => {
       status: 'warn',
       detail: expect.stringContaining('never sent to a judge'),
     });
+  });
+});
+
+describe('change scan check', () => {
+  it('says nothing when the scan is clean and warns with the scan warning otherwise', () => {
+    expect(checkChangeScan(input())).toEqual([]);
+    const [c] = checkChangeScan(
+      input({ scanWarnings: [{ path: '/r', warning: 'History rewritten on /r' }] }),
+    );
+    expect(c).toMatchObject({ status: 'warn', detail: 'History rewritten on /r' });
   });
 });
 

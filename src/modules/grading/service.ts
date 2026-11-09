@@ -103,18 +103,25 @@ export function createGrader(deps: GraderDeps) {
     force?: boolean;
     /** Skip when a grade of this rubric exists that is newer than this time (a resumed batch). */
     skipIfGradedSince?: Date;
+    /** `reference`: a re-grade of the reference set; it never replaces a standard grade (trends count those). */
+    origin?: 'standard' | 'reference';
   }): Promise<GradeOutcome> {
     const { sessionId, rubric } = input;
+    const origin = input.origin ?? 'standard';
     const judge = await deps.judge();
     if (input.purpose === 'grade') {
       // Keyed by the model asked for, not the one that answered, so a fallback does not hide the grade.
-      const existing = await db
+      let existing = await db
         .selectFrom('grade')
-        .select(['graded_at', 'status'])
+        .select(['graded_at', 'status', 'origin'])
         .where('session_id', '=', sessionId)
         .where('rubric_version', '=', rubric.version)
         .where('judge_model', '=', judge.model)
         .executeTakeFirst();
+      // A reference grade never overwrites a standard one; a standard grade replaces a reference one.
+      if (origin === 'reference' && existing && existing.origin !== 'reference')
+        return { kind: 'skipped', reason: 'already graded' };
+      if (origin !== 'reference' && existing?.origin === 'reference') existing = undefined;
       const since = input.skipIfGradedSince?.toISOString();
       const fresh = existing !== undefined && since !== undefined && existing.graded_at >= since;
       // A stale grade (its evidence is gone after a re-ingest) is due again.
@@ -268,12 +275,17 @@ export function createGrader(deps: GraderDeps) {
         evidenceEventIds: evidence.ids,
       };
     }
-    if (input.purpose === 'grade') await persist(verdict, rubric, callId);
+    if (input.purpose === 'grade') await persist(verdict, rubric, callId, origin);
     return { kind: 'graded', verdict };
   }
 
   /** Unique per (session, rubric version, requested judge model): a re-grade replaces the row. */
-  async function persist(v: Verdict, rubric: Rubric, callId: string): Promise<void> {
+  async function persist(
+    v: Verdict,
+    rubric: Rubric,
+    callId: string,
+    origin: 'standard' | 'reference',
+  ): Promise<void> {
     await db.transaction().execute(async (tx) => {
       await tx
         .deleteFrom('grade')
@@ -299,6 +311,7 @@ export function createGrader(deps: GraderDeps) {
           status: v.status,
           llm_call_id: callId === '' ? null : callId,
           graded_at: now().toISOString(),
+          origin,
         })
         .execute();
     });

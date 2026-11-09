@@ -23,7 +23,8 @@ import {
   PageHeader,
   VerdictChip,
 } from '../components/ui.js';
-import { formatTokens, formatWhen, titleText } from '../lib/format.js';
+import { formatTokens, formatWhen, plural, titleText } from '../lib/format.js';
+import { rubricLabel } from '../lib/trends.js';
 import {
   composeRubricFile,
   NEW_RUBRIC_BODY,
@@ -86,8 +87,11 @@ function RubricList({
             className={`flex min-h-11 flex-col gap-0.5 rounded-[10px] border p-3 text-left font-[inherit] text-ink ${on ? 'border-accent bg-accent-soft' : 'border-line bg-surface hover:bg-sunken'}`}
           >
             <span className="flex items-center justify-between gap-2">
-              <span className={on ? 'font-semibold' : ''}>{r.name}</span>
+              <span className={on ? 'font-semibold' : ''}>{rubricLabel(r.name)}</span>
               <span className="text-xs text-muted">v{r.version}</span>
+            </span>
+            <span className="truncate font-mono text-xs text-muted" title={r.name}>
+              {r.name}
             </span>
             <span
               className="flex items-center gap-1.5 text-xs whitespace-nowrap text-muted"
@@ -281,7 +285,7 @@ function RubricEditor({
             dry.mutate();
           }}
         >
-          {dry.isPending ? 'Running…' : `Dry-run on ${String(dryIds.length)} sessions`}
+          {dry.isPending ? 'Running…' : `Dry-run on ${plural(dryIds.length, 'session')}`}
         </Button>
         {ids.calibration.length ? (
           <label className="flex items-center gap-2 text-[13px] text-muted">
@@ -316,7 +320,7 @@ function RubricEditor({
       {dry.data ? <DryRunResults result={dry.data} titles={titles} /> : null}
       <details className="text-[13px]">
         <summary className="w-fit cursor-pointer text-accent">
-          History ({detail.versions.length} versions)
+          History ({plural(detail.versions.length, 'version')})
         </summary>
         <ol className="m-0 mt-2 flex list-none flex-col gap-1 p-0 text-muted">
           {[...detail.versions]
@@ -342,7 +346,7 @@ function DryRunResults({ result, titles }: { result: DryRunResult; titles: Map<s
       <p className="m-0 text-xs text-muted">
         Used {formatTokens(result.usage.tokens)} tokens. Nothing is saved as a grade.
         {result.skipped.length > 0
-          ? ` ${String(result.skipped.length)} sessions were skipped: ${result.skipped[0]?.reason ?? ''}`
+          ? ` ${plural(result.skipped.length, 'session')} skipped: ${result.skipped[0]?.reason ?? ''}`
           : ''}
       </p>
       <table className="w-full table-fixed border-collapse">
@@ -411,8 +415,8 @@ function Calibration({ detail }: { detail: RubricDetail }) {
       className="flex min-w-0 flex-[2_1_300px] flex-col gap-3 rounded-xl border border-line bg-surface p-4"
     >
       <h2 className="m-0 text-base font-semibold">Calibration</h2>
-      <div className="flex items-baseline gap-2">
-        <span className="text-[28px] leading-tight font-bold">
+      <div className="flex flex-wrap items-baseline gap-x-2">
+        <span className="text-[28px] leading-tight font-bold whitespace-nowrap">
           {agree} / {total < NEEDED ? NEEDED : total}
         </span>
         <span className="text-[13px] text-muted">judge agrees with your labels</span>
@@ -424,16 +428,19 @@ function Calibration({ detail }: { detail: RubricDetail }) {
         {detail.trusted
           ? 'The improver may use this rubric.'
           : total < NEEDED
-            ? `Gate: label ${String(NEEDED - total)} more sessions, then ${String(GATE)} / ${String(NEEDED)} must agree before the improver may use this rubric.`
+            ? `Gate: label ${plural(NEEDED - total, 'more session')}, then ${String(GATE)} / ${String(NEEDED)} must agree before the improver may use this rubric.`
             : `Gate: needs ${String(GATE)} / ${String(NEEDED)} before the improver may use this rubric.`}
+      </p>
+      <p className="m-0 text-xs text-muted">
+        Only labels on sessions graded with the current rubric version (v{detail.version}) count.
       </p>
       {detail.calibration.length ? (
         <table className="w-full table-fixed border-collapse">
           <caption className="sr-only">Calibration labels</caption>
           <colgroup>
             <col />
-            <col className="w-[4.5rem]" />
-            <col className="w-[4.5rem]" />
+            <col className="w-16" />
+            <col className="w-16" />
           </colgroup>
           <thead>
             <tr>
@@ -445,11 +452,11 @@ function Calibration({ detail }: { detail: RubricDetail }) {
           <tbody>
             {rows.map((c) => (
               <tr key={c.sessionId} className={c.agrees === false ? 'row-disagree' : ''}>
-                <td className="truncate" title={titleText(c.title)}>
+                <td className="whitespace-normal" title={titleText(c.title)}>
                   <Link
                     to="/sessions/$sessionId"
                     params={{ sessionId: c.sessionId }}
-                    className="text-ink no-underline hover:underline"
+                    className="line-clamp-2 text-ink no-underline hover:underline"
                   >
                     {titleText(c.title)}
                   </Link>
@@ -493,7 +500,6 @@ function Calibration({ detail }: { detail: RubricDetail }) {
       {adding ? (
         <LabelForm
           rubric={detail.name}
-          defaultPassed={true}
           skip={detail.calibration.map((c) => c.sessionId)}
           onDone={() => {
             setAdding(false);
