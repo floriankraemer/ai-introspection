@@ -45,7 +45,7 @@ function build(x: Seed): Proposal {
     rubric: x.rubricNames[0] ?? '',
     clusterSize: sessions,
     acceptMode: 'merge',
-    validation: { ok: true, problems: [] },
+    validation: { ok: true, problems: [], warnings: [] },
     mergeCommit: null,
     rejectReason: null,
     prUrl: null,
@@ -116,6 +116,13 @@ function seed(): Proposal[] {
       targetPath: '.claude/settings.json',
       rubricNames: ['redundant-tests'],
       rationale: 'The triage skill spawned sub-agents that the permissions denied, then retried.',
+      validation: {
+        ok: true,
+        problems: [],
+        warnings: [
+          '".claude/settings.json" changes a hook/settings file that Claude Code executes',
+        ],
+      },
       sessions: 4,
       ago: 4,
       reasons: ['Same denied tool call (Task) in all 4 sessions.'],
@@ -223,11 +230,50 @@ export function createProposalsApi(
           clustersSkipped: 1,
           untrustedRubrics: ['efficiency'],
           error: null,
-          summary: null,
+          summary: {
+            since: new Date(Date.now() - 27 * H).toISOString(),
+            failedGrades: 21,
+            untrustedExcluded: [{ rubric: 'efficiency', failures: 6 }],
+            skippedSessions: [],
+            clusters: [
+              {
+                id: 'c-p1',
+                rubric: 'silent-workaround',
+                summary: 'e2e-testing skill: find the dev-server port first',
+                sessionIds: ids(12),
+                target: { ...GLOBAL },
+                outcome: 'proposed',
+                detail: 'Proposed a change to skills/e2e-testing/SKILL.md.',
+                proposalId: 'p1',
+              },
+              {
+                id: 'c-old',
+                rubric: 'verbosity',
+                summary: 'release notes ramble',
+                sessionIds: ids(3),
+                target: { ...PROJECT },
+                outcome: 'declined',
+                detail:
+                  'declined on 2026-11-02 for these same sessions; the proposal was rejected as too narrow.',
+                proposalId: null,
+              },
+              {
+                id: 'c-big',
+                rubric: 'efficiency',
+                summary: 'long refactor sessions',
+                sessionIds: ids(4),
+                target: { ...GLOBAL },
+                outcome: 'failed',
+                detail: 'budget: stopped after 12 turns without a diff.',
+                proposalId: null,
+              },
+            ],
+          },
         },
       ]
     : [];
   let dirtyOnce = true;
+  let closeFailsOnce = true;
   const find = (id: string) => {
     const p = proposals.find((x) => x.id === id);
     if (!p) throw new ApiError(404, 'Not found', `No proposal ${id}`);
@@ -259,7 +305,7 @@ export function createProposalsApi(
         diff,
         status: 'open',
         decisionNote: null,
-        validation: { ok: true, problems: [] },
+        validation: { ok: true, problems: [], warnings: find(id).validation.warnings },
       });
     },
     async acceptProposal(id) {
@@ -286,6 +332,16 @@ export function createProposalsApi(
     },
     async rejectProposal(id, reason) {
       await wait();
+      if (id === 'p2' && closeFailsOnce) {
+        closeFailsOnce = false;
+        throw new ApiError(
+          409,
+          'Closing the pull request failed',
+          'Closing the pull request failed: gh exited with 1 (HTTP 401).',
+          [],
+          'Run `gh auth login` on the host, then reject again.',
+        );
+      }
       return update(id, {
         status: 'rejected',
         rejectReason: reason,

@@ -505,7 +505,7 @@ function RepoList({ repos }: { repos: SkillRepo[] }) {
   const patch = usePatchSkillRepo();
   if (repos.length === 0) return null;
   return (
-    <ul aria-label="Skills repos" className="m-0 flex list-none flex-col gap-2 p-0 text-sm">
+    <ul aria-label="Skills repos" className="m-0 flex list-none flex-col gap-4 p-0 text-sm">
       {repos.map((r) => (
         <li key={r.id} className="flex flex-wrap items-center justify-between gap-2">
           <span className="flex min-w-0 items-center gap-2">
@@ -531,6 +531,32 @@ function RepoList({ repos }: { repos: SkillRepo[] }) {
               <option value="pr">Opening a pull request</option>
             </select>
           </label>
+          <div className="flex basis-full flex-col gap-1 text-xs text-muted">
+            <label className="flex items-center gap-2 text-sm text-ink">
+              <input
+                type="checkbox"
+                checked={r.allowExecutable}
+                disabled={patch.isPending}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  if (
+                    on &&
+                    !window.confirm(
+                      `Allow hooks, settings and scripts in ${r.path}? Claude Code executes these files. Proposals that change them will be flagged for review.`,
+                    )
+                  )
+                    return;
+                  patch.mutate({ id: r.id, allowExecutable: on });
+                }}
+              />
+              Allow hooks, settings and scripts
+              <span className="sr-only"> for {r.path}</span>
+            </label>
+            <span className="text-warn">
+              Claude Code executes these files. Proposals that touch them will be flagged and need
+              an explicit confirmation to accept.
+            </span>
+          </div>
         </li>
       ))}
     </ul>

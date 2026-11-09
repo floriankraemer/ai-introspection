@@ -146,7 +146,11 @@ export interface Api {
   copyStarterRubrics(): Promise<{ copied: string[] }>;
   patchSkillRepo(
     id: string,
-    body: { enabled?: boolean; acceptMode?: SkillRepo['acceptMode'] },
+    body: {
+      enabled?: boolean;
+      acceptMode?: SkillRepo['acceptMode'];
+      allowExecutable?: boolean;
+    },
   ): Promise<SkillRepo>;
   startImport(): Promise<Job>;
   getJob(id: string): Promise<Job>;

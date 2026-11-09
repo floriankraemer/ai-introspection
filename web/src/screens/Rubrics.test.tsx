@@ -1,9 +1,16 @@
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { renderApp } from '../test-utils.js';
 
-const editor = () => screen.findByRole('textbox', { name: 'Rubric body (markdown)' });
+// The editor is a lazily loaded chunk and CodeMirror applies text asynchronously, so under load
+// both the element and its content can lag the default 1 s timeout.
+const SLOW = { timeout: 8000 };
+const editor = () => screen.findByRole('textbox', { name: 'Rubric body (markdown)' }, SLOW);
+const editorHas = (text: string) =>
+  waitFor(() => {
+    expect(screen.getByRole('textbox', { name: 'Rubric body (markdown)' })).toHaveTextContent(text);
+  }, SLOW);
 
 describe('Rubrics', () => {
   it('lists rubrics with their calibration gate and shows the selected one', async () => {
@@ -14,7 +21,7 @@ describe('Rubrics', () => {
     );
     expect(within(nav).getAllByText('trusted')).toHaveLength(2);
     // The lazily loaded CodeMirror editor shows the file, frontmatter included.
-    expect(await editor()).toHaveTextContent('pass_threshold: 0.6');
+    await editorHas('pass_threshold: 0.6');
     expect(screen.getByLabelText('Pass threshold')).toHaveValue(0.6);
   });
 
@@ -28,7 +35,7 @@ describe('Rubrics', () => {
     const threshold = screen.getByLabelText('Pass threshold');
     await user.clear(threshold);
     await user.type(threshold, '0.8');
-    expect(await editor()).toHaveTextContent('pass_threshold: 0.8');
+    await editorHas('pass_threshold: 0.8');
     const message = screen.getByLabelText('Commit message');
     await user.clear(message);
     await user.type(message, 'Raise the bar');
@@ -36,8 +43,8 @@ describe('Rubrics', () => {
 
     expect(await screen.findByText(/Saved as v4 and committed/)).toBeInTheDocument();
     // The whole file was sent, so the frontmatter survives the round trip.
-    expect(await editor()).toHaveTextContent('name: efficiency');
-    expect(await editor()).toHaveTextContent('pass_threshold: 0.8');
+    await editorHas('name: efficiency');
+    await editorHas('pass_threshold: 0.8');
     expect(screen.getByRole('button', { name: 'Save as v5 (commit)' })).toBeDisabled();
     await user.click(screen.getByText(/History \(4 versions\)/));
     expect(screen.getByText(/Raise the bar/)).toBeInTheDocument();

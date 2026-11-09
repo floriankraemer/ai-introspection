@@ -85,6 +85,9 @@ describe('Proposals', () => {
     const user = userEvent.setup();
     renderApp('/proposals');
     await user.click(await screen.findByRole('button', { name: /settings.json/ }));
+    await user.click(
+      await screen.findByRole('checkbox', { name: 'I reviewed the executable change' }),
+    );
     await user.click(await screen.findByRole('button', { name: 'Merge into main' }));
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('uncommitted changes');
@@ -115,6 +118,52 @@ describe('Proposals', () => {
     expect(alert).toHaveTextContent('The diff has no "+++ b/<path>" file header.');
     // The draft is kept so it can be fixed.
     expect(screen.getByRole('textbox', { name: 'Diff (unified)' })).toHaveValue('just prose');
+  });
+
+  it('flags an executable change above the diff and gates Accept on a confirmation', async () => {
+    const user = userEvent.setup();
+    renderApp('/proposals');
+    await user.click(await screen.findByRole('button', { name: /settings.json/ }));
+    const warning =
+      '".claude/settings.json" changes a hook/settings file that Claude Code executes';
+    const notes = await screen.findAllByText(warning);
+    // Once above the diff, once next to the accept button.
+    expect(notes).toHaveLength(2);
+    const diffHeading = screen.getByRole('heading', { name: 'Diff' });
+    expect(
+      notes[0]?.compareDocumentPosition(diffHeading) === Node.DOCUMENT_POSITION_FOLLOWING ||
+        diffHeading.compareDocumentPosition(notes[0] as Node) === Node.DOCUMENT_POSITION_PRECEDING,
+    ).toBe(true);
+    const accept = screen.getByRole('button', { name: 'Merge into main' });
+    expect(accept).toBeDisabled();
+    await user.click(screen.getByRole('checkbox', { name: 'I reviewed the executable change' }));
+    expect(accept).toBeEnabled();
+    // A proposal without warnings has no gate.
+    await user.click(screen.getByRole('button', { name: /e2e-testing skill/ }));
+    expect(await screen.findByRole('button', { name: 'Merge into main' })).toBeEnabled();
+    expect(screen.queryByRole('checkbox', { name: /reviewed/ })).not.toBeInTheDocument();
+  });
+
+  it('shows a 409 from reject with its fix, and the retry works', async () => {
+    const user = userEvent.setup();
+    renderApp('/proposals');
+    await user.click(await screen.findByRole('button', { name: /changelog skill/ }));
+    await user.click(await screen.findByRole('button', { name: 'Reject with reason…' }));
+    await user.type(screen.getByLabelText('Reason for rejecting'), 'Not now');
+    await user.click(screen.getByRole('button', { name: 'Reject proposal' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Closing the pull request failed');
+    expect(alert).toHaveTextContent('How to fix: Run `gh auth login`');
+    await user.click(screen.getByRole('button', { name: 'Reject proposal' }));
+    expect(await screen.findByText('Rejected: Not now')).toBeVisible();
+  });
+
+  it('lists the cluster outcomes of the last run', async () => {
+    const user = userEvent.setup();
+    renderApp('/proposals');
+    await user.click(await screen.findByText('Cluster outcomes (3)'));
+    expect(screen.getByText(/declined on 2026-11-02 for these same sessions/)).toBeVisible();
+    expect(screen.getByText(/budget: stopped after 12 turns/)).toBeVisible();
   });
 
   it('rejects with a reason', async () => {

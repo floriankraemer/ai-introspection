@@ -2471,7 +2471,7 @@ export interface paths {
     delete?: never;
     options?: never;
     head?: never;
-    /** Edit first: replace the diff. It is validated like an improver diff, must apply to the base commit, and amends the proposal branch */
+    /** Edit first: replace the diff. It is validated like an improver diff (422 with the reason: a path outside the allow-list, an executable surface, a symlink, an invisible character, a secret, or a diff that changes nothing), must apply to the base commit (422), and replaces the proposal branch only when every check passed. 409 when the proposal is not open or a pull request is open */
     patch: {
       parameters: {
         query?: never;
@@ -2639,7 +2639,7 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Reject with a reason; the branch is deleted */
+    /** Reject an open or conflicting proposal with a reason; the branch is deleted, and an open pull request is closed with `gh pr close --delete-branch` (409 with a fix when that fails). 409 when the proposal is already decided */
     post: {
       parameters: {
         query?: never;
@@ -3551,7 +3551,7 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Register a project repository (below the mounted projects folder) so the improver can propose `.claude/**`, CLAUDE.md and AGENTS.md changes there */
+    /** Register a project repository (below the mounted projects folder) so the improver can propose `.claude/skills|commands|agents/**`, CLAUDE.md and AGENTS.md changes there */
     post: {
       parameters: {
         query?: never;
@@ -3642,7 +3642,7 @@ export interface paths {
     delete?: never;
     options?: never;
     head?: never;
-    /** Enable or disable a skills repository, and set (`merge` or `pr`) or clear (`null`) its accept-mode override */
+    /** Enable or disable a skills repository, set (`merge` or `pr`) or clear (`null`) its accept-mode override, and allow or deny executable instruction surfaces (hooks, settings, scripts) */
     patch: {
       parameters: {
         query?: never;
@@ -3658,6 +3658,7 @@ export interface paths {
             enabled?: boolean;
             /** @enum {string|null} */
             acceptMode?: 'merge' | 'pr' | null;
+            allowExecutable?: boolean;
           };
         };
       };
@@ -4011,6 +4012,7 @@ export interface components {
       validation: {
         ok: boolean;
         problems: string[];
+        warnings: string[];
       };
       mergeCommit: string | null;
       rejectReason: string | null;
@@ -4099,6 +4101,7 @@ export interface components {
       enabled: boolean;
       /** @enum {string|null} */
       acceptMode: 'merge' | 'pr' | null;
+      allowExecutable: boolean;
     };
   };
   responses: never;

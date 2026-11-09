@@ -92,6 +92,21 @@ function LastRun({ run }: { run: ImproverRun }) {
           : ''}
         .
       </p>
+      {run.summary && run.summary.clusters.length > 0 ? (
+        <details>
+          <summary className="w-fit cursor-pointer text-accent">
+            Cluster outcomes ({String(run.summary.clusters.length)})
+          </summary>
+          <ul className="m-0 mt-1 flex list-none flex-col gap-1 p-0">
+            {run.summary.clusters.map((c) => (
+              <li key={c.id}>
+                <strong>{c.outcome}</strong> · {c.rubric} · {c.summary} (
+                {String(c.sessionIds.length)} sessions): {c.detail}
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
       <NextRun className="!text-[13px]" />
       {run.untrustedRubrics.length > 0 ? (
         <p className="m-0 text-warn">
@@ -160,7 +175,27 @@ function Problems({ items, title }: { items: string[]; title: string }) {
   );
 }
 
+function Warnings({ items }: { items: string[] }) {
+  if (items.length === 0) return null;
+  return (
+    <div
+      role="note"
+      aria-label="Executable change"
+      className="flex gap-2 rounded-lg border border-warn-line bg-warn-bg p-3 text-[13px] text-warn"
+    >
+      <span aria-hidden="true">⚠</span>
+      <ul className="m-0 flex list-none flex-col gap-1 p-0">
+        {items.map((w) => (
+          <li key={w}>{w}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function ActionError({ error }: { error: unknown }) {
+  if (error instanceof ApiError && error.status === 422)
+    return <Problems title={error.detail ?? error.title} items={error.problems} />;
   if (error instanceof ApiError && error.status === 409)
     return (
       <div
@@ -197,6 +232,8 @@ function Actions({
     refreshAll: true,
   });
   const busy = accept.isPending || save.isPending || reject.isPending;
+  const warnings = p.validation.warnings;
+  const [reviewed, setReviewed] = useState(false);
 
   if (mode === 'edit')
     return (
@@ -253,7 +290,7 @@ function Actions({
   return (
     <div className="flex flex-col gap-3">
       {accept.error ? <ActionError error={accept.error} /> : null}
-      {reject.error ? <ErrorState error={reject.error} /> : null}
+      {reject.error ? <ActionError error={reject.error} /> : null}
       {mode === 'reject' ? (
         <form
           className="flex flex-col gap-2"
@@ -288,34 +325,49 @@ function Actions({
           </div>
         </form>
       ) : (
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="primary"
-            disabled={busy || !p.validation.ok}
-            onClick={() => {
-              accept.mutate(undefined, { onSuccess: onDone });
-            }}
-          >
-            {accept.isPending ? 'Working…' : label}
-          </Button>
-          <Button
-            disabled={busy}
-            onClick={() => {
-              setDraft(p.diff);
-              setMode('edit');
-            }}
-          >
-            Edit first
-          </Button>
-          <Button
-            disabled={busy}
-            onClick={() => {
-              setMode('reject');
-            }}
-          >
-            Reject with reason…
-          </Button>
-        </div>
+        <>
+          <Warnings items={warnings} />
+          {warnings.length > 0 ? (
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={reviewed}
+                onChange={(e) => {
+                  setReviewed(e.target.checked);
+                }}
+              />
+              I reviewed the executable change
+            </label>
+          ) : null}
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="primary"
+              disabled={busy || !p.validation.ok || (warnings.length > 0 && !reviewed)}
+              onClick={() => {
+                accept.mutate(undefined, { onSuccess: onDone });
+              }}
+            >
+              {accept.isPending ? 'Working…' : label}
+            </Button>
+            <Button
+              disabled={busy}
+              onClick={() => {
+                setDraft(p.diff);
+                setMode('edit');
+              }}
+            >
+              Edit first
+            </Button>
+            <Button
+              disabled={busy}
+              onClick={() => {
+                setMode('reject');
+              }}
+            >
+              Reject with reason…
+            </Button>
+          </div>
+        </>
       )}
     </div>
   );
@@ -418,6 +470,7 @@ function Detail({ id, onDone }: { id: string; onDone: () => void }) {
           </div>
           {mode === 'edit' ? null : (
             <div className="flex flex-col gap-1.5">
+              <Warnings items={p.validation.warnings} />
               <h3 className="m-0 text-sm font-semibold">Diff</h3>
               <DiffView diff={p.diff} />
             </div>

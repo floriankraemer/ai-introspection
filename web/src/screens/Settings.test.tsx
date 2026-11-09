@@ -1,9 +1,38 @@
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderApp } from '../test-utils.js';
 
 describe('Settings', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('confirms before allowing executable files, and turns it off without asking', async () => {
+    const user = userEvent.setup();
+    // happy-dom has no window.confirm to spy on.
+    const confirm = vi.fn().mockReturnValueOnce(false).mockReturnValue(true);
+    vi.stubGlobal('confirm', confirm);
+    renderApp('/settings');
+    const toggle = await screen.findByRole('checkbox', {
+      name: /Allow hooks, settings and scripts for ~\/dev\/agent-skills/,
+    });
+    expect(toggle).not.toBeChecked();
+    expect(screen.getAllByText(/Claude Code executes these files/)).not.toHaveLength(0);
+    await user.click(toggle);
+    expect(toggle).not.toBeChecked();
+    await user.click(toggle);
+    await waitFor(() => {
+      expect(toggle).toBeChecked();
+    });
+    expect(confirm).toHaveBeenCalledTimes(2);
+    await user.click(toggle);
+    await waitFor(() => {
+      expect(toggle).not.toBeChecked();
+    });
+    expect(confirm).toHaveBeenCalledTimes(2);
+  });
+
   it('shows defaults, autosaves a change and keeps team mode disabled', async () => {
     const user = userEvent.setup();
     renderApp('/settings');
@@ -93,9 +122,9 @@ describe('Settings', () => {
     await user.click(add);
     expect(await screen.findByRole('alert')).toHaveTextContent('Enter an absolute path');
     await user.clear(screen.getByLabelText('Project repo path'));
-    await user.type(screen.getByLabelText('Project repo path'), '~/projects/web-app');
+    await user.type(screen.getByLabelText('Project repo path'), '~/projects/api');
     await user.click(add);
-    expect(await screen.findByLabelText('Accept mode for ~/projects/web-app')).toHaveValue('');
+    expect(await screen.findByLabelText('Accept mode for ~/projects/api')).toHaveValue('');
   });
 
   it('shows what the improver used inside the budget line', async () => {

@@ -363,6 +363,16 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
           hasRubrics: true,
           enabled: true,
           acceptMode: null,
+          allowExecutable: false,
+        },
+        {
+          id: 'repo-web',
+          kind: 'project',
+          path: '~/projects/web-app',
+          hasRubrics: false,
+          enabled: true,
+          acceptMode: null,
+          allowExecutable: true,
         },
       ];
   const jobs = new Map<string, Job>();
@@ -597,6 +607,7 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
         hasRubrics: false,
         enabled: true,
         acceptMode: null,
+        allowExecutable: false,
       };
       repos = [repo, ...repos.filter((r) => r.kind === 'project')];
       return repo;
@@ -616,6 +627,7 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
         hasRubrics: true,
         enabled: true,
         acceptMode: null,
+        allowExecutable: false,
       };
       repos = [repo, ...repos.filter((r) => r.kind === 'project')];
       return repo;
@@ -651,6 +663,7 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
         hasRubrics: false,
         enabled: true,
         acceptMode: null,
+        allowExecutable: false,
       };
       repos = [...repos, repo];
       return repo;
