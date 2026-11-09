@@ -9,7 +9,7 @@ import { finalizeSession } from './finalize.js';
 import { adapterFor } from './adapters/index.js';
 import { ingestFile, SESSION_IDLE_MS, type PipelineDeps } from './pipeline.js';
 import { loadOrCreateRedactionKey, REDACTION_VERSION } from './redaction.js';
-import { purgeFinishedJobs, purgePayloads, pinSession } from './retention.js';
+import { purgeFinishedJobs, purgePayloads, pinSession, setReference } from './retention.js';
 import { createSessionQueries } from './sessions.js';
 import { createSources, detectSources, listSessionFiles, type SourceDto } from './sources.js';
 import { createWatcher, type SourceWatcher } from './watcher.js';
@@ -304,6 +304,8 @@ export function createIngest(deps: IngestDeps) {
     handlers,
     schedules,
     pinSession: (id: string) => pinSession(db, workspaceId, id),
+    setReference: (id: string, member: boolean, max: number) =>
+      setReference(db, workspaceId, id, member, max),
     purgePayloads: (days: number) => purgePayloads(db, workspaceId, days, now()),
     reconcile,
     importAll,

@@ -6,8 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createSkillRepos } from '../../modules/improvement/index.js';
 import { createIngest } from '../../modules/ingest/index.js';
 import { createSecretStore, createSettings } from '../../modules/settings/index.js';
-import { createTrends } from '../../modules/trends/index.js';
-import { wireGrading, wireImprovement } from './wire-grading.js';
+import { wireGrading, wireImprovement, wireTrends } from './wire-grading.js';
 import { LOCAL_USER_ID, LOCAL_WORKSPACE_ID } from '../identity/index.js';
 import { createJobQueue } from '../jobs/queue.js';
 import { sqliteTestDb, type TestDb } from '../testkit/db.js';
@@ -67,7 +66,7 @@ beforeAll(async () => {
     improvement,
     rubrics,
     judges,
-    trends: createTrends(ingest, grading),
+    trends: wireTrends({ db: t.handle.db, ingest, settings, skillRepos, grading, rubrics, judges }),
     skillRepos,
     doctor: () =>
       Promise.resolve({
@@ -195,6 +194,47 @@ describe('api behaviour', () => {
     const missing = await get('/v1/jobs/018f0000-0000-7000-8000-000000000000', bearer());
     expect(missing.status).toBe(404);
     expect(missing.headers.get('content-type')).toContain('application/problem+json');
+  });
+});
+
+describe('trends api', () => {
+  const post = (path: string, method = 'POST') =>
+    app.request(`${BASE}${path}`, { method, headers: bearer() });
+
+  it('serves the series with one bucket per week and all markers lists', async () => {
+    const res = await get('/v1/trends?weeks=4&bucket=week', bearer());
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      buckets: unknown[];
+      markers: unknown[];
+      baselineResets: unknown[];
+    };
+    expect(body.buckets).toHaveLength(4);
+    expect(body.markers).toEqual([]);
+    expect(body.baselineResets).toEqual([]);
+    expect(
+      ((await (await get('/v1/trends', bearer())).json()) as { buckets: unknown[] }).buckets,
+    ).toHaveLength(12);
+  });
+
+  it('refuses a range that is not 4, 12 or 26 weeks', async () => {
+    expect((await get('/v1/trends?weeks=5', bearer())).status).toBe(400);
+    expect((await get('/v1/trends?bucket=month', bearer())).status).toBe(400);
+  });
+
+  it('serves the change log and the reference set, empty at first', async () => {
+    expect(await (await get('/v1/trends/changes', bearer())).json()).toEqual([]);
+    expect(await (await get('/v1/trends/reference', bearer())).json()).toEqual({
+      target: 20,
+      items: [],
+    });
+  });
+
+  it('answers 409 to a re-grade of an empty reference set and 404 to an unknown session', async () => {
+    expect((await post('/v1/trends/reference-regrade')).status).toBe(409);
+    const missing = '018f0000-0000-7000-8000-000000000000';
+    expect((await post(`/v1/sessions/${missing}/reference`)).status).toBe(404);
+    expect((await post(`/v1/sessions/${missing}/reference`, 'DELETE')).status).toBe(404);
   });
 });
 

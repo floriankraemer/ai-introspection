@@ -11,6 +11,7 @@ import {
 } from '../../modules/improvement/index.js';
 import type { IngestService } from '../../modules/ingest/index.js';
 import { createRubrics } from '../../modules/rubrics/index.js';
+import { createTrends } from '../../modules/trends/index.js';
 import type { SettingsService } from '../../modules/settings/index.js';
 
 /** Rubric store, grading service and a judge provider around one fixed (fake by default) judge. */
@@ -75,5 +76,29 @@ export function wireImprovement(deps: {
     hasSecret: deps.hasSecret ?? (() => Promise.resolve(false)),
     ...(deps.gh && { gh: deps.gh }),
     ...(deps.env && { env: deps.env }),
+  });
+}
+
+/** The trends service over the same fake-judge wiring, for API tests. */
+export function wireTrends(deps: {
+  db: Db;
+  ingest: IngestService;
+  settings: SettingsService;
+  skillRepos: SkillRepos;
+  grading: ReturnType<typeof wireGrading>['grading'];
+  rubrics: ReturnType<typeof wireGrading>['rubrics'];
+  judges: ReturnType<typeof wireGrading>['judges'];
+  now?: () => Date;
+}) {
+  return createTrends({
+    db: deps.db,
+    workspaceId: LOCAL_WORKSPACE_ID,
+    settings: deps.settings,
+    ingest: deps.ingest,
+    grading: deps.grading,
+    rubrics: deps.rubrics,
+    judges: deps.judges,
+    skillRepos: deps.skillRepos,
+    ...(deps.now && { now: deps.now }),
   });
 }

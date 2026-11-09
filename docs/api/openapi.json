@@ -1570,6 +1570,308 @@
           "summary"
         ]
       },
+      "Trends": {
+        "type": "object",
+        "properties": {
+          "buckets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "start": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "rubrics": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "object",
+                    "properties": {
+                      "passRate": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      },
+                      "graded": {
+                        "type": "integer"
+                      },
+                      "passed": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "passRate",
+                      "graded",
+                      "passed"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "start",
+                "rubrics"
+              ]
+            }
+          },
+          "markers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "proposal_merged",
+                    "manual_edit",
+                    "rubric_changed"
+                  ]
+                },
+                "title": {
+                  "type": "string"
+                },
+                "proposalId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                },
+                "files": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "rubrics": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "at",
+                "kind",
+                "title",
+                "proposalId",
+                "files",
+                "rubrics"
+              ]
+            }
+          },
+          "baselineResets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "rubric": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "at",
+                "rubric",
+                "reason"
+              ]
+            }
+          }
+        },
+        "required": [
+          "buckets",
+          "markers",
+          "baselineResets"
+        ]
+      },
+      "TrendChange": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "proposal_merged",
+              "manual_edit",
+              "rubric_changed"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "proposalId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "rubrics": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "before": {
+            "type": "object",
+            "properties": {
+              "passRate": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "graded": {
+                "type": "integer"
+              },
+              "window": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "passRate",
+              "graded",
+              "window"
+            ]
+          },
+          "after": {
+            "type": "object",
+            "properties": {
+              "passRate": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "graded": {
+                "type": "integer"
+              },
+              "window": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "passRate",
+              "graded",
+              "window"
+            ]
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "improved",
+              "worse",
+              "no_change",
+              "too_early"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "at",
+          "kind",
+          "title",
+          "proposalId",
+          "files",
+          "rubrics",
+          "before",
+          "after",
+          "verdict"
+        ]
+      },
+      "ReferenceSet": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "integer"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "startedAt": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "grades": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "rubric": {
+                        "type": "string"
+                      },
+                      "passed": {
+                        "type": [
+                          "boolean",
+                          "null"
+                        ]
+                      },
+                      "status": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "rubric",
+                      "passed",
+                      "status"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "title",
+                "startedAt",
+                "grades"
+              ]
+            }
+          }
+        },
+        "required": [
+          "target",
+          "items"
+        ]
+      },
       "DoctorReport": {
         "type": "object",
         "properties": {
@@ -1890,6 +2192,16 @@
                         "pr"
                       ]
                     },
+                    "trends.window_days": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 60
+                    },
+                    "trends.min_graded": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 1000
+                    },
                     "judge.api_key_set": {
                       "type": "boolean"
                     }
@@ -1907,6 +2219,8 @@
                     "schedule.grade",
                     "schedule.improver",
                     "proposals.accept_mode",
+                    "trends.window_days",
+                    "trends.min_graded",
                     "judge.api_key_set"
                   ]
                 }
@@ -2015,6 +2329,16 @@
                       "merge",
                       "pr"
                     ]
+                  },
+                  "trends.window_days": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 60
+                  },
+                  "trends.min_graded": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1000
                   }
                 },
                 "additionalProperties": false
@@ -2107,6 +2431,16 @@
                         "pr"
                       ]
                     },
+                    "trends.window_days": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 60
+                    },
+                    "trends.min_graded": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 1000
+                    },
                     "judge.api_key_set": {
                       "type": "boolean"
                     }
@@ -2124,6 +2458,8 @@
                     "schedule.grade",
                     "schedule.improver",
                     "proposals.accept_mode",
+                    "trends.window_days",
+                    "trends.min_graded",
                     "judge.api_key_set"
                   ]
                 }
@@ -5134,6 +5470,471 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Well-formed but cannot be applied",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/trends": {
+      "get": {
+        "summary": "Pass rate per rubric over time, with change markers and baseline resets",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "default": 12
+            },
+            "required": false,
+            "name": "weeks",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "week",
+                "day"
+              ],
+              "default": "week"
+            },
+            "required": false,
+            "name": "bucket",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The series",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Trends"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Well-formed but cannot be applied",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/trends/changes": {
+      "get": {
+        "summary": "Change log: each change with the pass rate before and after it",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Newest change first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TrendChange"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Well-formed but cannot be applied",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/trends/reference": {
+      "get": {
+        "summary": "The reference set: pinned sessions that are re-graded after every change",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The members",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferenceSet"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Well-formed but cannot be applied",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/trends/reference-regrade": {
+      "post": {
+        "summary": "Re-grade the reference set with every current rubric (409 when it is empty)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "The grading job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Well-formed but cannot be applied",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}/reference": {
+      "post": {
+        "summary": "Add a session to the reference set (pins it; 409 when the set is full)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Added"
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Well-formed but cannot be applied",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Remove a session from the reference set (it stays pinned)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
           },
           "400": {
             "description": "Invalid request",

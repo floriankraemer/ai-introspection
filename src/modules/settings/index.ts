@@ -29,6 +29,10 @@ const keys = {
   'schedule.grade': z.enum(['session_end', 'pr_merge']),
   'schedule.improver': z.enum(['daily', 'weekly', 'manual']),
   'proposals.accept_mode': z.enum(['merge', 'pr']),
+  /** Days before and after a change that the Trends change log compares. */
+  'trends.window_days': z.number().int().min(1).max(60),
+  /** Fewest graded sessions after a change before a verdict is given. */
+  'trends.min_graded': z.number().int().min(1).max(1000),
 } as const;
 
 export const settingsPatchSchema = z.object(keys).partial().strict();
@@ -55,6 +59,8 @@ const DEFAULTS: Omit<Settings, 'judge.api_key_set'> = {
   'schedule.grade': 'session_end',
   'schedule.improver': 'daily',
   'proposals.accept_mode': 'merge',
+  'trends.window_days': 7,
+  'trends.min_graded': 10,
 };
 
 /**

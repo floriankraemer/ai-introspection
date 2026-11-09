@@ -10,7 +10,7 @@ import {
 import { createIngest, createRedactor, loadOrCreateRedactionKey } from '../modules/ingest/index.js';
 import { createRubrics } from '../modules/rubrics/index.js';
 import { createSecretStore, createSettings } from '../modules/settings/index.js';
-import { createTrends } from '../modules/trends/index.js';
+import { createTrends, TRENDS_SCAN_JOB } from '../modules/trends/index.js';
 import type { Config } from './config/index.js';
 import { openDatabase } from './db/connection.js';
 import { migrateToLatest } from './db/migrate.js';
@@ -240,9 +240,25 @@ export async function startServer(config: Config): Promise<RunningServer> {
     skillRepos,
     grading,
   );
+  const trends = createTrends({
+    db: handle.db,
+    workspaceId: LOCAL_WORKSPACE_ID,
+    settings,
+    ingest,
+    grading,
+    rubrics,
+    judges,
+    skillRepos,
+    timeZone: config.timeZone,
+  });
   const worker = createWorker({
     queue,
-    handlers: { ...ingest.handlers, ...grading.handlers, ...improvement.handlers },
+    handlers: {
+      ...ingest.handlers,
+      ...grading.handlers,
+      ...improvement.handlers,
+      ...trends.handlers,
+    },
     onError: (error, job) => {
       console.error(`job ${job.kind} ${job.id} failed`, error);
     },
@@ -251,7 +267,12 @@ export async function startServer(config: Config): Promise<RunningServer> {
     handle,
     queue,
     workspaceId: LOCAL_WORKSPACE_ID,
-    schedules: [...ingest.schedules, ...grading.schedules, ...improvement.schedules],
+    schedules: [
+      ...ingest.schedules,
+      ...grading.schedules,
+      ...improvement.schedules,
+      ...trends.schedules,
+    ],
   });
   const app = createApp({
     webDir: WEB_DIR,
@@ -264,7 +285,7 @@ export async function startServer(config: Config): Promise<RunningServer> {
     improvement,
     rubrics,
     judges,
-    trends: createTrends(ingest, grading),
+    trends,
     skillRepos,
     doctor: () =>
       doctorReport(config, handle, settings, ingest.sources, skillRepos, { rubrics, judges }),
@@ -276,6 +297,12 @@ export async function startServer(config: Config): Promise<RunningServer> {
   // A crash can leave worktrees and branches behind; clear them before any job can use them.
   await improvement.sweep().catch((e: unknown) => {
     console.error('improver housekeeping failed', e);
+  });
+  // Remember where each skills repository stands now, so a commit made after this start is a manual edit.
+  await queue.enqueue({
+    workspaceId: LOCAL_WORKSPACE_ID,
+    kind: TRENDS_SCAN_JOB,
+    idempotencyKey: `trends-scan:start:${new Date().toISOString()}`,
   });
   worker.start();
   scheduler.start();

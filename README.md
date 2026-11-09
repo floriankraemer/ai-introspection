@@ -63,7 +63,11 @@ Run it in the stack with `docker compose exec introspect introspect improve --no
   A repository can override the mode (`PATCH /v1/skill-repos/{id}` with `acceptMode`).
   Rejecting a proposal with an open pull request closes it (`gh pr close --delete-branch`); if that fails you get the command to run by hand.
   A merge that fails for a reason other than a conflict is reported as an error and leaves the proposal open.
-  An accepted proposal writes a change event that the Trends screen will mark.
+  An accepted proposal writes a change event that the Trends screen marks.
+- **Trends** (`GET /v1/trends`, `/v1/trends/changes`): pass rate per rubric per day or ISO week, with a marker for every accepted proposal, every manual edit of instruction files in a registered repository (found by a scan every 15 minutes; Introspect's own merges are skipped) and every rubric change.
+  A rubric or judge-model change is a baseline reset.
+  The change log compares the 7 days (`trends.window_days`) before and after each change and gives a verdict: a two-proportion z-test at 90%, `too_early` below `trends.min_graded` (10) sessions.
+- **Reference set**: up to 20 pinned sessions (`POST` or `DELETE /v1/sessions/{id}/reference`) that are re-graded after a rubric or judge change, or on `POST /v1/trends/reference-regrade`.
 - The improver's calls are on the same budget ledger as grading; `GET /v1/budget` reports its share in `improver`.
 - `INTROSPECT_IMPROVER=fake` (environment only) swaps in a deterministic improver for tests and demos.
 

@@ -189,6 +189,8 @@ export interface Schema {
     enabled: Bool;
     /** Hooks, settings and scripts may be proposed (default off). */
     allow_executable: Bool;
+    /** Tip of the default branch at the last change scan; null until the first scan. */
+    last_seen_sha: string | null;
   };
   cluster_outcome: {
     id: string;
@@ -235,6 +237,8 @@ export interface Schema {
     description: string;
     files: Json | null;
     rubric_names: Json | null;
+    /** Idempotency key of detected events (commit, rubric version, judge pair); null for proposals. */
+    ref: string | null;
   };
   job: {
     id: string;

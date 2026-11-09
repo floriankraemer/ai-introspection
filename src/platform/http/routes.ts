@@ -9,6 +9,7 @@ import { ApiError, problemResponses } from './problem.js';
 import { registerGradingRoutes, type GradingRouteDeps } from './routes-grading.js';
 import { registerImprovementRoutes, type ImprovementRouteDeps } from './routes-improvement.js';
 import { registerIngestRoutes, type IngestRouteDeps } from './routes-ingest.js';
+import { registerTrendsRoutes } from './routes-trends.js';
 import { registerSetupRoutes, type SetupRouteDeps } from './routes-setup.js';
 import { DEFAULT_PAGE, jobSchema, MAX_PAGE, security, toJobDto } from './schemas.js';
 import { AUTH_PAGE, setTokenCookie, tokenMatches } from './auth.js';
@@ -189,5 +190,6 @@ export function registerRoutes(app: OpenAPIHono, deps: RouteDeps): void {
   registerIngestRoutes(app, deps);
   registerGradingRoutes(app, deps);
   registerImprovementRoutes(app, deps);
+  registerTrendsRoutes(app, deps);
   registerSetupRoutes(app, deps);
 }

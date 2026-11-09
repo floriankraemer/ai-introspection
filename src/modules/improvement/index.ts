@@ -32,7 +32,8 @@ export {
 } from './types.js';
 export type { ClusterSummary, ProposalDto, ProposalList, ProposalStatus } from './proposals.js';
 export type { RunResult, RunSummary } from './runner.js';
-export { inspectDiff, DiffRejectedError } from './diff.js';
+export { inspectDiff, DiffRejectedError, globToRegExp } from './diff.js';
+export { allowListOf } from './policy.js';
 
 export const IMPROVER_RUN_JOB = 'improve';
 const PR_SYNC_JOB = 'proposal_pr_sync';

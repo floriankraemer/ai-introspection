@@ -50,7 +50,7 @@ function zonedParts(at: Date, timeZone: string): { y: number; m: number; d: numb
 }
 
 /** The instant at which the wall clock of `timeZone` reads midnight on the given date (month and day may overflow). */
-function zonedMidnight(y: number, m: number, d: number, timeZone: string): Date {
+export function zonedMidnight(y: number, m: number, d: number, timeZone: string): Date {
   const wall = Date.UTC(y, m, d);
   const offsetAt = (instant: number): number => {
     const p = new Intl.DateTimeFormat('en-US', {

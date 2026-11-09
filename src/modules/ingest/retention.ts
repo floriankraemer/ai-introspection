@@ -43,6 +43,44 @@ export async function pinSession(db: Db, workspaceId: string, sessionId: string)
   return result.numUpdatedRows > 0n;
 }
 
+/**
+ * Adds a session to or removes it from the reference set (build plan: a fixed set re-graded after
+ * any change, to see judge drift). Members are pinned. Removal keeps the pin: pins are never
+ * removed automatically, and the session may be pinned for a calibration label too.
+ */
+export async function setReference(
+  db: Db,
+  workspaceId: string,
+  sessionId: string,
+  member: boolean,
+  max: number,
+): Promise<'ok' | 'not_found' | 'full'> {
+  return db.transaction().execute(async (tx) => {
+    const row = await tx
+      .selectFrom('session')
+      .select('in_reference_set')
+      .where('id', '=', sessionId)
+      .where('workspace_id', '=', workspaceId)
+      .executeTakeFirst();
+    if (!row) return 'not_found';
+    if (member && !row.in_reference_set) {
+      const { n } = await tx
+        .selectFrom('session')
+        .select((eb) => eb.fn.countAll<number>().as('n'))
+        .where('workspace_id', '=', workspaceId)
+        .where('in_reference_set', '=', true)
+        .executeTakeFirstOrThrow();
+      if (n >= max) return 'full';
+    }
+    await tx
+      .updateTable('session')
+      .set({ in_reference_set: member, ...(member && { pinned: true }) })
+      .where('id', '=', sessionId)
+      .execute();
+    return 'ok';
+  });
+}
+
 const FINISHED_JOB_DAYS = 7;
 
 /** Finished jobs (succeeded or dead) are only history; a week is enough to see what happened and to retry. */

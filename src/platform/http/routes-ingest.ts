@@ -4,7 +4,7 @@ import { Readable } from 'node:stream';
 import { createRoute, z, type OpenAPIHono } from '@hono/zod-openapi';
 import type { Grading } from '../../modules/grading/index.js';
 import type { IngestService } from '../../modules/ingest/index.js';
-import type { createTrends } from '../../modules/trends/index.js';
+import type { Trends } from '../../modules/trends/index.js';
 import type { JobQueue } from '../jobs/queue.js';
 import { ApiError, problemResponses } from './problem.js';
 import { gradeDetailSchema } from './routes-grading.js';
@@ -14,7 +14,7 @@ export interface IngestRouteDeps {
   queue: JobQueue;
   ingest: IngestService;
   grading: Grading;
-  trends: ReturnType<typeof createTrends>;
+  trends: Trends;
 }
 
 const json = <T extends z.ZodType>(schema: T, description: string) => ({
