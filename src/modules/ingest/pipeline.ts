@@ -202,11 +202,76 @@ function findRepoRoot(cwd: string | undefined): Promise<string | null> {
 
 export interface IngestOptions {
   /**
-   * Rebuild the session from the first byte (an adapter or redaction version moved). Events and
-   * signals are replaced in one transaction; grades, pins and labels stay, and events keep their
-   * ids by position so a grade's evidence ids still resolve.
+   * Rebuild the session from the first byte (an adapter or redaction version moved). The new
+   * event set is built in memory while the file is parsed, then swapped in with one short
+   * transaction. Grades, pins and labels stay. An event keeps its id when the same source record
+   * (by `source_key`) yields it again; a grade citing an event that is gone becomes `stale`.
+   * ponytail: the rebuilt session is held in memory (bounded by the 64 KiB field cap per event);
+   * stage it in a side table if sessions of several hundred MB ever show up.
    */
   force?: boolean;
+}
+
+/** Identifies a source record by its own bytes, so the key survives shifts of position in the file. */
+const lineRefOf = (text: string): string =>
+  createHash('sha1').update(text).digest('hex').slice(0, 20);
+
+interface OldEvent {
+  id: string;
+  seq: number;
+  source_key: string | null;
+  kind: string;
+  ts: string | null;
+  call_id: string | null;
+  payload_purged_at: string | null;
+}
+
+/**
+ * Gives each rebuilt event the id of the old event from the same source record. Equal keys (a
+ * repeated line) pair in order. Rows stored before `source_key` existed pair by position only
+ * when kind, time and call id agree too. Whatever is left gets a new id.
+ */
+function reuseIds(rows: EventRow[], old: readonly OldEvent[]): void {
+  const byKey = new Map<string, OldEvent[]>();
+  const legacy = new Map<number, OldEvent>();
+  for (const e of old) {
+    if (e.source_key === null) legacy.set(e.seq, e);
+    else byKey.set(e.source_key, [...(byKey.get(e.source_key) ?? []), e]);
+  }
+  const keyed = new Map([...byKey].map(([k, list]) => [k, [...list].reverse()]));
+  // Retention purges whole sessions, so one purged event means the session was purged.
+  const sessionPurgedAt = old.find((e) => e.payload_purged_at !== null)?.payload_purged_at ?? null;
+  for (const row of rows) {
+    let match = row.source_key ? keyed.get(row.source_key)?.pop() : undefined;
+    const byPosition = legacy.get(row.seq);
+    if (!match && byPosition?.kind === row.kind && byPosition.ts === (row.ts ?? null)) {
+      match = byPosition;
+      legacy.delete(row.seq);
+    }
+    if (match) row.id = match.id;
+    const purgedAt = match?.payload_purged_at ?? sessionPurgedAt;
+    if (purgedAt) {
+      // A purge is final: a rebuild must not bring the payload back.
+      row.input = null;
+      row.output = null;
+      row.payload_purged_at = purgedAt;
+    }
+  }
+}
+
+/** A grade whose evidence is no longer all in the session says nothing true any more. */
+async function markStaleGrades(tx: Db, sid: string, eventIds: ReadonlySet<string>): Promise<void> {
+  const grades = await tx
+    .selectFrom('grade')
+    .select(['id', 'evidence_event_ids'])
+    .where('session_id', '=', sid)
+    .where('status', 'in', ['ok', 'invalid'])
+    .execute();
+  for (const g of grades) {
+    const cited = g.evidence_event_ids ? (fromJson(g.evidence_event_ids) as string[]) : [];
+    if (cited.some((id) => !eventIds.has(id)))
+      await tx.updateTable('grade').set({ status: 'stale' }).where('id', '=', g.id).execute();
+  }
 }
 
 export async function ingestFile(
@@ -217,22 +282,7 @@ export async function ingestFile(
 ): Promise<IngestFileResult> {
   // One run per session, not per file: two sources holding the same session must not interleave.
   const sid = deriveSessionId(source.agent, adapterFor(source.agent).nativeIdFromPath(path));
-  return withLock(sid, async () => {
-    if (!options.force) return run(deps, source, path, false);
-    // Inside the transaction nothing may use the outer connection (SQLite has one and would wait
-    // for ever), so the settings are read first and handed in as a value.
-    const settings = await deps.settings.get();
-    return deps.db
-      .transaction()
-      .execute((tx) =>
-        run(
-          { ...deps, db: tx, settings: { get: () => Promise.resolve(settings) } },
-          source,
-          path,
-          true,
-        ),
-      );
-  });
+  return withLock(sid, () => run(deps, source, path, options.force === true));
 }
 
 async function run(
@@ -242,9 +292,7 @@ async function run(
   force: boolean,
 ): Promise<IngestFileResult> {
   const { db, workspaceId } = deps;
-  // A forced run is already inside one transaction (see ingestFile); Kysely cannot nest them.
-  const transact = <T>(fn: (tx: Db) => Promise<T>): Promise<T> =>
-    db.isTransaction ? fn(db) : db.transaction().execute(fn);
+  const transact = <T>(fn: (tx: Db) => Promise<T>): Promise<T> => db.transaction().execute(fn);
   const now = deps.now ?? (() => new Date());
   const st = await stat(path).catch(() => null);
   if (!st?.isFile()) return { status: 'missing', events: 0, reset: false };
@@ -311,19 +359,10 @@ async function run(
     };
   }
 
-  const keptIds = new Map<number, string>();
-  if (reset) {
-    await transact(async (tx) => {
-      const old = await tx
-        .selectFrom('event')
-        .select(['seq', 'id'])
-        .where('session_id', '=', sid)
-        .execute();
-      for (const e of old) keptIds.set(e.seq, e.id);
-      await tx.deleteFrom('event').where('session_id', '=', sid).execute();
-      await tx.deleteFrom('signal').where('session_id', '=', sid).execute();
-    });
-  }
+  // Rebuilding (forced, or the file was replaced): the new events are staged in memory and swapped
+  // in by `swap` at the end. The old rows stay readable until then.
+  const staged: EventRow[] = [];
+  let finishRebuild: ((tx: Db) => Promise<void>) | undefined;
 
   const settings = await deps.settings.get();
   const redactionOn = settings['redaction.enabled'];
@@ -375,6 +414,9 @@ async function run(
   if (tail) usageByMessage.set(tail.id, tokenCountsOf(tail));
   let lastUsageId = tail?.id ?? null;
 
+  /** The record being parsed and the number of events it has yielded; together they key an event. */
+  let lineRef = '';
+  let eventInLine = 0;
   let batch: EventRow[] = [];
   const batchCalls = new Map<string, EventRow>();
   let dbResults: Extract<ParsedItem, { type: 'result' }>[] = [];
@@ -426,7 +468,7 @@ async function run(
     const output = field(e.output);
     const seq = nextSeq++;
     const row: EventRow = {
-      id: keptIds.get(seq) ?? newId(),
+      id: newId(),
       workspace_id: workspaceId,
       session_id: sid,
       seq,
@@ -439,6 +481,7 @@ async function run(
       ms: null,
       truncated: input.truncated || output.truncated,
       call_id: e.callId ?? null,
+      source_key: `${lineRef}:${String(eventInLine++)}`,
     };
     batch.push(row);
     if (e.callId) batchCalls.set(e.callId, row);
@@ -519,7 +562,8 @@ async function run(
     const results = dbResults;
     batch = [];
     dbResults = [];
-    batchCalls.clear();
+    // A rebuild keeps every call of the run, so results find their call in an earlier batch too.
+    if (!reset) batchCalls.clear();
     batchChars = 0;
     batchLines = 0;
     s.tokens = absoluteTokens ?? plusTokens(s.tokens, usageDelta);
@@ -530,7 +574,7 @@ async function run(
     const title = s.title ?? s.fallbackTitle;
     const repoRoot = s.touched ? await findRepoRoot(s.cwd ?? undefined) : null;
     const startedAt = s.startedAt ?? new Date(st.mtimeMs).toISOString();
-    await transact(async (tx) => {
+    const write = async (tx: Db, rows: EventRow[], pairs: typeof results): Promise<void> => {
       if (s.touched) {
         const values = {
           title: title ? titleOf(title) : null,
@@ -570,13 +614,13 @@ async function run(
           .onConflict((oc) => oc.column('id').doUpdateSet(values))
           .execute();
       }
-      for (let i = 0; i < toInsert.length; i += INSERT_CHUNK) {
+      for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
         await tx
           .insertInto('event')
-          .values(toInsert.slice(i, i + INSERT_CHUNK))
+          .values(rows.slice(i, i + INSERT_CHUNK))
           .execute();
       }
-      for (const r of results) {
+      for (const r of pairs) {
         const target = await tx
           .selectFrom('event')
           .select(['id', 'name', 'input', 'ts', 'truncated'])
@@ -604,11 +648,40 @@ async function run(
         sid: s.touched ? sid : null,
         now: now(),
       });
-    });
+    };
+    if (reset) {
+      staged.push(...toInsert);
+      // The last flush of the run holds the final session state; that closure is the swap.
+      finishRebuild = (tx) => write(tx, staged, []);
+      return;
+    }
+    await transact((tx) => write(tx, toInsert, results));
   };
 
+  /** The one short transaction of a rebuild: old rows out, new rows in, stale grades marked. */
+  const swapIn = (write: (tx: Db) => Promise<void>): Promise<void> =>
+    transact(async (tx) => {
+      const old = await tx
+        .selectFrom('event')
+        .select(['id', 'seq', 'source_key', 'kind', 'ts', 'call_id', 'payload_purged_at'])
+        .where('session_id', '=', sid)
+        .execute();
+      reuseIds(staged, old);
+      await tx.deleteFrom('event').where('session_id', '=', sid).execute();
+      await tx.deleteFrom('signal').where('session_id', '=', sid).execute();
+      await write(tx);
+      await markStaleGrades(tx, sid, new Set(staged.map((e) => e.id)));
+    });
+
   const parser = adapter.createParser();
+  let lineStart = start;
   for await (const line of readLines(path, start, st.size, MAX_LINE_BYTES)) {
+    eventInLine = 0;
+    lineRef =
+      line.text === null
+        ? `big-${String(line.endOffset - lineStart)}-${lineRefOf(line.head).slice(0, 12)}`
+        : lineRefOf(line.text);
+    lineStart = line.endOffset;
     lastEnd = line.endOffset;
     batchLines += 1;
     if (line.text === null) {
@@ -623,6 +696,7 @@ async function run(
     if (batchLines >= BATCH_LINES || batchChars >= BATCH_CHARS) await flush(lastEnd);
   }
   await flush(lastEnd);
+  if (reset && finishRebuild) await swapIn(finishRebuild);
 
   const eventCount =
     (

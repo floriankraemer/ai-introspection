@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 export type JudgeTransport = 'api' | 'cli' | 'fake';
 
-/** Default judge model (ADR-0006). Every grade records the model that actually answered. */
+/** Default judge model (ADR-0006). A grade records the model asked for and the one that answered. */
 export const JUDGE_MODEL = 'claude-sonnet-5-5';
 
 export interface JudgeRubric {
@@ -16,6 +16,8 @@ export interface JudgeRequest {
   rubric: JudgeRubric;
   /** Condensed redacted trace; events are labelled `[e<seq>]`. */
   trace: string;
+  /** Events in the whole session; a trace with fewer than three needs no evidence ids. */
+  eventCount: number;
 }
 
 export interface Usage {
@@ -65,6 +67,23 @@ export const verdictJsonSchema = (scale: readonly number[]): Record<string, unkn
   required: ['score', 'reason', 'evidenceEventIds'],
   additionalProperties: false,
 });
+
+/**
+ * A call that got a response but not a verdict. `usage` is what the response billed, so the
+ * ledger records it. `unusable` means the answer itself was bad (cut off, not JSON, off schema):
+ * the grader counts it as one of its own attempts instead of failing the job.
+ */
+export class JudgeCallError extends Error {
+  constructor(
+    message: string,
+    readonly usage: Usage,
+    readonly model: string,
+    readonly unusable: boolean,
+  ) {
+    super(message);
+    this.name = 'JudgeCallError';
+  }
+}
 
 export class JudgeUnavailableError extends Error {
   constructor(message: string) {

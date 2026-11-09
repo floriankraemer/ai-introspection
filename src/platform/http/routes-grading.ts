@@ -95,6 +95,7 @@ const verdictSchema = z
     reason: z.string(),
     evidenceEventIds: z.array(z.uuid()),
     judgeModel: z.string(),
+    answeredModel: z.string(),
     transport: z.string(),
     humanPassed: z.boolean().nullable(),
     agrees: z.boolean().nullable(),
@@ -118,10 +119,14 @@ export const gradeDetailSchema = z
     passed: z.boolean().nullable(),
     reason: z.string(),
     evidenceEventIds: z.array(z.uuid()),
+    /** The model asked for. */
     judgeModel: z.string(),
+    /** The model that answered; null for grades made before it was recorded. */
+    answeredModel: z.string().nullable(),
     transport: z.string(),
     gradedAt: z.iso.datetime(),
-    status: z.enum(['ok', 'refused', 'invalid']),
+    /** `stale`: an event it cites is gone after a re-import; it is queued to be graded again and excluded from pass rates. */
+    status: z.enum(['ok', 'refused', 'invalid', 'stale']),
     trusted: z.boolean(),
   })
   .openapi('GradeDetail');

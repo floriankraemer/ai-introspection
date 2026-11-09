@@ -8,6 +8,7 @@ import { createSkillRepos } from '../../modules/improvement/index.js';
 import { createIngest } from '../../modules/ingest/index.js';
 import { createSecretStore, createSettings } from '../../modules/settings/index.js';
 import { createTrends } from '../../modules/trends/index.js';
+import { newId } from '../db/ids.js';
 import { LOCAL_USER_ID, LOCAL_WORKSPACE_ID } from '../identity/index.js';
 import { createJobQueue } from '../jobs/queue.js';
 import { createWorker } from '../jobs/worker.js';
@@ -208,7 +209,19 @@ describe('grading API', () => {
       ok: true,
       detail: 'Fake judge (test only)',
     });
-    await call('PATCH', '/v1/settings', { 'budget.tokens_per_day': 10 });
+    // 999,000 of 1,000,000 tokens are spent: this call fits the limit in principle but not today.
+    await t.handle.db
+      .insertInto('llm_call')
+      .values({
+        id: newId(),
+        workspace_id: LOCAL_WORKSPACE_ID,
+        at: new Date().toISOString(),
+        purpose: 'grade',
+        model: 'claude-sonnet-5-5',
+        transport: 'api',
+        tokens_in: 999_000,
+      })
+      .execute();
     const over = await call('POST', '/v1/rubrics/verbosity/dry-run', { sessionIds: [claudeId] });
     expect(over.status).toBe(429);
     expect(over.headers.get('content-type')).toContain('application/problem+json');

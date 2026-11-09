@@ -6,13 +6,12 @@ export GID ?= $(shell id -g)
 COMPOSE := docker compose -f compose.dev.yaml
 RUN := $(COMPOSE) run --rm --build dev
 
-.PHONY: mount-points install lint test test-pg build up open doctor down dev shell
+.PHONY: mount-points install lint test test-pg build up open doctor claude-login down dev shell
 
 # Host folders mounted into the user stack. Same defaults as compose.yaml; the shell environment
 # wins over .env, as it does for Compose.
 env_file_value = $(shell sed -n 's/^$(1)=//p' .env 2>/dev/null | tail -n 1)
 SKILLS_REPO := $(or $(INTROSPECT_SKILLS_REPO),$(call env_file_value,INTROSPECT_SKILLS_REPO),$(HOME)/.introspect/skills)
-CLAUDE_CREDENTIALS := $(or $(INTROSPECT_CLAUDE_CREDENTIALS),$(call env_file_value,INTROSPECT_CLAUDE_CREDENTIALS),$(HOME)/.claude/.credentials.json)
 PROJECTS_DIR := $(or $(INTROSPECT_PROJECTS_DIR),$(call env_file_value,INTROSPECT_PROJECTS_DIR),$(HOME)/.introspect/projects)
 
 # Docker would create these bind-mount points as root if they were missing.
@@ -38,8 +37,6 @@ build: mount-points
 # Created here as your user: the Docker engine on Linux would create missing mount points as root.
 up:
 	mkdir -p $(HOME)/.claude/projects $(HOME)/.codex/sessions "$(SKILLS_REPO)" "$(PROJECTS_DIR)"
-	@# A file bind mount needs its source; an empty file means "not logged in" (never a directory Docker makes as root).
-	@[ -e "$(CLAUDE_CREDENTIALS)" ] || { mkdir -p "$$(dirname "$(CLAUDE_CREDENTIALS)")" && install -m 600 /dev/null "$(CLAUDE_CREDENTIALS)"; }
 	docker compose up -d --build --wait
 
 # Prints the URL that signs this browser in.
@@ -48,6 +45,12 @@ open:
 
 doctor:
 	docker compose exec introspect introspect doctor
+
+# Signs the judge in to Claude, once. The login lives in the container's own home (/data/claude-home),
+# never in ~/.claude: a second client of your login could rotate its refresh token and sign you out.
+# It prints a URL to open in your browser; paste the code it shows back here.
+claude-login:
+	docker compose exec -it introspect introspect judge-login
 
 down:
 	docker compose down

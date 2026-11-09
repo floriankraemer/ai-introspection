@@ -70,4 +70,36 @@ describe('condenseTrace', () => {
     );
     expect(estimateTokens(condenseTrace(trace(events)).text)).toBeLessThanOrEqual(50_000);
   });
+
+  it('cuts the middle, never the end, when even the protected events are over the cap', () => {
+    const events = [
+      ev(0, { kind: 'user', output: 'start' }),
+      ...Array.from({ length: 400 }, (_, i) =>
+        ev(i + 1, {
+          isError: true,
+          summary: `bash: \`cmd ${String(i)}\``,
+          output: `err ${String(i)} ${'y'.repeat(900)}`,
+        }),
+      ),
+      ev(401, { kind: 'assistant', output: 'FINAL ANSWER' }),
+    ];
+    const c = condenseTrace(trace(events), 3000);
+    expect(estimateTokens(c.text)).toBeLessThanOrEqual(3000);
+    expect(c.text).toContain('[e401] +401s assistant FINAL ANSWER');
+    expect(c.text).toContain('[e0] +0s user start');
+    expect(c.text).toContain('trace cut in the middle');
+    expect(c.labels.has('e401')).toBe(true);
+  });
+
+  it('offers only labels that are in the text that is sent', () => {
+    const events = [
+      ev(0, { kind: 'user', output: 'start' }),
+      ...Array.from({ length: 400 }, (_, i) => ev(i + 1, { output: 'x'.repeat(300) })),
+      ev(401, { kind: 'assistant', output: 'done' }),
+    ];
+    const c = condenseTrace(trace(events), 4000);
+    expect(c.omittedEvents).toBeGreaterThan(0);
+    for (const label of c.labels.keys()) expect(c.text).toContain(`[${label}] +`);
+    expect(c.labels.size).toBeLessThan(events.length);
+  });
 });

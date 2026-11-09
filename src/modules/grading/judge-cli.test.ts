@@ -3,26 +3,36 @@ import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { createCliJudge, isolationProblem, type CliRunner } from './judge-cli.js';
+import { createCliJudge, isolationProblem, loginFile, type CliRunner } from './judge-cli.js';
+import { JudgeCallError } from './types.js';
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'introspect-cli-'));
 const request = {
   rubric: { name: 'efficiency', version: 'abc', scale: [0, 1], body: 'Did it work?' },
   trace: '[e0] +0s user hello',
+  eventCount: 1,
 };
 
-function setup(runner: CliRunner, sources: string[] = []) {
+/** `login` is the judge's own login inside its private home; `seed` is the opt-in copy of a host file. */
+function setup(
+  runner: CliRunner,
+  opts: { sources?: string[]; login?: boolean; seed?: boolean } = {},
+) {
   const root = tmp();
-  const creds = join(root, 'host-credentials.json');
-  writeFileSync(creds, '{"claudeAiOauth":{"accessToken":"secret"}}');
   const home = join(root, 'claude-home');
+  if (opts.login !== false) {
+    mkdirSync(join(home, '.claude'), { recursive: true });
+    writeFileSync(loginFile(home), '{"claudeAiOauth":{"accessToken":"judge-own"}}');
+  }
+  const hostFile = join(root, 'host-credentials.json');
+  writeFileSync(hostFile, '{"claudeAiOauth":{"accessToken":"host"}}');
   const judge = createCliJudge({
     home,
-    credentialsPath: creds,
-    sourcePaths: () => Promise.resolve(sources),
+    ...(opts.seed && { seedCredentials: hostFile }),
+    sourcePaths: () => Promise.resolve(opts.sources ?? []),
     run: runner,
   });
-  return { judge, home, creds, root };
+  return { judge, home, hostFile, root };
 }
 
 const answer = (over: Record<string, unknown> = {}): string =>
@@ -40,7 +50,7 @@ const answer = (over: Record<string, unknown> = {}): string =>
   });
 
 describe('claude CLI judge', () => {
-  it('runs in a private home with a copy of the login, no API key, no tools and the verdict schema', async () => {
+  it('runs in a private home with its own login, no API key, no tools and the verdict schema', async () => {
     const calls: {
       args: string[];
       env: NodeJS.ProcessEnv;
@@ -56,7 +66,7 @@ describe('claude CLI judge', () => {
       });
     };
     process.env.ANTHROPIC_API_KEY = 'sk-ant-must-not-leak';
-    const { judge, home, creds } = setup(runner);
+    const { judge, home } = setup(runner);
     const result = await judge.grade(request);
     delete process.env.ANTHROPIC_API_KEY;
 
@@ -74,11 +84,61 @@ describe('claude CLI judge', () => {
     expect(run?.args).toEqual(
       expect.arrayContaining(['--tools', '', '--no-session-persistence', '--json-schema']),
     );
-    expect(run?.input).toContain('<trace>');
-    expect(readFileSync(join(home, '.claude', '.credentials.json'), 'utf8')).toBe(
-      readFileSync(creds, 'utf8'),
+    // The rubric comes first (system prompt); the trace sits alone behind a random boundary.
+    const system = run?.args[run.args.indexOf('--system-prompt') + 1];
+    expect(system).toContain('<rubric name="efficiency">');
+    expect(run?.input).toMatch(
+      /^<trace-[0-9a-f]{24}>\n\[e0\] \+0s user hello\n<\/trace-[0-9a-f]{24}>/,
     );
-    expect(statSync(join(home, '.claude', '.credentials.json')).mode & 0o777).toBe(0o600);
+    // Nothing is copied from anywhere: the judge's own login stays as it is.
+    expect(readFileSync(loginFile(home), 'utf8')).toContain('judge-own');
+  });
+
+  it('never reaches for the host login: no login in the private home means a clear error', async () => {
+    const calls: string[] = [];
+    const runner: CliRunner = (_cmd, args) => {
+      calls.push(args[0] ?? '');
+      return Promise.resolve({ stdout: '2.1.319', stderr: '', code: 0 });
+    };
+    const { judge } = setup(runner, { login: false });
+    await expect(judge.grade(request)).rejects.toThrow(/make claude-login/);
+    expect(calls).toEqual([]); // not even the version check ran
+  });
+
+  it("copies a login file only when asked to, only once, and never over the judge's own", async () => {
+    const runner: CliRunner = (_cmd, args) =>
+      Promise.resolve({
+        stdout: args[0] === '--version' ? '2.1.319' : answer(),
+        stderr: '',
+        code: 0,
+      });
+    const seeded = setup(runner, { login: false, seed: true });
+    await seeded.judge.grade(request);
+    expect(readFileSync(loginFile(seeded.home), 'utf8')).toContain('"host"');
+    expect(statSync(loginFile(seeded.home)).mode & 0o777).toBe(0o600);
+    const own = setup(runner, { login: true, seed: true });
+    await own.judge.grade(request);
+    expect(readFileSync(loginFile(own.home), 'utf8')).toContain('judge-own');
+  });
+
+  it('attaches the billed usage to an answer that is not a verdict, so the ledger can record it', async () => {
+    const runner: CliRunner = (_cmd, args) =>
+      Promise.resolve({
+        stdout:
+          args[0] === '--version'
+            ? '2.1.319'
+            : answer({
+                structured_output: { score: 'high' },
+                usage: { input_tokens: 7, output_tokens: 9 },
+              }),
+        stderr: '',
+        code: 0,
+      });
+    const err = await setup(runner)
+      .judge.grade(request)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(JudgeCallError);
+    expect(err).toMatchObject({ unusable: true, usage: { input: 7, output: 9 } });
   });
 
   it('refuses to run when its private home would be read as an agent-log source', async () => {
@@ -86,13 +146,12 @@ describe('claude CLI judge', () => {
     const root = tmp();
     const inside = join(root, 'claude-home');
     mkdirSync(inside, { recursive: true });
-    const { judge } = setup(runner, [root]);
+    const { judge } = setup(runner, { sources: [root] });
     await expect(judge.grade(request))
       .resolves.toBeDefined()
       .catch(() => undefined);
     const overlapping = createCliJudge({
       home: inside,
-      credentialsPath: join(root, 'c.json'),
       sourcePaths: () => Promise.resolve([root]),
       run: runner,
     });
@@ -109,13 +168,12 @@ describe('claude CLI judge', () => {
     const root = tmp();
     const judge = createCliJudge({
       home: join(root, 'h'),
-      credentialsPath: join(root, 'none.json'),
       sourcePaths: () => Promise.resolve([]),
       run: runner,
     });
     expect(await judge.test()).toMatchObject({
       ok: false,
-      detail: expect.stringContaining('No Claude login'),
+      detail: expect.stringContaining('make claude-login'),
     });
   });
 });

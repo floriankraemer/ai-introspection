@@ -184,7 +184,7 @@ sequenceDiagram
 
 ### 6.2 Grade
 
-Triggers: a `grade_sweep` schedule (every minute) queues one `grade_session` job per ended session in the last 7 days that the policy selects (flagged or in the 20 % sample, or all with sampling `every`; a merged PR with `schedule.grade = pr_merge`) and per rubric whose `applies_to` fits and that has no grade yet; `grade_batch` jobs come from the API (re-grade, "Grade selected"); `introspect grade` runs the same code in the foreground.
+Triggers: a `grade_sweep` schedule (every 5 minutes) queues one `grade_session` job per ended session in the last 7 days that the policy selects (flagged or in the 20 % sample, or all with sampling `every`; a merged PR with `schedule.grade = pr_merge`) and per rubric whose `applies_to` fits and that has no grade yet; `grade_batch` jobs come from the API (re-grade, "Grade selected"); `introspect grade` runs the same code in the foreground.
 The judge sees a deterministic condensed trace with events labelled `e<seq>`; labels map back to event ids.
 
 ```mermaid

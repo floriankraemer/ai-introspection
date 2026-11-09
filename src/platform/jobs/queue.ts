@@ -9,6 +9,14 @@ export const BACKOFF_BASE_MS = 30_000;
 const DEFAULT_MAX_ATTEMPTS = 5;
 const CLAIMABLE: JobStatus[] = ['queued', 'failed', 'deferred'];
 
+/** How far a long job is; `failed` and `errors` list the items a batch gave up on and went on. */
+export interface JobProgress {
+  done: number;
+  total: number;
+  failed?: number;
+  errors?: string[];
+}
+
 export interface Job {
   id: string;
   workspaceId: string;
@@ -25,7 +33,7 @@ export interface Job {
   lastError: string | null;
   createdAt: string;
   finishedAt: string | null;
-  progress: { done: number; total: number } | null;
+  progress: JobProgress | null;
 }
 
 export interface EnqueueInput {
@@ -81,7 +89,7 @@ export interface JobQueue {
   /** The "retry" action for dead jobs in Settings. */
   retryDead(jobId: string, now?: Date): Promise<boolean>;
   /** Long jobs (imports) report how far they are; shown by the SPA. */
-  setProgress(jobId: string, progress: { done: number; total: number }): Promise<void>;
+  setProgress(jobId: string, progress: JobProgress): Promise<void>;
   get(jobId: string): Promise<Job | null>;
   /** Newest first; `cursor` is the last id of the previous page. */
   list(opts: { status?: JobStatus; cursor?: string; limit: number }): Promise<Job[]>;

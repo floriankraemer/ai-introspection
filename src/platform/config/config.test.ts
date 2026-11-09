@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment -- vitest asymmetric matchers are typed any */
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from './index.js';
 
@@ -12,7 +11,8 @@ describe('loadConfig', () => {
       databaseUrl: '/data/introspect.db',
       watchPoll: false,
       claudeHome: '/data/claude-home',
-      claudeCredentials: expect.stringMatching(/\.claude\/\.credentials\.json$/),
+      claudeSeedCredentials: undefined,
+      timeZone: 'UTC',
       judgeOverride: undefined,
     });
   });

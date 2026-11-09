@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process';
 import { chmod, copyFile, mkdir, realpath, stat } from 'node:fs/promises';
 import { dirname, join, sep } from 'node:path';
-import { JUDGE_INSTRUCTIONS, rubricPrompt, tracePrompt } from './prompt.js';
+import { buildPrompt } from './prompt.js';
 import {
   JUDGE_MODEL,
+  JudgeCallError,
   JudgeUnavailableError,
   verdictJsonSchema,
   verdictSchema,
@@ -51,16 +52,29 @@ export const spawnRunner: CliRunner = (cmd, args, { cwd, env, input, timeoutMs }
   });
 
 export interface CliJudgeOptions {
-  /** Private HOME of every run; holds a copy of the login and the CLI's own session files. */
+  /**
+   * The judge's own HOME. It holds the judge's own `claude login` (never the user's: a second
+   * client of the same login can rotate its refresh token and sign the user out) and the CLI's
+   * session files.
+   */
   home: string;
-  /** The user's login file; read-only, copied into `home`. */
-  credentialsPath: string;
+  /**
+   * Opt-in, native runs only: a login file copied into `home` once, when `home` has none.
+   * The copy shares the user's refresh token, so a refresh on either side can invalidate the other.
+   */
+  seedCredentials?: string | undefined;
   /** Registered agent-log folders; the private home must lie outside all of them. */
   sourcePaths: () => Promise<string[]>;
   binary?: string;
   model?: string;
   run?: CliRunner;
 }
+
+/** Where `claude auth login` stores the login when HOME is `home`. */
+export const loginFile = (home: string): string => join(home, '.claude', '.credentials.json');
+
+export const LOGIN_HINT =
+  'Run `make claude-login` (Docker) or `introspect judge-login` (native) once: the judge keeps its own Claude login, separate from yours.';
 
 const contains = (parent: string, child: string): boolean =>
   child === parent || child.startsWith(parent.endsWith(sep) ? parent : parent + sep);
@@ -83,7 +97,7 @@ export async function isolationProblem(
   return null;
 }
 
-/** True when the login file exists and is not empty (an empty file is what the compose mount creates for a missing login). */
+/** True when the login file exists and is not empty. */
 export async function credentialsPresent(path: string): Promise<boolean> {
   return stat(path).then(
     (s) => s.isFile() && s.size > 0,
@@ -91,22 +105,31 @@ export async function credentialsPresent(path: string): Promise<boolean> {
   );
 }
 
-/** Copies the login into the private home when the source is newer; a refreshed copy there stays. */
-async function prepareHome(home: string, credentials: string): Promise<void> {
-  const dest = join(home, '.claude', '.credentials.json');
+/** Makes the private home, and seeds the opt-in login copy when `home` has none; throws when there is no login. */
+async function prepareHome(home: string, seed: string | undefined): Promise<void> {
+  const dest = loginFile(home);
   await mkdir(dirname(dest), { recursive: true });
-  const [src, dst] = await Promise.all([
-    stat(credentials).catch(() => null),
-    stat(dest).catch(() => null),
-  ]);
-  if (!src?.isFile() || src.size === 0)
-    throw new JudgeUnavailableError(
-      `No Claude login found at ${credentials}. Run \`claude login\` on the host and mount the login file.`,
-    );
-  if (!dst || src.mtimeMs > dst.mtimeMs) {
-    await copyFile(credentials, dest);
+  if (!(await credentialsPresent(dest)) && seed && (await credentialsPresent(seed))) {
+    await copyFile(seed, dest);
     await chmod(dest, 0o600);
   }
+  if (!(await credentialsPresent(dest)))
+    throw new JudgeUnavailableError(`The judge has no Claude login in ${home}. ${LOGIN_HINT}`);
+}
+
+/** `claude auth login` in the judge's private home, attached to the terminal. Resolves with the exit code. */
+export function judgeLogin(home: string, binary = 'claude'): Promise<number | null> {
+  return mkdir(join(home, '.claude'), { recursive: true }).then(
+    () =>
+      new Promise((resolve, reject) => {
+        const child = spawn(binary, ['auth', 'login', '--claudeai'], {
+          env: { ...process.env, HOME: home, ANTHROPIC_API_KEY: '' },
+          stdio: 'inherit',
+        });
+        child.on('error', reject);
+        child.on('close', resolve);
+      }),
+  );
 }
 
 function usageOf(u: Record<string, unknown> | undefined): Usage {
@@ -120,8 +143,8 @@ function usageOf(u: Record<string, unknown> | undefined): Usage {
 }
 
 /**
- * `claude -p` transport (local mode, subscription). Runs in a private HOME with a copy of the login
- * only, with no tools, no project settings and the fixed judge prompt as the whole system prompt;
+ * `claude -p` transport (local mode, subscription). Runs in a private HOME with the judge's own login,
+ * with no tools, no project settings and the fixed judge prompt as the whole system prompt;
  * the verdict comes back as structured output and is checked with the same schema as the API's.
  */
 export function createCliJudge(opts: CliJudgeOptions): Judge {
@@ -140,7 +163,7 @@ export function createCliJudge(opts: CliJudgeOptions): Judge {
   async function invoke(args: string[], input: string): Promise<CliRun> {
     const problem = await isolationProblem(opts.home, await opts.sourcePaths());
     if (problem) throw new JudgeUnavailableError(problem);
-    await prepareHome(opts.home, opts.credentialsPath);
+    await prepareHome(opts.home, opts.seedCredentials);
     const cwd = join(opts.home, 'runs');
     await mkdir(cwd, { recursive: true });
     if (!versionChecked) {
@@ -183,8 +206,6 @@ export function createCliJudge(opts: CliJudgeOptions): Judge {
         `claude exited with ${String(out.code)} and no JSON: ${out.stderr.slice(0, 300)}`,
       );
     }
-    if (json.is_error === true)
-      throw new Error(`claude reported an error: ${String(json.result).slice(0, 300)}`);
     return json;
   }
 
@@ -193,23 +214,46 @@ export function createCliJudge(opts: CliJudgeOptions): Judge {
     model,
 
     async grade(req: JudgeRequest): Promise<JudgeResult> {
+      const prompt = buildPrompt(req);
       const out = await invoke(
         [
-          ...baseArgs(JUDGE_INSTRUCTIONS),
+          ...baseArgs(prompt.system),
           '--json-schema',
           JSON.stringify(verdictJsonSchema(req.rubric.scale)),
         ],
-        `${tracePrompt(req.trace)}\n\n${rubricPrompt(req.rubric)}`,
+        prompt.user,
       );
       const json = parse(out);
       const usage = usageOf(json.usage as Record<string, unknown> | undefined);
       const answered = Object.keys((json.modelUsage as object | undefined) ?? {})[0] ?? model;
+      // The CLI answered, so whatever it billed goes on the ledger even when the verdict is unusable.
+      if (json.is_error === true)
+        throw new JudgeCallError(
+          `claude reported an error: ${String(json.result).slice(0, 300)}`,
+          usage,
+          answered,
+          false,
+        );
       if (typeof json.safety_stops === 'number' && json.safety_stops > 0)
         return { kind: 'refused', model: answered, usage };
-      const raw =
-        json.structured_output ??
-        (typeof json.result === 'string' ? (JSON.parse(json.result) as unknown) : null);
-      const v = verdictSchema.parse(raw);
+      const parsed = (() => {
+        try {
+          const raw =
+            json.structured_output ??
+            (typeof json.result === 'string' ? (JSON.parse(json.result) as unknown) : null);
+          return verdictSchema.safeParse(raw);
+        } catch {
+          return undefined;
+        }
+      })();
+      if (!parsed?.success)
+        throw new JudgeCallError(
+          'The judge answered with something that is not a verdict',
+          usage,
+          answered,
+          true,
+        );
+      const v = parsed.data;
       return {
         kind: 'verdict',
         score: v.score,
@@ -224,6 +268,8 @@ export function createCliJudge(opts: CliJudgeOptions): Judge {
       try {
         const out = await invoke(baseArgs('You answer with one word.'), 'Reply with the word OK.');
         const json = parse(out);
+        if (json.is_error === true)
+          throw new Error(`claude reported an error: ${String(json.result).slice(0, 300)}`);
         const answered = Object.keys((json.modelUsage as object | undefined) ?? {})[0] ?? model;
         return { ok: true, detail: `The claude CLI answered as ${answered}` };
       } catch (e) {

@@ -20,11 +20,12 @@ import { createBudget } from './budget.js';
 import { createCalibration, type CalibrationStats } from './calibration.js';
 import type { JudgeProvider } from './judges.js';
 import { appliesTo, shouldGrade } from './policy.js';
+import { redactionRefusal } from '../ingest/index.js';
 import { createGrader, latestGrades, type GradeDetail, type Verdict } from './service.js';
 
 export { createJudgeProvider, type JudgeProvider, type JudgeStatus } from './judges.js';
 export { createFakeJudge } from './judge-fake.js';
-export { isolationProblem } from './judge-cli.js';
+export { isolationProblem, judgeLogin } from './judge-cli.js';
 export { JUDGE_MODEL, type Judge, type JudgeRequest, type JudgeResult } from './types.js';
 export { condenseTrace, MAX_TRACE_TOKENS } from './condense.js';
 export { GATE, gateStats, type CalibrationRow, type CalibrationTable } from './calibration.js';
@@ -34,6 +35,8 @@ export type { GradeDetail, Verdict } from './service.js';
 export const GRADE_SESSION_JOB = 'grade_session';
 export const GRADE_BATCH_JOB = 'grade_batch';
 const GRADE_SWEEP_JOB = 'grade_sweep';
+/** The sweep reads every rubric from git, so it runs every five minutes, not every minute. */
+const SWEEP_CRON = '*/5 * * * *';
 /** The automatic trigger looks at sessions that started this recently (about 30 graded sessions a week, ADR-0006). */
 const SWEEP_DAYS = 7;
 const SWEEP_LIMIT = 200;
@@ -41,6 +44,8 @@ const DAY_MS = 86_400_000;
 /** The pass-rate goal when a rubric file has no `target` (overview section 9, Trends). */
 export const DEFAULT_TARGET = 0.7;
 const MAX_DRY_RUN_SESSIONS = 20;
+/** A failed batch lists this many errors in its progress; the rest is only counted. */
+const MAX_ERRORS_KEPT = 20;
 
 export interface GradingDeps {
   db: Db;
@@ -54,6 +59,8 @@ export interface GradingDeps {
   now?: () => Date;
   /** How far back the automatic trigger looks; default 7 days. */
   sweepDays?: number;
+  /** IANA time zone of the budget windows; default UTC. */
+  timeZone?: string;
 }
 
 export interface GradeSelection {
@@ -72,6 +79,8 @@ export interface GradeRunSummary {
   deferred: number;
   failed: number;
   errors: string[];
+  /** Why work was skipped, with a count per reason ("already graded", "redaction is off", ...). */
+  skippedReasons: Record<string, number>;
 }
 
 export interface DryRunResult {
@@ -83,7 +92,7 @@ export interface DryRunResult {
 export function createGrading(deps: GradingDeps) {
   const { db, workspaceId, rubrics } = deps;
   const now = deps.now ?? (() => new Date());
-  const budget = createBudget(db, workspaceId, () => deps.settings.get());
+  const budget = createBudget(db, workspaceId, () => deps.settings.get(), deps.timeZone);
   const grader = createGrader({
     db,
     workspaceId,
@@ -110,18 +119,67 @@ export function createGrading(deps: GradingDeps) {
     return (name) => map.get(name) ?? false;
   }
 
+  /**
+   * Grades marked stale (a re-ingest removed an event they cite) are graded again, whatever the
+   * session's age or the sampling policy: they had a grade once. The grade's id is in the key so
+   * the finished job of the first grade does not block the new one.
+   */
+  async function requeueStale(current: readonly Rubric[], model: string): Promise<number> {
+    const stale = await db
+      .selectFrom('grade')
+      .innerJoin('rubric', 'rubric.id', 'grade.rubric_id')
+      .select(['grade.id', 'grade.session_id', 'grade.graded_at', 'rubric.name'])
+      .where('grade.workspace_id', '=', workspaceId)
+      .where('grade.status', '=', 'stale')
+      .execute();
+    if (stale.length === 0) return 0;
+    const sessionIds = [...new Set(stale.map((g) => g.session_id))];
+    const redacted = new Set(
+      (await deps.ingest.sessions.gradeCandidates({ ids: sessionIds }))
+        .filter((c) => redactionRefusal(c.redactionVersion) === null)
+        .map((c) => c.id),
+    );
+    const newer = await db
+      .selectFrom('grade')
+      .innerJoin('rubric', 'rubric.id', 'grade.rubric_id')
+      .select(['grade.session_id', 'grade.graded_at', 'rubric.name'])
+      .where('grade.session_id', 'in', sessionIds)
+      .where('grade.status', '!=', 'stale')
+      .execute();
+    let queued = 0;
+    for (const g of stale) {
+      const rubric = current.find((r) => r.name === g.name);
+      const superseded = newer.some(
+        (n) => n.session_id === g.session_id && n.name === g.name && n.graded_at > g.graded_at,
+      );
+      if (!rubric || superseded || !redacted.has(g.session_id)) continue;
+      const id = await deps.queue.enqueue({
+        workspaceId,
+        kind: GRADE_SESSION_JOB,
+        payload: { sessionId: g.session_id, rubricName: g.name },
+        idempotencyKey: `grade:${g.session_id}:${rubric.version}:${model}:stale:${g.id}`,
+      });
+      if (id) queued += 1;
+    }
+    return queued;
+  }
+
   /** Enqueue one `grade_session` job per session and rubric that has no grade yet. */
   async function sweep(): Promise<number> {
     const settings = await deps.settings.get();
     const { rubrics: current } = await rubrics.list();
     if (current.length === 0) return 0;
     const judge = await deps.judges.current();
+    const requeued = await requeueStale(current, judge.model);
     const candidates = await deps.ingest.sessions.gradeCandidates({
       since: new Date(now().getTime() - (deps.sweepDays ?? SWEEP_DAYS) * DAY_MS),
       limit: SWEEP_LIMIT,
     });
-    const due = candidates.filter((c) => shouldGrade(c, settings));
-    if (due.length === 0) return 0;
+    // A session stored unredacted or with old rules is never queued; it waits for its re-import.
+    const due = candidates.filter(
+      (c) => shouldGrade(c, settings) && redactionRefusal(c.redactionVersion) === null,
+    );
+    if (due.length === 0) return requeued;
     const graded = await db
       .selectFrom('grade')
       .innerJoin('rubric', 'rubric.id', 'grade.rubric_id')
@@ -133,7 +191,7 @@ export function createGrading(deps: GradingDeps) {
       )
       .execute();
     const have = new Set(graded.map((g) => `${g.session_id}|${g.name}`));
-    let queued = 0;
+    let queued = requeued;
     for (const c of due) {
       for (const r of current) {
         if (have.has(`${c.id}|${r.name}`) || !appliesTo(r.appliesTo, c)) continue;
@@ -212,16 +270,37 @@ export function createGrading(deps: GradingDeps) {
         const list = current.filter((r) => !p.rubrics || p.rubrics.includes(r.name));
         const total = p.sessionIds.length * list.length;
         let done = 0;
+        const errors: string[] = [];
         const count = (): void => {
           done += 1;
         };
         for (const id of p.sessionIds) {
-          const [c] = await deps.ingest.sessions.gradeCandidates({ ids: [id] });
-          if (c) {
-            // A batch resumed after a budget deferral must not grade again what it already did.
-            await gradeRubrics(c, list, { force: p.force, since: new Date(p.requestedAt) }, count);
-          } else done += list.length;
-          await deps.queue.setProgress(job.id, { done, total });
+          const doneBefore = done;
+          try {
+            const [c] = await deps.ingest.sessions.gradeCandidates({ ids: [id] });
+            if (c) {
+              // A batch resumed after a budget deferral must not grade again what it already did.
+              await gradeRubrics(
+                c,
+                list,
+                { force: p.force, since: new Date(p.requestedAt) },
+                count,
+              );
+            } else done += list.length;
+          } catch (e) {
+            // The budget is the batch's to wait for; one broken session must not stop the others.
+            if (e instanceof DeferJob) throw e;
+            errors.push(`${id}: ${e instanceof Error ? e.message : String(e)}`);
+            done = doneBefore + list.length;
+          }
+          await deps.queue.setProgress(job.id, {
+            done,
+            total,
+            ...(errors.length > 0 && {
+              failed: errors.length,
+              errors: errors.slice(0, MAX_ERRORS_KEPT),
+            }),
+          });
         }
       },
     },
@@ -234,7 +313,7 @@ export function createGrading(deps: GradingDeps) {
   };
 
   const schedules: Schedule[] = [
-    { name: 'grade-sweep', cron: () => Promise.resolve('* * * * *'), kind: GRADE_SWEEP_JOB },
+    { name: 'grade-sweep', cron: () => Promise.resolve(SWEEP_CRON), kind: GRADE_SWEEP_JOB },
   ];
 
   async function sessionDetailGrades(id: string): Promise<GradeDetail[]> {
@@ -286,6 +365,7 @@ export function createGrading(deps: GradingDeps) {
         deferred: 0,
         failed: 0,
         errors: [],
+        skippedReasons: {},
       };
       const judge = await deps.judges.current();
       let done = 0;
@@ -294,7 +374,12 @@ export function createGrading(deps: GradingDeps) {
         for (const rubric of list) {
           try {
             const outcome = await grader.gradeOne({ sessionId: c.id, rubric, purpose: 'grade' });
-            summary[outcome.kind === 'graded' ? 'graded' : 'skipped'] += 1;
+            if (outcome.kind === 'graded') summary.graded += 1;
+            else {
+              summary.skipped += 1;
+              summary.skippedReasons[outcome.reason] =
+                (summary.skippedReasons[outcome.reason] ?? 0) + 1;
+            }
           } catch (e) {
             if (e instanceof DeferJob) {
               summary.deferred += 1;
@@ -387,7 +472,12 @@ export function createGrading(deps: GradingDeps) {
             const g = grades.get(s.id) ?? [];
             return {
               ...s,
-              grades: g.map((x) => ({ rubric: x.rubric, passed: x.passed, score: x.score })),
+              // A stale grade is shown but has no verdict until it is graded again.
+              grades: g.map((x) => ({
+                rubric: x.rubric,
+                passed: x.status === 'stale' ? null : x.passed,
+                score: x.status === 'stale' ? null : x.score,
+              })),
               notGradedReason: g.length > 0 ? null : s.notGradedReason,
             };
           }),

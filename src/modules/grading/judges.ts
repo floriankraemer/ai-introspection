@@ -4,6 +4,7 @@ import {
   createCliJudge,
   credentialsPresent,
   isolationProblem,
+  loginFile,
   type CliRunner,
 } from './judge-cli.js';
 import { createFakeJudge } from './judge-fake.js';
@@ -14,8 +15,10 @@ export interface JudgeProviderDeps {
   env: NodeJS.ProcessEnv;
   /** Which transport the settings select. */
   transport: () => Promise<'api' | 'cli'>;
+  /** The judge's private HOME; it holds the judge's own `claude` login. */
   claudeHome: string;
-  claudeCredentials: string;
+  /** Opt-in, native only: a login file copied into `claudeHome` once. Never set in Docker. */
+  claudeSeedCredentials?: string | undefined;
   sourcePaths: () => Promise<string[]>;
   /** `fake` is the test-only adapter; it comes from the environment and never from the UI. */
   override: 'fake' | undefined;
@@ -26,9 +29,9 @@ export interface JudgeStatus {
   transport: JudgeTransport;
   /** API: a key is stored or in the environment. */
   apiKeyPresent: boolean;
-  /** CLI: the login file exists and is not empty. */
+  /** CLI: the judge's own login exists in its private home. */
   cliLoginPresent: boolean;
-  claudeCredentials: string;
+  claudeHome: string;
   /** Why the CLI's private home would be unsafe, or null. */
   isolationProblem: string | null;
   fake: boolean;
@@ -46,7 +49,7 @@ export function createJudgeProvider(deps: JudgeProviderDeps) {
       ? createApiJudge({ apiKey: () => apiKey(keyOverride) })
       : createCliJudge({
           home: deps.claudeHome,
-          credentialsPath: deps.claudeCredentials,
+          seedCredentials: deps.claudeSeedCredentials,
           sourcePaths: deps.sourcePaths,
           ...(deps.runner && { run: deps.runner }),
         });
@@ -75,8 +78,8 @@ export function createJudgeProvider(deps: JudgeProviderDeps) {
       return {
         transport: deps.override === 'fake' ? 'fake' : transport,
         apiKeyPresent: Boolean(apiKey()),
-        cliLoginPresent: await credentialsPresent(deps.claudeCredentials),
-        claudeCredentials: deps.claudeCredentials,
+        cliLoginPresent: await credentialsPresent(loginFile(deps.claudeHome)),
+        claudeHome: deps.claudeHome,
         isolationProblem: await isolationProblem(deps.claudeHome, await deps.sourcePaths()),
         fake: deps.override === 'fake',
       };

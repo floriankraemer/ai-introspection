@@ -74,11 +74,13 @@ Runtime (`compose.yaml`):
 - Credentials:
   - The API key comes from `.env` or the setup UI and is stored in the data volume with file mode 0600.
   - `gh` authentication uses a read-only mount of `~/.config/gh`, or `GH_TOKEN`.
-  - The CLI transport (`claude -p`, ADR-0006) needs the `claude` binary and the user's login.
-    The image installs the `claude` CLI, and Compose mounts `~/.claude` read-only for its credentials.
-    This mount is the one weaker isolation point: the container can read the user's Claude credentials.
-    Users who choose the API-key transport do not need it and can remove the mount.
-    Both are added in the phase that introduces the transport (Phase 2); Phase 0 ships only the log mounts.
+  - The CLI transport (`claude -p`, ADR-0006) needs the `claude` binary and a Claude login.
+    The image installs the `claude` CLI.
+    The container does not mount or copy the host's login, and `make up` creates nothing in `~/.claude` besides the read-only log folders.
+    `make claude-login` runs `introspect judge-login` in the container: `claude auth login` with HOME set to `/data/claude-home` (on the data volume).
+    The container therefore holds its own login with its own refresh token, and it can never rotate or invalidate the user's.
+    `introspect doctor` reports a missing judge login and says why the host login is not used.
+    Users of the API-key transport need none of this.
 - Skills repository and project repositories are mounted read-write (ADR-0010):
   - `${INTROSPECT_SKILLS_REPO:-${HOME}/.introspect/skills}` at `/repos/skills`; the setup wizard proposes this path (`GET /v1/skill-repos/detected`).
     The default is a dedicated folder and never `~/.claude`.
@@ -106,7 +108,7 @@ Development (`compose.dev.yaml`, `.devcontainer/`, `Makefile`):
 - Positive: setup is `docker compose up` and one URL; dev, CI and production share one image lineage.
 - Positive: the process has no access to the host except the declared mounts.
 - Negative: two run modes (Docker and npm) both need coverage in CI before release.
-- Negative: the `~/.claude` mount for the CLI transport exposes credentials to the container; this is documented in the manual's safety and privacy notes.
+- Negative: the CLI transport needs one extra interactive step (`make claude-login`) per data volume; in return the container never sees the user's Claude credentials.
 - Negative: bind-mount polling costs some CPU; the interval is tuned when real data volumes are measured.
 - Negative: on Linux, `docker compose up` without `make up` creates missing source folders as root.
 

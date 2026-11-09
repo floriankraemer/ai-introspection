@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { newId } from '../../platform/db/ids.js';
 import { fromJson } from '../../platform/db/json.js';
 import { BudgetExceededError } from '../../platform/errors.js';
@@ -13,7 +13,7 @@ import { createJobQueue } from '../../platform/jobs/queue.js';
 import { DeferJob } from '../../platform/jobs/worker.js';
 import { writeFixtureSources } from '../../platform/testkit/agent-fixtures.js';
 import type { TestDb, TestDbFactory } from '../../platform/testkit/db.js';
-import { createIngest, type IngestService } from '../ingest/index.js';
+import { createIngest, REDACTION_VERSION, type IngestService } from '../ingest/index.js';
 import { copyStarterRubrics, createRubrics, type RubricStore } from '../rubrics/index.js';
 import { createSecretStore, createSettings, type SettingsService } from '../settings/index.js';
 import {
@@ -24,7 +24,7 @@ import {
   type Grading,
 } from './index.js';
 import type { FakeDecision } from './judge-fake.js';
-import type { JudgeRequest } from './types.js';
+import { JudgeCallError, type Judge, type JudgeRequest, type Usage } from './types.js';
 
 const git = (cwd: string, ...args: string[]): string =>
   execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
@@ -39,6 +39,8 @@ export function gradingSuite(name: string, make: TestDbFactory): void {
     let rubrics: RubricStore;
     let grading: Grading;
     let decide: ((req: JudgeRequest) => FakeDecision) | undefined;
+    let judgeCalls: JudgeRequest[];
+    let activeJudge: Judge;
     const queue = () => createJobQueue(t.handle);
     let claudeId: string;
     let codexId: string;
@@ -79,16 +81,19 @@ export function gradingSuite(name: string, make: TestDbFactory): void {
         cacheMs: 0,
       });
       decide = undefined;
+      judgeCalls = [];
       const judge = createFakeJudge((req) => {
+        judgeCalls.push(req);
         if (decide) return decide(req);
         // The default rule of the fake judge, spelled out so the test can override it.
         const failed = [...req.trace.matchAll(/^\[(e\d+)\] \+\d+s \S+ ✕/gm)].map((m) => m[1] ?? '');
         return {
           score: failed.length >= 3 ? Math.min(...req.rubric.scale) : Math.max(...req.rubric.scale),
           reason: `${String(failed.length)} failed events`,
-          evidence: failed.slice(0, 3),
+          evidence: failed.length > 0 ? failed.slice(0, 3) : ['e0'],
         };
       });
+      activeJudge = judge;
       grading = createGrading({
         db: t.handle.db,
         workspaceId: LOCAL_WORKSPACE_ID,
@@ -97,8 +102,9 @@ export function gradingSuite(name: string, make: TestDbFactory): void {
         queue: queue(),
         ingest,
         rubrics,
-        judges: { current: () => Promise.resolve(judge) },
+        judges: { current: () => Promise.resolve(activeJudge) },
         sweepDays: 36_500, // the fixture sessions are old
+        timeZone: 'UTC',
       });
     });
     afterEach(async () => {
@@ -131,6 +137,43 @@ export function gradingSuite(name: string, make: TestDbFactory): void {
             .executeTakeFirstOrThrow()
         ).n,
       );
+
+    /** A redacted session of `n` plain events, for tests that need a particular size. */
+    const insertSession = async (n: number): Promise<string> => {
+      const id = newId();
+      await t.handle.db
+        .insertInto('session')
+        .values({
+          id,
+          workspace_id: LOCAL_WORKSPACE_ID,
+          user_id: LOCAL_USER_ID,
+          agent: 'claude_code',
+          native_id: id,
+          status: 'ended',
+          started_at: new Date().toISOString(),
+          created_at: new Date().toISOString(),
+          redaction_version: REDACTION_VERSION,
+        })
+        .execute();
+      for (let i = 0; i < n; i += 1)
+        await t.handle.db
+          .insertInto('event')
+          .values({
+            id: newId(),
+            workspace_id: LOCAL_WORKSPACE_ID,
+            session_id: id,
+            seq: i,
+            kind: i % 2 === 0 ? 'user' : 'assistant',
+            output: `message ${String(i)}`,
+          })
+          .execute();
+      return id;
+    };
+    const ledger = () =>
+      t.handle.db
+        .selectFrom('llm_call')
+        .select(['status', 'tokens_in', 'tokens_out', 'model'])
+        .execute();
 
     describe('rubric store over git', () => {
       it('versions a rubric by blob sha, commits UI edits and keeps old versions', async () => {
@@ -243,13 +286,21 @@ export function gradingSuite(name: string, make: TestDbFactory): void {
         expect(trendless.sessionsGraded).toBe(0); // invalid grades never count toward pass rates
       });
 
-      it('lets a passing score stand without evidence and drops unknown ids', async () => {
+      it('needs evidence ids for every score, passing ones too, unless the session is tiny', async () => {
         decide = () => ({ score: 1, reason: 'fine', evidence: ['e99999'] });
         await grading.gradeNow({ sessionIds: [codexId], policy: false });
         const grades = (await grading.sessions.get(codexId))?.grades ?? [];
-        expect(grades.every((g) => g.passed === true && g.evidenceEventIds.length === 0)).toBe(
-          true,
-        );
+        expect(grades.every((g) => g.status === 'invalid' && g.passed === null)).toBe(true);
+        expect(judgeCalls).toHaveLength(8); // each rubric asked once more
+
+        // Two events: nothing to cite, so a verdict without evidence stands.
+        const tiny = await insertSession(2);
+        judgeCalls.length = 0;
+        const summary = await grading.gradeNow({ sessionIds: [tiny], policy: false });
+        expect(summary.graded).toBe(4);
+        const tinyGrades = (await grading.sessions.get(tiny))?.grades ?? [];
+        expect(tinyGrades.every((g) => g.status === 'ok' && g.passed === true)).toBe(true);
+        expect(judgeCalls).toHaveLength(4);
       });
 
       it('re-grades in place: unique per session, rubric version and judge model', async () => {
@@ -277,12 +328,61 @@ export function gradingSuite(name: string, make: TestDbFactory): void {
       });
     });
 
+    describe('redaction guard', () => {
+      const setRedaction = (id: string, version: string) =>
+        t.handle.db
+          .updateTable('session')
+          .set({ redaction_version: version })
+          .where('id', '=', id)
+          .execute();
+
+      it('never sends a session that was stored unredacted or with old rules to the judge', async () => {
+        const calls = () => judgeCalls.length;
+        await setRedaction(claudeId, 'off');
+        await setRedaction(codexId, '1');
+        const summary = await grading.gradeNow({ sessionIds: [claudeId, codexId], policy: false });
+        expect(summary).toMatchObject({ graded: 0, failed: 0 });
+        expect(summary.skipped).toBe(8);
+        expect(calls()).toBe(0);
+        const listed = await grading.sessions.list({ limit: 50 });
+        const reason = (id: string) => listed.items.find((s) => s.id === id)?.notGradedReason;
+        expect(reason(claudeId)).toBe('redaction is off');
+        expect(reason(codexId)).toBe('not redacted with current rules \u2014 re-import pending');
+        expect(await grading.sweep()).toBe(0);
+      });
+
+      it('skips such a session in a dry run with the reason', async () => {
+        await setRedaction(claudeId, 'off');
+        const result = await grading.dryRun('efficiency', [claudeId]);
+        expect(result.verdicts).toEqual([]);
+        expect(result.skipped).toEqual([{ sessionId: claudeId, reason: 'redaction is off' }]);
+        expect(judgeCalls).toHaveLength(0);
+      });
+    });
+
     describe('budget', () => {
+      /** Puts `tokens` of earlier usage on today's ledger. */
+      const spend = (tokens: number, usd = 0) =>
+        t.handle.db
+          .insertInto('llm_call')
+          .values({
+            id: newId(),
+            workspace_id: LOCAL_WORKSPACE_ID,
+            at: new Date().toISOString(),
+            purpose: 'grade',
+            model: 'claude-sonnet-5-5',
+            transport: 'api',
+            tokens_in: tokens,
+            cost_estimate: usd,
+          })
+          .execute();
+
       it('defers to the next midnight when the daily token cap is used up, and records usage', async () => {
         await grading.gradeNow({ sessionIds: [codexId], policy: false });
         const used = await grading.budget.status();
         expect(used.tokensToday).toBeGreaterThan(0);
-        await settings.update({ 'budget.tokens_per_day': 10 });
+        await spend(149_000);
+        await settings.update({ 'budget.tokens_per_day': 150_000 });
 
         const job = {
           id: newId(),
@@ -294,26 +394,28 @@ export function gradingSuite(name: string, make: TestDbFactory): void {
         expect(err).toBeInstanceOf(DeferJob);
         const runAfter = (err as DeferJob).runAfter;
         expect(runAfter.getTime()).toBeGreaterThan(Date.now());
-        expect(runAfter.getHours()).toBe(0);
-        expect(runAfter.getMinutes()).toBe(0);
+        expect(runAfter.getUTCHours()).toBe(0);
+        expect(runAfter.getUTCMinutes()).toBe(0);
         expect(runAfter.getTime() - Date.now()).toBeLessThanOrEqual(86_400_000);
       });
 
       it('defers to the first of next month when the dollar ceiling is used up', async () => {
-        await settings.update({ 'budget.mode': 'usd_month', 'budget.usd_per_month': 0 });
+        await spend(1, 0.99);
+        await settings.update({ 'budget.mode': 'usd_month', 'budget.usd_per_month': 1 });
         const err = await grading.handlers[GRADE_SESSION_JOB]?.run({
           id: newId(),
           payload: { sessionId: claudeId, rubricName: 'efficiency' },
         } as never).catch((e: unknown) => e);
         expect(err).toBeInstanceOf(DeferJob);
-        expect((err as DeferJob).runAfter.getDate()).toBe(1);
+        expect((err as DeferJob).runAfter.getUTCDate()).toBe(1);
         expect(await gradeCount()).toBe(0);
       });
 
       it('ignores the dollar ceiling in tokens-only mode and queues deferred CLI work for later', async () => {
+        await spend(149_000);
         await settings.update({
           'budget.mode': 'tokens_day',
-          'budget.tokens_per_day': 10,
+          'budget.tokens_per_day': 150_000,
           'budget.usd_per_month': 0,
         });
         const summary = await grading.gradeNow({ sessionIds: [claudeId], policy: false });
@@ -328,10 +430,240 @@ export function gradingSuite(name: string, make: TestDbFactory): void {
       });
 
       it('refuses a dry run over budget with a 429-mapped error', async () => {
-        await settings.update({ 'budget.tokens_per_day': 10 });
+        await spend(149_000);
+        await settings.update({ 'budget.tokens_per_day': 150_000 });
         await expect(grading.dryRun('efficiency', [claudeId])).rejects.toBeInstanceOf(
           BudgetExceededError,
         );
+      });
+
+      it('fails a grade whose estimate is larger than the whole limit instead of deferring it for ever', async () => {
+        await settings.update({ 'budget.tokens_per_day': 10 });
+        const summary = await grading.gradeNow({ sessionIds: [claudeId], policy: false });
+        expect(summary).toMatchObject({ graded: 0, deferred: 0, failed: 4 });
+        expect(summary.errors[0]).toMatch(/more than the whole daily token budget of 10/);
+        expect(await gradeCount()).toBe(0);
+        expect(await ledger()).toEqual([]); // nothing was reserved or spent
+        await expect(grading.dryRun('efficiency', [claudeId])).rejects.toThrow(
+          /more than the whole daily token budget/,
+        );
+      });
+
+      it('reserves the estimate before the call: parallel grades cannot overspend the limit', async () => {
+        const slow = createFakeJudge(() => ({ score: 1, reason: 'fine', evidence: ['e0'] }));
+        const big: Usage = { input: 2000, cacheRead: 0, cacheWrite: 0, output: 60 };
+        activeJudge = {
+          ...slow,
+          async grade(req) {
+            await new Promise((r) => setTimeout(r, 40)); // all four are in flight together
+            return { ...(await slow.grade(req)), usage: big };
+          },
+        };
+        // Room for about two estimates (about 2,300 tokens each) but not four.
+        await settings.update({ 'budget.tokens_per_day': 5000 });
+        const list = (await rubrics.list()).rubrics;
+        const results = await Promise.allSettled(
+          list.map((rubric) =>
+            Promise.resolve(
+              grading.handlers[GRADE_SESSION_JOB]?.run({
+                id: newId(),
+                payload: { sessionId: claudeId, rubricName: rubric.name },
+              } as never),
+            ),
+          ),
+        );
+        const deferred = results.filter(
+          (r) => r.status === 'rejected' && r.reason instanceof DeferJob,
+        );
+        expect(deferred.length).toBeGreaterThanOrEqual(1);
+        expect(results.filter((r) => r.status === 'fulfilled').length).toBeGreaterThanOrEqual(1);
+        const status = await grading.budget.status();
+        // Overspend is at most the gap between one call's estimate and its actual usage.
+        expect(status.tokensToday).toBeLessThanOrEqual(5000 + 1000);
+        expect((await ledger()).every((l) => l.status === 'ok')).toBe(true); // settled, none left reserved
+        expect(await gradeCount()).toBe(results.length - deferred.length);
+      });
+
+      it('lets reservations that no process will settle expire', async () => {
+        const at = new Date(Date.now() - 31 * 60_000);
+        if (at.getUTCDate() !== new Date().getUTCDate()) return; // the window would start after it
+        await t.handle.db
+          .insertInto('llm_call')
+          .values({
+            id: newId(),
+            workspace_id: LOCAL_WORKSPACE_ID,
+            at: at.toISOString(),
+            purpose: 'grade',
+            model: 'm',
+            transport: 'api',
+            tokens_in: 1_000_000,
+            status: 'reserved',
+          })
+          .execute();
+        expect((await grading.budget.status()).tokensToday).toBe(0);
+      });
+    });
+
+    describe('paid calls that give no verdict', () => {
+      const unusable = (usage: Usage) =>
+        new JudgeCallError(
+          'The judge answered with something that is not a verdict',
+          usage,
+          'claude-sonnet-5-5',
+          true,
+        );
+      const paid: Usage = { input: 300, cacheRead: 0, cacheWrite: 0, output: 50 };
+
+      it('records every answered call on the ledger and counts bad answers against its own attempts', async () => {
+        const grade = vi.fn(() => Promise.reject(unusable(paid)));
+        activeJudge = { ...activeJudge, grade };
+        const summary = await grading.gradeNow({ sessionIds: [codexId], policy: false });
+        // Two tries per rubric, then an invalid grade: the job queue never sees a failure to retry.
+        expect(summary).toMatchObject({ graded: 4, failed: 0 });
+        expect(grade).toHaveBeenCalledTimes(8);
+        const rows = await ledger();
+        expect(rows).toHaveLength(8);
+        expect(
+          rows.every((r) => r.status === 'error' && r.tokens_in === 300 && r.tokens_out === 50),
+        ).toBe(true);
+        const grades = (await grading.sessions.get(codexId))?.grades ?? [];
+        expect(grades).toHaveLength(4);
+        expect(grades.every((g) => g.status === 'invalid' && g.passed === null)).toBe(true);
+        expect(grades[0]?.reason).toMatch(/could not be used/);
+        expect((await grading.budget.status()).tokensToday).toBe(8 * 350);
+      });
+
+      it('records a paid call that failed for another reason, then raises it; a call with no response leaves no row', async () => {
+        activeJudge = {
+          ...activeJudge,
+          grade: () =>
+            Promise.reject(new JudgeCallError('claude reported an error', paid, 'm', false)),
+        };
+        const failed = await grading.gradeNow({ sessionIds: [codexId], policy: false });
+        expect(failed).toMatchObject({ graded: 0, failed: 4 });
+        expect(await ledger()).toHaveLength(4);
+
+        await t.handle.db.deleteFrom('llm_call').execute();
+        activeJudge = {
+          ...activeJudge,
+          grade: () => Promise.reject(new Error('socket hang up')),
+        };
+        const offline = await grading.gradeNow({ sessionIds: [codexId], policy: false });
+        expect(offline.failed).toBe(4);
+        expect(await ledger()).toEqual([]);
+      });
+    });
+
+    describe('stale grades', () => {
+      it('shows a stale grade without a verdict, leaves it out of pass rates and grades it again', async () => {
+        await grading.gradeNow({ sessionIds: [claudeId], policy: false });
+        await t.handle.db.updateTable('grade').set({ status: 'stale' }).execute();
+
+        const detail = await grading.sessions.get(claudeId);
+        expect(detail?.grades.every((g) => g.status === 'stale')).toBe(true);
+        const listed = (await grading.sessions.list({ limit: 50 })).items.find(
+          (s) => s.id === claudeId,
+        );
+        expect(listed?.grades.every((g) => g.passed === null && g.score === null)).toBe(true);
+        expect((await grading.trendRubrics(new Date(0))).sessionsGraded).toBe(0);
+        const failedAny = await grading.sessions.list({ result: 'failed_any', limit: 50 });
+        expect(failedAny.items).toEqual([]);
+
+        // The sweep queues each stale grade once, whatever the sampling policy says, and the job replaces it.
+        expect(await grading.sweep()).toBe(4);
+        expect(await grading.sweep()).toBe(0);
+        await runJobs();
+        const again = await grading.sessions.get(claudeId);
+        expect(again?.grades.map((g) => g.status)).toEqual(['ok', 'ok', 'ok', 'ok']);
+        expect(await gradeCount()).toBe(4);
+        // Finished once; a second re-ingest that stales it again queues it again.
+        await t.handle.db.updateTable('grade').set({ status: 'stale' }).execute();
+        expect(await grading.sweep()).toBe(4);
+      });
+    });
+
+    describe('judge model identity', () => {
+      it('keys grades by the model asked for and keeps the one that answered', async () => {
+        const inner = createFakeJudge(undefined, 'claude-fallback-9');
+        activeJudge = { ...inner, model: 'claude-sonnet-5-5' };
+        await grading.gradeNow({ sessionIds: [codexId], policy: false });
+        const rows = await t.handle.db
+          .selectFrom('grade')
+          .select(['judge_model', 'answered_model'])
+          .execute();
+        expect(rows).toHaveLength(4);
+        expect(
+          rows.every(
+            (r) =>
+              r.judge_model === 'claude-sonnet-5-5' && r.answered_model === 'claude-fallback-9',
+          ),
+        ).toBe(true);
+        const detail = (await grading.sessions.get(codexId))?.grades[0];
+        expect(detail).toMatchObject({
+          judgeModel: 'claude-sonnet-5-5',
+          answeredModel: 'claude-fallback-9',
+        });
+
+        // Not graded again, although the answering model differs from the one asked for ...
+        expect((await grading.gradeNow({ sessionIds: [codexId], policy: false })).skipped).toBe(4);
+        // ... and a forced re-grade replaces the row instead of adding one.
+        const id = await grading.enqueueBatch({ sessionIds: [codexId], force: true });
+        const job = await queue().get(id);
+        await grading.handlers[GRADE_BATCH_JOB]?.run({ id, payload: job?.payload } as never);
+        expect(await gradeCount()).toBe(4);
+      });
+    });
+
+    describe('batch', () => {
+      it('goes on after a session fails and reports each failure in the job progress', async () => {
+        const claudeEvents = Number(
+          (
+            await t.handle.db
+              .selectFrom('event')
+              .select((eb) => eb.fn.countAll().as('n'))
+              .where('session_id', '=', claudeId)
+              .executeTakeFirstOrThrow()
+          ).n,
+        );
+        decide = (req) => {
+          if (req.eventCount === claudeEvents) throw new Error('judge exploded');
+          return { score: 1, reason: 'fine', evidence: ['e0'] };
+        };
+        const id = await grading.enqueueBatch({ sessionIds: [claudeId, codexId], force: false });
+        const job = await queue().get(id);
+        await grading.handlers[GRADE_BATCH_JOB]?.run({ id, payload: job?.payload } as never);
+        expect((await grading.sessions.get(codexId))?.grades).toHaveLength(4);
+        expect((await grading.sessions.get(claudeId))?.grades).toHaveLength(0);
+        const progress = (await queue().get(id))?.progress;
+        expect(progress).toMatchObject({ failed: 1, done: 8, total: 8 });
+        expect(progress?.errors?.[0]).toContain(`${claudeId}: judge exploded`);
+      });
+    });
+
+    describe('budget windows', () => {
+      it('follow the configured time zone', async () => {
+        const tokyo = createGrading({
+          db: t.handle.db,
+          workspaceId: LOCAL_WORKSPACE_ID,
+          userId: LOCAL_USER_ID,
+          settings,
+          queue: queue(),
+          ingest,
+          rubrics,
+          judges: { current: () => Promise.resolve(activeJudge) },
+          timeZone: 'Asia/Tokyo',
+        });
+        const status = await tokyo.budget.status(new Date('2026-03-10T20:00:00Z')); // 05:00 on the 11th in Tokyo
+        expect(status.tokensResetAt).toBe('2026-03-11T15:00:00.000Z'); // 00:00 on the 12th, UTC+9
+        expect(status.usdResetAt).toBe('2026-03-31T15:00:00.000Z'); // 00:00 on 1 April
+        const utc = await grading.budget.status(new Date('2026-03-10T20:00:00Z'));
+        expect(utc.tokensResetAt).toBe('2026-03-11T00:00:00.000Z');
+      });
+    });
+
+    describe('sweep schedule', () => {
+      it('runs every five minutes', async () => {
+        expect(await grading.schedules[0]?.cron()).toBe('*/5 * * * *');
       });
     });
 

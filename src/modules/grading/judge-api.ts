@@ -1,7 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { JUDGE_INSTRUCTIONS, rubricPrompt, tracePrompt } from './prompt.js';
+import { buildPrompt } from './prompt.js';
 import {
   JUDGE_MODEL,
+  JudgeCallError,
   JudgeUnavailableError,
   verdictJsonSchema,
   verdictSchema,
@@ -35,9 +36,9 @@ function describe(e: unknown): string {
 }
 
 /**
- * Anthropic API transport: structured output (JSON schema restricted to the rubric's scale),
- * medium effort, and a cache breakpoint after the fixed instructions and the trace, so the
- * rubrics of one session pay for the trace once (ADR-0006).
+ * Anthropic API transport: structured output (JSON schema restricted to the rubric's scale) and
+ * medium effort. The rubric rides in the system prompt, ahead of the trace, and the trace sits
+ * behind a per-request boundary token (ADR-0006); every request differs, so nothing is cached.
  */
 export function createApiJudge(opts: ApiJudgeOptions): Judge {
   const model = opts.model ?? JUDGE_MODEL;
@@ -54,6 +55,7 @@ export function createApiJudge(opts: ApiJudgeOptions): Judge {
 
     async grade(req: JudgeRequest): Promise<JudgeResult> {
       const client = clientFor(key());
+      const prompt = buildPrompt(req);
       let res;
       try {
         res = await client.beta.messages.create({
@@ -61,26 +63,12 @@ export function createApiJudge(opts: ApiJudgeOptions): Judge {
           max_tokens: MAX_TOKENS,
           betas: [FALLBACK_BETA],
           fallbacks: 'default',
-          system: [
-            { type: 'text', text: JUDGE_INSTRUCTIONS, cache_control: { type: 'ephemeral' } },
-          ],
+          system: prompt.system,
           output_config: {
             effort: 'medium',
             format: { type: 'json_schema', schema: verdictJsonSchema(req.rubric.scale) },
           },
-          messages: [
-            {
-              role: 'user',
-              content: [
-                {
-                  type: 'text',
-                  text: tracePrompt(req.trace),
-                  cache_control: { type: 'ephemeral' },
-                },
-                { type: 'text', text: rubricPrompt(req.rubric) },
-              ],
-            },
-          ],
+          messages: [{ role: 'user', content: prompt.user }],
         });
       } catch (e) {
         if (e instanceof Anthropic.AuthenticationError)
@@ -94,11 +82,23 @@ export function createApiJudge(opts: ApiJudgeOptions): Judge {
         output: res.usage.output_tokens,
       };
       if (res.stop_reason === 'refusal') return { kind: 'refused', model: res.model, usage };
+      // From here on the response is paid for: failures carry its usage so the ledger sees it.
+      const unusable = (why: string): JudgeCallError =>
+        new JudgeCallError(why, usage, res.model, true);
       if (res.stop_reason === 'max_tokens')
-        throw new Error('The judge ran out of output tokens before it answered');
+        throw unusable('The judge ran out of output tokens before it answered');
       const text = res.content.find((b) => b.type === 'text');
-      if (text?.type !== 'text') throw new Error('The judge answered without text');
-      const v = verdictSchema.parse(JSON.parse(text.text));
+      if (text?.type !== 'text') throw unusable('The judge answered without text');
+      const parsed = (() => {
+        try {
+          return verdictSchema.safeParse(JSON.parse(text.text));
+        } catch {
+          return undefined;
+        }
+      })();
+      if (!parsed?.success)
+        throw unusable('The judge answered with something that is not a verdict');
+      const v = parsed.data;
       return {
         kind: 'verdict',
         score: v.score,

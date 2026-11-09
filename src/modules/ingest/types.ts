@@ -100,4 +100,6 @@ export interface GradeCandidate {
   startedAt: string;
   failedToolCalls: number;
   testsRun: number;
+  /** The redaction version the session was stored with (`off` when redaction was disabled). */
+  redactionVersion: string | null;
 }

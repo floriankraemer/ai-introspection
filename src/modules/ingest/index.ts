@@ -28,7 +28,8 @@ export type {
   SessionSummary,
   TraceEvent,
 } from './sessions.js';
-export { REDACTION_VERSION } from './redaction.js';
+export { REDACTION_VERSION, redactionRefusal } from './redaction.js';
+export { UnredactedSessionError } from './sessions.js';
 
 export const IMPORT_JOB = 'import_history';
 export const INGEST_FILE_JOB = 'ingest_file';

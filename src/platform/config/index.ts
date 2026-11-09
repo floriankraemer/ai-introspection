@@ -3,6 +3,15 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 
+function isTimeZone(name: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: name });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const LOOPBACK_HOSTS = ['127.0.0.1', 'localhost', '::1'];
 
 const envSchema = z.object({
@@ -16,6 +25,11 @@ const envSchema = z.object({
   INTROSPECT_CLAUDE_CREDENTIALS: z.string().min(1).optional(),
   /** Test-only: `fake` swaps the judge for a deterministic one. Never reachable from the UI. */
   INTROSPECT_JUDGE: z.enum(['fake']).optional(),
+  TZ: z
+    .string()
+    .min(1)
+    .refine(isTimeZone, 'must be an IANA time zone such as Europe/Berlin')
+    .default('UTC'),
 });
 
 export interface Config {
@@ -29,8 +43,13 @@ export interface Config {
   watchPoll: boolean;
   /** Private HOME of the `claude -p` judge runs; never a folder an agent-log source reads. */
   claudeHome: string;
-  /** The user's Claude login file, read-only; copied into `claudeHome` for the CLI judge. */
-  claudeCredentials: string;
+  /**
+   * Opt-in, native runs only: a login file copied into `claudeHome` once. Unset by default (the
+   * judge logs in on its own with `introspect judge-login`); the copy shares your refresh token.
+   */
+  claudeSeedCredentials: string | undefined;
+  /** IANA time zone of the budget windows (env `TZ`, default UTC). */
+  timeZone: string;
   judgeOverride: 'fake' | undefined;
 }
 
@@ -63,8 +82,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     host: INTROSPECT_HOST,
     databaseUrl: DATABASE_URL ?? join(dataDir, 'introspect.db'),
     claudeHome: INTROSPECT_CLAUDE_HOME ?? join(dataDir, 'claude-home'),
-    claudeCredentials:
-      INTROSPECT_CLAUDE_CREDENTIALS ?? join(homedir(), '.claude', '.credentials.json'),
+    claudeSeedCredentials: INTROSPECT_CLAUDE_CREDENTIALS,
+    timeZone: parsed.data.TZ,
     judgeOverride: INTROSPECT_JUDGE,
     watchPoll:
       INTROSPECT_WATCH_POLL === '1' ||

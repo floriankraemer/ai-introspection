@@ -2,6 +2,7 @@
 import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import {
+  judgeLogin,
   runDoctorCommand,
   runGradeCommand,
   runImportCommand,
@@ -82,8 +83,20 @@ async function gradeCommand(): Promise<void> {
   console.log(
     `Graded ${String(summary.graded)}, skipped ${String(summary.skipped)}, deferred for budget ${String(summary.deferred)}, failed ${String(summary.failed)} (${String(summary.sessions)} sessions).`,
   );
+  for (const [reason, n] of Object.entries(summary.skippedReasons))
+    console.log(`  skipped ${String(n)}: ${reason}`);
   for (const e of summary.errors) console.error(e);
   if (summary.failed > 0) process.exit(1);
+}
+
+/** Signs the judge in to Claude, in its own private home, never with the host's login. */
+async function judgeLoginCommand(): Promise<void> {
+  const { claudeHome } = loadConfig();
+  console.log(
+    `Signing the judge in to Claude. Its login is kept in ${claudeHome}, apart from yours.`,
+  );
+  const code = await judgeLogin(claudeHome);
+  if (code !== 0) process.exit(code ?? 1);
 }
 
 async function doctorCommand(): Promise<void> {
@@ -110,6 +123,11 @@ if (command === 'serve') {
     console.error(e instanceof Error ? e.message : e);
     process.exit(1);
   });
+} else if (command === 'judge-login') {
+  judgeLoginCommand().catch((e: unknown) => {
+    console.error(e instanceof Error ? e.message : e);
+    process.exit(1);
+  });
 } else if (command === 'grade') {
   gradeCommand().catch((e: unknown) => {
     console.error(e instanceof Error ? e.message : e);
@@ -117,7 +135,7 @@ if (command === 'serve') {
   });
 } else {
   console.error(
-    'Usage: introspect serve | open | doctor | import [--agent <agent> --path <folder>] | grade --session <id> | --since <7d> | --all [--policy]',
+    'Usage: introspect serve | open | doctor | judge-login | import [--agent <agent> --path <folder>] | grade --session <id> | --since <7d> | --all [--policy]',
   );
   process.exit(1);
 }

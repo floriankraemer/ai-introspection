@@ -23,6 +23,7 @@ describe.skipIf(!process.env.ANTHROPIC_API_KEY)('Anthropic API judge (live)', ()
         '[e2] +5s tool_call bash: `npx vitest run`\n  ↳ 12 passed',
         '[e3] +9s assistant All tests pass.',
       ].join('\n'),
+      eventCount: 4,
     });
     expect(result.kind).toBe('verdict');
     if (result.kind === 'verdict') {

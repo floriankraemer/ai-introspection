@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment -- vitest asymmetric matchers are typed any */
 import { execFileSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -9,6 +10,7 @@ import {
   checkGitIdentity,
   checkJudge,
   checkOwnership,
+  checkRedaction,
   checkSkillsRepo,
   checkSources,
   checkWatcher,
@@ -26,7 +28,7 @@ const judge = (over: Partial<DoctorInput['judge']> = {}): DoctorInput['judge'] =
   keySet: true,
   fake: false,
   cli: {
-    credentialsPath: '/run/claude/credentials.json',
+    home: '/data/claude-home',
     loginPresent: true,
     isolationProblem: null,
   },
@@ -37,6 +39,7 @@ function input(over: Partial<DoctorInput> = {}): DoctorInput {
   return {
     dataDir: tmp(),
     watchPoll: true,
+    redactionEnabled: true,
     db: {},
     sources: [],
     repos: [],
@@ -168,20 +171,32 @@ describe('judge check', () => {
     expect((await checkJudge(input({ judge: cli, run: found }))).status).toBe('ok');
     const noLogin = judge({
       transport: 'cli',
-      cli: { credentialsPath: '/x', loginPresent: false, isolationProblem: null },
+      cli: { home: '/x', loginPresent: false, isolationProblem: null },
     });
-    expect(await checkJudge(input({ judge: noLogin, run: found }))).toMatchObject({
+    const missing = await checkJudge(input({ judge: noLogin, run: found }));
+    expect(missing).toMatchObject({
       status: 'warn',
-      detail: 'No Claude login at /x',
+      detail: expect.stringContaining('never uses your host login'),
+      fix: expect.stringContaining('make claude-login'),
     });
     const overlapping = judge({
       transport: 'cli',
-      cli: { credentialsPath: '/x', loginPresent: true, isolationProblem: '/a overlaps /b' },
+      cli: { home: '/x', loginPresent: true, isolationProblem: '/a overlaps /b' },
     });
     expect((await checkJudge(input({ judge: overlapping, run: found }))).status).toBe('fail');
   });
   it('warns when the fake judge is active', async () => {
     expect((await checkJudge(input({ judge: judge({ fake: true }) }))).status).toBe('warn');
+  });
+});
+
+describe('redaction check', () => {
+  it('warns when redaction is off and says what that means for grading', () => {
+    expect(checkRedaction(input()).status).toBe('ok');
+    expect(checkRedaction(input({ redactionEnabled: false }))).toMatchObject({
+      status: 'warn',
+      detail: expect.stringContaining('never sent to a judge'),
+    });
   });
 });
 

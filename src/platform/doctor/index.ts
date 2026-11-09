@@ -18,6 +18,8 @@ export interface DoctorReport {
 export interface DoctorInput {
   dataDir: string;
   watchPoll: boolean;
+  /** The `redaction.enabled` setting; sessions stored while it is off never reach a judge. */
+  redactionEnabled: boolean;
   /** `error` is set when the database cannot be read or is not migrated. */
   db: { error?: string };
   sources: { agent: string; path: string; enabled: boolean }[];
@@ -31,8 +33,9 @@ export interface DoctorInput {
     /** `INTROSPECT_JUDGE=fake`: the test-only judge replaces both transports. */
     fake: boolean;
     cli: {
-      credentialsPath: string;
-      /** The login file exists and is not empty. */
+      /** The judge's private HOME, where its own login lives. */
+      home: string;
+      /** The judge's own login exists in `home`. */
       loginPresent: boolean;
       /** Why the CLI's private home could be ingested as agent logs, or null. */
       isolationProblem: string | null;
@@ -261,15 +264,15 @@ export async function checkJudge({ judge, env, run }: DoctorInput): Promise<Doct
       'judge',
       label,
       'The claude CLI is not installed',
-      'Use the Docker image (it ships the CLI), or install `claude` and run `claude login`; or switch the judge to the API transport in Settings.',
+      'Use the Docker image (it ships the CLI), or install `claude` and run `introspect judge-login`; or switch the judge to the API transport in Settings.',
     );
   if (!judge.cli.loginPresent)
     return problem(
       'warn',
       'judge',
       label,
-      `No Claude login at ${judge.cli.credentialsPath}`,
-      'Run `claude login` on the host, then `make up` mounts ~/.claude/.credentials.json read-only (restart the container after a new login).',
+      `The judge has no Claude login of its own in ${judge.cli.home}. It never uses your host login: a second client of the same login can rotate its refresh token and sign you out.`,
+      "Run `make claude-login` (Docker) or `introspect judge-login` (native) and sign in once; the login stays in the judge's private home.",
     );
   if (judge.cli.isolationProblem)
     return problem(
@@ -282,7 +285,19 @@ export async function checkJudge({ judge, env, run }: DoctorInput): Promise<Doct
   return ok(
     'judge',
     label,
-    'The claude CLI and a login are present; judge runs use a private home that no source reads',
+    "The claude CLI and the judge's own login are present; judge runs use a private home that no source reads",
+  );
+}
+
+export function checkRedaction({ redactionEnabled }: DoctorInput): DoctorCheck {
+  const label = 'Redaction';
+  if (redactionEnabled) return ok('redaction', label, 'On: secrets are masked before storage');
+  return problem(
+    'warn',
+    'redaction',
+    label,
+    'Redaction is off: new sessions are stored unredacted and are never sent to a judge',
+    'Turn "Redact secrets" on in Settings; sessions stored while it was off are rebuilt from their log files and then become gradable.',
   );
 }
 
@@ -331,6 +346,7 @@ export async function runDoctor(input: DoctorInput): Promise<DoctorReport> {
     await checkGitIdentity(input),
     await checkGh(input),
     await checkJudge(input),
+    checkRedaction(input),
     ...checkRubrics(input),
     checkOwnership(input),
   ];

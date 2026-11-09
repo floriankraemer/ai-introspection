@@ -13,6 +13,8 @@ const FALLBACK_PRICE = { input: 2, output: 10, cacheRead: 0.2 };
 const CACHE_WRITE_FACTOR = 1.25;
 /** What one verdict costs in output, for the pre-call budget check. */
 export const ESTIMATED_OUTPUT_TOKENS = 1500;
+/** A reservation older than this belongs to a process that died; it stops counting against the budget. */
+const STALE_RESERVATION_MS = 30 * 60_000;
 
 /** Estimated dollars at API list prices. For the CLI transport this is an estimate too (ADR-0006). */
 export function costOf(model: string, u: Usage): number {
@@ -35,12 +37,61 @@ export const estimateCost = (model: string, inputTokens: number): number =>
     output: ESTIMATED_OUTPUT_TOKENS,
   });
 
-export const startOfDay = (now: Date): Date =>
-  new Date(now.getFullYear(), now.getMonth(), now.getDate());
-export const nextMidnight = (now: Date): Date =>
-  new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-export const startOfMonth = (now: Date): Date => new Date(now.getFullYear(), now.getMonth(), 1);
-export const nextMonth = (now: Date): Date => new Date(now.getFullYear(), now.getMonth() + 1, 1);
+/** The wall-clock parts of an instant in a time zone. */
+function zonedParts(at: Date, timeZone: string): { y: number; m: number; d: number } {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+  }).formatToParts(at);
+  const get = (type: string): number => Number(parts.find((p) => p.type === type)?.value);
+  return { y: get('year'), m: get('month') - 1, d: get('day') };
+}
+
+/** The instant at which the wall clock of `timeZone` reads midnight on the given date (month and day may overflow). */
+function zonedMidnight(y: number, m: number, d: number, timeZone: string): Date {
+  const wall = Date.UTC(y, m, d);
+  const offsetAt = (instant: number): number => {
+    const p = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      second: 'numeric',
+    }).formatToParts(new Date(instant));
+    const g = (type: string): number => Number(p.find((x) => x.type === type)?.value);
+    return (
+      Date.UTC(g('year'), g('month') - 1, g('day'), g('hour'), g('minute'), g('second')) - instant
+    );
+  };
+  // Two passes settle the offset across a DST change.
+  const first = wall - offsetAt(wall);
+  return new Date(wall - offsetAt(first));
+}
+
+/** Budget windows follow the configured time zone (env `TZ`, default UTC). */
+export const windows = (timeZone: string) => ({
+  startOfDay: (now: Date): Date => {
+    const { y, m, d } = zonedParts(now, timeZone);
+    return zonedMidnight(y, m, d, timeZone);
+  },
+  nextMidnight: (now: Date): Date => {
+    const { y, m, d } = zonedParts(now, timeZone);
+    return zonedMidnight(y, m, d + 1, timeZone);
+  },
+  startOfMonth: (now: Date): Date => {
+    const { y, m } = zonedParts(now, timeZone);
+    return zonedMidnight(y, m, 1, timeZone);
+  },
+  nextMonth: (now: Date): Date => {
+    const { y, m } = zonedParts(now, timeZone);
+    return zonedMidnight(y, m + 1, 1, timeZone);
+  },
+});
 
 type BudgetSettings = Pick<
   Settings,
@@ -49,7 +100,7 @@ type BudgetSettings = Pick<
 
 export interface BudgetStatus {
   mode: BudgetSettings['budget.mode'];
-  /** Fresh input plus output tokens since local midnight; cache reads do not count. */
+  /** Fresh input plus output tokens since midnight in the configured time zone; cache reads do not count. */
   tokensToday: number;
   /** Null when unlimited or when the mode ignores it. */
   tokensPerDay: number | null;
@@ -66,13 +117,36 @@ export interface Deferral {
   reason: string;
 }
 
+export interface CallMeta {
+  purpose: 'grade' | 'dry_run';
+  /** The model asked for; `settle` replaces it with the one that answered. */
+  model: string;
+  transport: string;
+  refId: string;
+  userId: string | null;
+}
+
+export type Reservation =
+  | { kind: 'reserved'; id: string }
+  | { kind: 'deferred'; deferral: Deferral }
+  /** The estimate alone exceeds the whole limit; waiting would never help. */
+  | { kind: 'too_large'; reason: string };
+
 /** Aggregates come back as strings on Postgres and as null over no rows. */
 const num = (v: unknown): number => Number(v ?? 0);
 
-export function createBudget(db: Db, workspaceId: string, getSettings: () => Promise<Settings>) {
-  async function used(now: Date): Promise<{ tokens: number; usd: number }> {
+export function createBudget(
+  db: Db,
+  workspaceId: string,
+  getSettings: () => Promise<Settings>,
+  timeZone = 'UTC',
+) {
+  const w = windows(timeZone);
+
+  async function used(q: Db, now: Date): Promise<{ tokens: number; usd: number }> {
+    const live = new Date(now.getTime() - STALE_RESERVATION_MS).toISOString();
     const sum = (since: Date) =>
-      db
+      q
         .selectFrom('llm_call')
         .select((eb) => [
           eb.fn.sum<number>('tokens_in').as('in'),
@@ -81,9 +155,10 @@ export function createBudget(db: Db, workspaceId: string, getSettings: () => Pro
         ])
         .where('workspace_id', '=', workspaceId)
         .where('at', '>=', since.toISOString())
+        .where((eb) => eb.or([eb('status', '!=', 'reserved'), eb('at', '>=', live)]))
         .executeTakeFirstOrThrow();
-    const day = await sum(startOfDay(now));
-    const month = await sum(startOfMonth(now));
+    const day = await sum(w.startOfDay(now));
+    const month = await sum(w.startOfMonth(now));
     return { tokens: num(day.in) + num(day.out), usd: num(month.usd) };
   }
 
@@ -95,7 +170,7 @@ export function createBudget(db: Db, workspaceId: string, getSettings: () => Pro
   return {
     async status(now = new Date()): Promise<BudgetStatus> {
       const s = await getSettings();
-      const u = await used(now);
+      const u = await used(db, now);
       const limit = limitsOf(s);
       const deferred = await db
         .selectFrom('job')
@@ -110,64 +185,110 @@ export function createBudget(db: Db, workspaceId: string, getSettings: () => Pro
         usdMonth: u.usd,
         usdPerMonth: limit.usd,
         deferredJobs: num(deferred.n),
-        tokensResetAt: nextMidnight(now).toISOString(),
-        usdResetAt: nextMonth(now).toISOString(),
+        tokensResetAt: w.nextMidnight(now).toISOString(),
+        usdResetAt: w.nextMonth(now).toISOString(),
       };
     },
 
-    /** Null when the call fits. Otherwise when to try again: midnight for tokens, the next month for dollars. */
-    async check(
-      estimate: { tokens: number; usd: number },
+    /**
+     * Checks the budget and puts the estimate on the ledger in one transaction, so parallel
+     * calls cannot all see the same free room. The row counts against the limits until `settle`
+     * replaces the estimate with the real usage, or `release` drops it.
+     */
+    async reserve(
+      call: CallMeta,
+      estimate: { inputTokens: number; usd: number },
       now = new Date(),
-    ): Promise<Deferral | null> {
+    ): Promise<Reservation> {
+      const tokens = estimate.inputTokens + ESTIMATED_OUTPUT_TOKENS;
+      // Read before the transaction: on SQLite the transaction owns the only connection.
       const limit = limitsOf(await getSettings());
-      const u = await used(now);
-      if (limit.usd !== null && u.usd + estimate.usd > limit.usd) {
+      if (limit.usd !== null && estimate.usd > limit.usd)
         return {
-          runAfter: nextMonth(now),
-          reason: `the monthly dollar budget of $${String(limit.usd)} is used up`,
+          kind: 'too_large',
+          reason: `this call is estimated at $${estimate.usd.toFixed(4)}, more than the whole monthly dollar budget of $${String(limit.usd)}; raise the budget or grade a shorter session`,
         };
-      }
-      if (limit.tokens !== null && u.tokens + estimate.tokens > limit.tokens) {
+      if (limit.tokens !== null && tokens > limit.tokens)
         return {
-          runAfter: nextMidnight(now),
-          reason: `the daily token budget of ${String(limit.tokens)} is used up`,
+          kind: 'too_large',
+          reason: `this call is estimated at ${String(tokens)} tokens, more than the whole daily token budget of ${String(limit.tokens)}; raise the budget or grade a shorter session`,
         };
-      }
-      return null;
+      return db.transaction().execute(async (tx): Promise<Reservation> => {
+        // A row lock on the workspace serialises reservations on Postgres (SQLite has one writer).
+        await tx
+          .updateTable('workspace')
+          .set({ id: workspaceId })
+          .where('id', '=', workspaceId)
+          .execute();
+        const u = await used(tx, now);
+        if (limit.usd !== null && u.usd + estimate.usd > limit.usd) {
+          return {
+            kind: 'deferred',
+            deferral: {
+              runAfter: w.nextMonth(now),
+              reason: `the monthly dollar budget of $${String(limit.usd)} is used up`,
+            },
+          };
+        }
+        if (limit.tokens !== null && u.tokens + tokens > limit.tokens) {
+          return {
+            kind: 'deferred',
+            deferral: {
+              runAfter: w.nextMidnight(now),
+              reason: `the daily token budget of ${String(limit.tokens)} is used up`,
+            },
+          };
+        }
+        const id = newId();
+        await tx
+          .insertInto('llm_call')
+          .values({
+            id,
+            workspace_id: workspaceId,
+            user_id: call.userId,
+            at: now.toISOString(),
+            purpose: call.purpose,
+            model: call.model,
+            transport: call.transport,
+            tokens_in: estimate.inputTokens,
+            tokens_out: ESTIMATED_OUTPUT_TOKENS,
+            cost_estimate: estimate.usd,
+            ref_id: call.refId,
+            status: 'reserved',
+          })
+          .execute();
+        return { kind: 'reserved', id };
+      });
     },
 
-    /** One ledger row per LLM call (ADR-0006); the budget limits are sums over it. */
-    async record(
-      call: {
-        purpose: 'grade' | 'dry_run';
-        model: string;
-        transport: string;
-        usage: Usage;
-        refId: string;
-        userId: string | null;
-      },
-      now = new Date(),
-    ): Promise<string> {
-      const id = newId();
+    /** One ledger row per LLM call that got a response (ADR-0006); the budget limits are sums over it. */
+    async settle(
+      id: string,
+      result: { model: string; usage: Usage; status: 'ok' | 'error' },
+    ): Promise<number> {
+      const cost = costOf(result.model, result.usage);
       await db
-        .insertInto('llm_call')
-        .values({
-          id,
-          workspace_id: workspaceId,
-          user_id: call.userId,
-          at: now.toISOString(),
-          purpose: call.purpose,
-          model: call.model,
-          transport: call.transport,
-          tokens_in: call.usage.input + call.usage.cacheWrite,
-          cache_read_tokens: call.usage.cacheRead,
-          tokens_out: call.usage.output,
-          cost_estimate: costOf(call.model, call.usage),
-          ref_id: call.refId,
+        .updateTable('llm_call')
+        .set({
+          model: result.model,
+          tokens_in: result.usage.input + result.usage.cacheWrite,
+          cache_read_tokens: result.usage.cacheRead,
+          tokens_out: result.usage.output,
+          cost_estimate: cost,
+          status: result.status,
         })
+        .where('id', '=', id)
         .execute();
-      return id;
+      return cost;
+    },
+
+    /** The call never got a response: nothing was spent, so the reservation goes away. */
+    async release(id: string): Promise<void> {
+      await db
+        .deleteFrom('llm_call')
+        .where('id', '=', id)
+        .where('status', '=', 'reserved')
+        .execute();
     },
   };
 }

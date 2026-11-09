@@ -1,6 +1,7 @@
 import { sql } from 'kysely';
 import { asBool } from '../../platform/db/json.js';
 import type { Db } from '../../platform/db/schema.js';
+import { redactionRefusal } from './redaction.js';
 import { SAMPLE_PERCENT } from './signals.js';
 import { summarize } from './trace-text.js';
 import type { Agent, EventKind, GradeCandidate, RedactedTrace, TraceRecord } from './types.js';
@@ -84,12 +85,23 @@ function decodeCursor(cursor: string): { startedAt: string; id: string } | undef
 
 const likePattern = (q: string): string => `%${q.toLowerCase().replace(/[\\%_]/g, '\\$&')}%`;
 
+/** The judge may only see sessions redacted with the current rules; `traceFor` refuses the rest. */
+export class UnredactedSessionError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'UnredactedSessionError';
+  }
+}
+
 function notGradedReason(s: {
   status: string;
   flagged: boolean | number;
   sampled: boolean | number;
+  redaction_version: string | null;
 }): string {
   if (s.status === 'active') return 'session still running';
+  const refusal = redactionRefusal(s.redaction_version);
+  if (refusal) return refusal;
   if (asBool(s.flagged)) return 'flagged, waiting for the judge';
   if (asBool(s.sampled)) return 'sampled, waiting for the judge';
   return `not flagged, outside ${String(SAMPLE_PERCENT)}% sample`;
@@ -123,6 +135,7 @@ export function createSessionQueries(db: Db, workspaceId: string) {
           'session.status',
           'session.flagged',
           'session.sampled',
+          'session.redaction_version',
           'session.tokens_in',
           'session.tokens_out',
           'session.tokens_cache_read',
@@ -300,6 +313,7 @@ export function createSessionQueries(db: Db, workspaceId: string) {
           'session.flagged',
           'session.sampled',
           'session.outcome_kind',
+          'session.redaction_version',
           'session.started_at',
           'session.created_at',
           'signal.failed_tool_calls',
@@ -326,11 +340,13 @@ export function createSessionQueries(db: Db, workspaceId: string) {
         startedAt: r.started_at ?? r.created_at,
         failedToolCalls: r.failed_tool_calls ?? 0,
         testsRun: r.tests_run ?? 0,
+        redactionVersion: r.redaction_version,
       }));
     },
 
     /**
-     * The redacted trace for the judge. Payloads are cut to their head and tail here, page by page,
+     * The redacted trace for the judge; throws `UnredactedSessionError` for a session stored unredacted or with old rules.
+     * Payloads are cut to their head and tail here, page by page,
      * so a huge session never sits in memory in full.
      */
     async traceFor(
@@ -339,11 +355,14 @@ export function createSessionQueries(db: Db, workspaceId: string) {
     ): Promise<RedactedTrace | null> {
       const s = await db
         .selectFrom('session')
-        .select(['agent', 'title'])
+        .select(['agent', 'title', 'redaction_version'])
         .where('id', '=', id)
         .where('workspace_id', '=', workspaceId)
         .executeTakeFirst();
       if (!s) return null;
+      // The one choke point to the judge: every caller (sweep, batch, CLI, dry run) passes here.
+      const refusal = redactionRefusal(s.redaction_version);
+      if (refusal) throw new UnredactedSessionError(refusal);
       const shorten = (text: string | null): string | null => {
         if (text === null || text.length <= cut.headChars + cut.tailChars) return text;
         const omitted = text.length - cut.headChars - cut.tailChars;

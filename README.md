@@ -25,9 +25,11 @@ Run it in the stack with `docker compose exec introspect introspect grade --sinc
 Two ways to run the judge (Settings, "Runs via"):
 
 - **Anthropic API**: paste a key in Settings. It is stored in `<data>/secrets` (mode 0600), never in the database. Default model `claude-sonnet-5-5`.
-- **Local claude CLI**: uses your subscription. Run `claude login` on the host; `make up` mounts only `~/.claude/.credentials.json`, read-only, into the container (set `INTROSPECT_CLAUDE_CREDENTIALS` for another path). The CLI runs with a private home at `/data/claude-home`, so its own sessions are never read as agent logs. After a new login, `docker compose restart`.
+- **Local claude CLI**: uses your subscription. Run `make claude-login` once: it signs the container's own `claude` in (open the URL it prints, paste the code back). That login lives in the container's private home at `/data/claude-home`, so its sessions are never read as agent logs. Your host login (`~/.claude`) is never mounted or copied: a second client of the same login can rotate its refresh token and sign you out. Without Docker, run `introspect judge-login`; `INTROSPECT_CLAUDE_CREDENTIALS` opts in to a one-time copy of a login file, which shares your refresh token. `make doctor` says when the judge has no login.
 
-A daily token budget (default 1,000,000) and an optional monthly dollar ceiling are set in Settings; work over budget waits for the next midnight or month (`GET /v1/budget`).
+A daily token budget (default 1,000,000) and an optional monthly dollar ceiling are set in Settings; work over budget waits for the next midnight or month (`GET /v1/budget`). The windows follow the time zone in `TZ` (UTC when unset). A call is reserved on the ledger before it runs, so parallel grades cannot overspend; a call estimated above the whole limit fails with a reason instead of waiting.
+
+Sessions stored while redaction was off, or with older redaction rules, are never sent to a judge. They show "redaction is off" or "not redacted with current rules — re-import pending"; turning redaction on rebuilds them from their log files.
 A rubric counts as trusted once the judge agrees with at least 8 of your 10 hand labels (Rubrics screen); untrusted rubrics are graded but marked.
 
 `INTROSPECT_JUDGE=fake` (environment only) swaps in a deterministic judge for tests and demos.

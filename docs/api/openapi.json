@@ -84,6 +84,15 @@
               },
               "total": {
                 "type": "integer"
+              },
+              "failed": {
+                "type": "integer"
+              },
+              "errors": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               }
             },
             "required": [
@@ -377,6 +386,12 @@
           "judgeModel": {
             "type": "string"
           },
+          "answeredModel": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "transport": {
             "type": "string"
           },
@@ -389,7 +404,8 @@
             "enum": [
               "ok",
               "refused",
-              "invalid"
+              "invalid",
+              "stale"
             ]
           },
           "trusted": {
@@ -405,6 +421,7 @@
           "reason",
           "evidenceEventIds",
           "judgeModel",
+          "answeredModel",
           "transport",
           "gradedAt",
           "status",
@@ -882,6 +899,9 @@
           "judgeModel": {
             "type": "string"
           },
+          "answeredModel": {
+            "type": "string"
+          },
           "transport": {
             "type": "string"
           },
@@ -907,6 +927,7 @@
           "reason",
           "evidenceEventIds",
           "judgeModel",
+          "answeredModel",
           "transport",
           "humanPassed",
           "agrees"

@@ -15,7 +15,7 @@ export const estimateTokens = (text: string): number => Math.ceil(text.length / 
 export interface CondensedTrace {
   text: string;
   estimatedTokens: number;
-  /** `e<seq>` label to event id; covers every event of the trace, including collapsed and omitted ones. */
+  /** `e<seq>` label to event id, for the events whose label is in `text`: shown, or folded into a "repeated" line. */
   labels: Map<string, string>;
   omittedEvents: number;
 }
@@ -25,6 +25,25 @@ export const labelOf = (e: Pick<TraceRecord, 'seq'>): string => `e${String(e.seq
 function clip(text: string, head: number, tail: number): string {
   if (text.length <= head + tail) return text;
   return `${text.slice(0, head)}\n[${String(text.length - head - tail)} characters omitted]\n${text.slice(-tail)}`;
+}
+
+const CUT_NOTE = '\n[... trace cut in the middle to fit the limit ...]\n';
+
+/** Keeps the start and the end (first request, final answer) and drops the middle. */
+function cutMiddle(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  const keep = maxChars - CUT_NOTE.length;
+  const head = Math.floor(keep / 2);
+  return text.slice(0, head) + CUT_NOTE + text.slice(text.length - (keep - head));
+}
+
+/** Labels the judge can see: the start of an entry, or the list of a "repeated" line. */
+function sentLabels(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of text.matchAll(/^\[(e\d+)\] \+/gm)) if (m[1]) out.add(m[1]);
+  for (const m of text.matchAll(/\(repeated \d+ more times: ([^)]*)\)/g))
+    for (const l of (m[1] ?? '').split(', ')) if (/^e\d+$/.test(l)) out.add(l);
+  return out;
 }
 
 const indent = (text: string): string => text.replaceAll('\n', '\n    ');
@@ -128,7 +147,7 @@ function render(
  */
 export function condenseTrace(trace: RedactedTrace, maxTokens = MAX_TRACE_TOKENS): CondensedTrace {
   const items = prepare(trace.events);
-  const labels = new Map(trace.events.map((e) => [labelOf(e), e.id]));
+  const allLabels = new Map(trace.events.map((e) => [labelOf(e), e.id]));
   const firstTs = trace.events.find((e) => e.ts)?.ts;
   const startMs = firstTs ? Date.parse(firstTs) : 0;
   const droppable = items.filter((p) => !p.folded && !p.protectedFromDrop).map((p) => p.event.seq);
@@ -154,10 +173,16 @@ export function condenseTrace(trace: RedactedTrace, maxTokens = MAX_TRACE_TOKENS
       head = Math.max(MIN_HEAD_CHARS, Math.floor(head / 2));
       tail = Math.max(MIN_HEAD_CHARS / 2, Math.floor(tail / 2));
     } else {
-      text = text.slice(0, maxTokens * CHARS_PER_TOKEN); // last resort; keeps the cap a hard one
+      text = cutMiddle(text, maxTokens * CHARS_PER_TOKEN); // last resort; keeps the cap a hard one
       break;
     }
     text = render(items, dropped, startMs, head, tail);
   }
+  const labels = new Map(
+    [...sentLabels(text)].flatMap((l) => {
+      const id = allLabels.get(l);
+      return id === undefined ? [] : [[l, id] as const];
+    }),
+  );
   return { text, estimatedTokens: estimateTokens(text), labels, omittedEvents: dropped.size };
 }

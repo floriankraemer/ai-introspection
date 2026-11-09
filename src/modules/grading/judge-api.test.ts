@@ -1,10 +1,12 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import { describe, expect, it } from 'vitest';
 import { createApiJudge } from './judge-api.js';
+import { JudgeCallError } from './types.js';
 
 const request = {
   rubric: { name: 'efficiency', version: 'abc', scale: [0, 0.5, 1], body: 'Did it work?' },
   trace: '[e0] +0s user hello',
+  eventCount: 1,
 };
 
 function judgeWith(response: Record<string, unknown>, sent: unknown[] = []) {
@@ -55,8 +57,8 @@ describe('Anthropic API judge', () => {
     });
     const body = sent[0] as {
       model: string;
-      system: { cache_control?: unknown }[];
-      messages: { content: { cache_control?: unknown; text: string }[] }[];
+      system: string;
+      messages: { content: string }[];
       output_config: {
         effort: string;
         format: { schema: { properties: { score: { enum: number[] } } } };
@@ -65,11 +67,28 @@ describe('Anthropic API judge', () => {
     expect(body.model).toBe('claude-sonnet-5-5');
     expect(body.output_config.effort).toBe('medium');
     expect(body.output_config.format.schema.properties.score.enum).toEqual([0, 0.5, 1]);
-    expect(body.system[0]?.cache_control).toEqual({ type: 'ephemeral' });
-    const [trace, rubric] = body.messages[0]?.content ?? [];
-    expect(trace?.cache_control).toEqual({ type: 'ephemeral' });
-    expect(rubric?.text).toContain('Did it work?');
-    expect(rubric?.cache_control).toBeUndefined(); // the rubric comes after the breakpoint
+    // Rubric first (system prompt), then the trace alone in the user message behind a random boundary.
+    expect(body.system).toContain('Did it work?');
+    expect(body.messages[0]?.content).toMatch(
+      /^<trace-[0-9a-f]{24}>\n\[e0\] \+0s user hello\n<\/trace-/,
+    );
+  });
+
+  it('attaches the billed usage to an answer it cannot parse, so the ledger can record it', async () => {
+    const judge = judgeWith({
+      model: 'claude-sonnet-5-5',
+      stop_reason: 'end_turn',
+      usage,
+      content: [{ type: 'text', text: 'not json' }],
+    });
+    const err = await judge.grade(request).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(JudgeCallError);
+    expect(err).toMatchObject({
+      unusable: true,
+      usage: { input: 10, cacheWrite: 400, output: 30 },
+    });
+    const cut = judgeWith({ model: 'm', stop_reason: 'max_tokens', usage, content: [] });
+    expect(await cut.grade(request).catch((e: unknown) => e)).toMatchObject({ unusable: true });
   });
 
   it('turns a refusal into a refused result and still reports usage', async () => {

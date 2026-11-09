@@ -20,6 +20,9 @@ import { createWorker } from './jobs/worker.js';
 // Same relative path from src/platform (tsx) and dist/platform (built).
 const WEB_DIR = fileURLToPath(new URL('../../web/dist', import.meta.url));
 
+/** Rubric files are read from git at most this often; UI edits drop the cache at once. */
+const RUBRIC_CACHE_MS = 5 * 60_000;
+
 type SecretStoreLike = ReturnType<typeof createSecretStore>;
 
 /** The rubric store, judge provider and grading service, wired the same way for the server and the CLI. */
@@ -36,13 +39,15 @@ function buildGrading(
     db: handle.db,
     workspaceId: LOCAL_WORKSPACE_ID,
     repoPath: async () => (await skillRepos.getGlobal())?.path ?? null,
+    // The sweep runs every 5 minutes; rubric files are read from git at most that often.
+    cacheMs: RUBRIC_CACHE_MS,
   });
   const judges = createJudgeProvider({
     secrets,
     env: process.env,
     transport: async () => (await settings.get())['judge.transport'],
     claudeHome: config.claudeHome,
-    claudeCredentials: config.claudeCredentials,
+    claudeSeedCredentials: config.claudeSeedCredentials,
     sourcePaths: async () => (await ingest.sources.list()).map((s) => s.path),
     override: config.judgeOverride,
   });
@@ -55,6 +60,7 @@ function buildGrading(
     ingest,
     rubrics,
     judges,
+    timeZone: config.timeZone,
   });
   return { rubrics, judges, grading };
 }
@@ -87,6 +93,7 @@ async function doctorReport(
   return runDoctor({
     dataDir: config.dataDir,
     watchPoll: config.watchPoll,
+    redactionEnabled: current?.['redaction.enabled'] ?? true,
     db: dbError === undefined ? {} : { error: dbError },
     sources: sourceList,
     repos,
@@ -96,7 +103,7 @@ async function doctorReport(
       keySet: current?.['judge.api_key_set'] ?? false,
       fake: config.judgeOverride === 'fake',
       cli: {
-        credentialsPath: config.claudeCredentials,
+        home: config.claudeHome,
         loginPresent: status?.cliLoginPresent ?? false,
         isolationProblem: status?.isolationProblem ?? null,
       },
@@ -130,6 +137,9 @@ export async function runDoctorCommand(config: Config): Promise<DoctorReport> {
     await handle.close();
   }
 }
+
+/** `introspect judge-login`: `claude auth login` in the judge's private home. */
+export { judgeLogin } from '../modules/grading/index.js';
 
 export interface RunningServer {
   stop(): Promise<void>;
