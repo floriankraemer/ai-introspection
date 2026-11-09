@@ -82,52 +82,17 @@ export type ProposalList = Schemas['ProposalList'];
 export type ImproverRun = Schemas['ImproverRun'];
 export type ImproverSchedule = Json200<paths['/v1/improver/schedule']['get']>;
 
-// TODO(WP9 sync): local, tolerant shapes of GET /v1/trends and /v1/trends/changes. Replace with the
-// generated types once the backend publishes them in docs/api/openapi.json and rename the fields then.
+export type Trends = Json200<paths['/v1/trends']['get']>;
+export type TrendMarker = Trends['markers'][number];
+export type TrendMarkerKind = TrendMarker['kind'];
+export type TrendChange = Schemas['TrendChange'];
+export type ChangeVerdict = TrendChange['verdict'];
 export type TrendBucketSize = 'week' | 'day';
-export interface TrendRubricPoint {
-  passRate: number | null;
-  graded: number;
-  passed: number;
-}
-export type TrendMarkerKind = 'proposal_merged' | 'manual_edit' | 'rubric_changed';
-export interface TrendMarker {
-  id: string;
-  at: string;
-  kind: TrendMarkerKind;
-  title: string;
-  proposalId: string | null;
-  files: string[];
-  rubrics: string[];
-}
-export interface Trends {
-  buckets: { start: string; rubrics: Record<string, TrendRubricPoint> }[];
-  markers: TrendMarker[];
-  baselineResets: { at: string; rubric: string; reason: string }[];
-}
+export type ReferenceSet = Schemas['ReferenceSet'];
 export interface TrendQuery {
   /** Range in weeks (4, 12 or 26); the server turns it into from/to. */
   weeks: number;
   bucket: TrendBucketSize;
-}
-export type ChangeVerdict = 'improved' | 'worse' | 'no_change' | 'too_early';
-export interface TrendWindow {
-  passRate: number | null;
-  graded: number;
-  /** Length of the compared window in days. */
-  window: number;
-}
-export interface TrendChange {
-  id: string;
-  at: string;
-  title: string;
-  kind: TrendMarkerKind;
-  proposalId: string | null;
-  files: string[];
-  rubrics: string[];
-  before: TrendWindow;
-  after: TrendWindow;
-  verdict: ChangeVerdict;
 }
 
 /** The API surface the SPA uses. `client.ts` implements it over HTTP, `mock.ts` over fixtures. */
@@ -158,6 +123,9 @@ export interface Api {
   getTrends(query: TrendQuery): Promise<Trends>;
   listTrendChanges(): Promise<TrendChange[]>;
   startReferenceRegrade(): Promise<Job>;
+  getReferenceSet(): Promise<ReferenceSet>;
+  addToReferenceSet(sessionId: string): Promise<void>;
+  removeFromReferenceSet(sessionId: string): Promise<void>;
   listSessions(query: SessionQuery): Promise<Page<SessionSummary>>;
   getSession(id: string): Promise<SessionDetail>;
   listEvents(id: string, query: EventQuery): Promise<Page<TraceEvent> & { total: number }>;

@@ -1,6 +1,12 @@
 import { Link } from '@tanstack/react-router';
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
-import { useGradeJob, useSession, useSessionEvents } from '../api/queries.js';
+import {
+  useGradeJob,
+  useReferenceSet,
+  useReferenceToggle,
+  useSession,
+  useSessionEvents,
+} from '../api/queries.js';
 import type { EventFilter, TraceEvent } from '../api/types.js';
 import { JobNote } from '../components/JobNote.js';
 import { BTN, Button, Chip, EmptyState, ErrorState, Loading } from '../components/ui.js';
@@ -221,6 +227,32 @@ function Trace({
   );
 }
 
+/** Pins the session into the fixed set Trends re-grades after every change. */
+function ReferenceButton({ id }: { id: string }) {
+  const ref = useReferenceSet();
+  const toggle = useReferenceToggle(id);
+  const isMember = ref.data?.items.some((m) => m.id === id) ?? false;
+  return (
+    <>
+      <Button
+        disabled={!ref.data || toggle.isPending}
+        onClick={() => {
+          toggle.mutate(!isMember);
+        }}
+      >
+        {isMember ? 'Remove from reference set' : 'Add to reference set'}
+      </Button>
+      {toggle.isError ? (
+        <p role="alert" className="m-0 basis-full text-right text-[13px] text-fail">
+          {toggle.error instanceof ApiError && toggle.error.status === 409
+            ? `${toggle.error.message} Remove a session on Trends or here first.`
+            : `Could not update the reference set: ${toggle.error.message}`}
+        </p>
+      ) : null}
+    </>
+  );
+}
+
 export function SessionDetail({ id }: { id: string }) {
   const q = useSession(id);
   const [filter, setFilter] = useState<EventFilter>('all');
@@ -290,6 +322,7 @@ export function SessionDetail({ id }: { id: string }) {
           >
             Re-grade
           </Button>
+          <ReferenceButton id={id} />
           <JobNote
             job={regrade.job}
             failed={regrade.run.isError}

@@ -1,4 +1,7 @@
-import type { Api, Job, TrendChange, TrendMarker, Trends } from './types.js';
+import { ApiError } from './client.js';
+import type { Api, Job, ReferenceSet, TrendChange, TrendMarker, Trends } from './types.js';
+
+const REFERENCE_TARGET = 20;
 
 const DAY = 86_400_000;
 
@@ -68,6 +71,11 @@ function build(weeks: number, bucket: 'week' | 'day', now: number): Trends {
       rubric: 'silent-workaround',
       reason: 'Rubric changed from version 1 to 2',
     },
+    {
+      at: iso(thisWeek - 3 * 7 * DAY + 3 * DAY),
+      rubric: 'verbosity',
+      reason: 'Judge changed from claude-sonnet-4-5 to claude-sonnet-5-5',
+    },
   ].filter((r) => Date.parse(r.at) >= from);
   return { buckets, markers, baselineResets };
 }
@@ -115,37 +123,60 @@ function changesOf(thisWeek: number): TrendChange[] {
     rubrics: m.rubrics,
   });
   const [f1, r1, f2] = [of(fix1), of(reset), of(fix2)];
+  const withPer = (c: Omit<TrendChange, 'perRubric'>): TrendChange => ({
+    ...c,
+    perRubric: c.rubrics.map((rubric) => ({
+      rubric,
+      before: { passRate: c.before.passRate, graded: c.before.graded },
+      after: { passRate: c.after.passRate, graded: c.after.graded },
+      verdict: c.verdict,
+      pValue: null,
+    })),
+  });
   return [
-    {
+    withPer({
       ...f2,
       id: 'ch-3',
       before: { passRate: 0.64, graded: 19, window: 7 },
       after: { passRate: 0.66, graded: 3, window: 7 },
       verdict: 'too_early',
-    },
-    {
+    }),
+    withPer({
       ...r1,
       id: 'ch-2',
-      before: { passRate: 0.63, graded: 21, window: 7 },
+      before: { passRate: null, graded: 0, window: 7 },
       after: { passRate: 0.77, graded: 17, window: 7 },
-      verdict: 'no_change',
-    },
-    {
+      verdict: 'too_early',
+    }),
+    withPer({
       ...f1,
       id: 'ch-1',
       before: { passRate: 0.58, graded: 14, window: 7 },
       after: { passRate: 0.72, graded: 18, window: 7 },
       verdict: 'improved',
-    },
+    }),
   ];
 }
+
+type Member = ReferenceSet['items'][number];
 
 /** Trends fixtures: 12 weeks of data, two merged fixes (one clear, one too early), one rubric change. */
 export function createTrendsApi(
   withData: boolean,
   wait: () => Promise<void>,
   regrade: () => Job,
-): Pick<Api, 'getTrends' | 'listTrendChanges' | 'startReferenceRegrade'> {
+  member: (id: string) => Member,
+  seed: string[],
+): Pick<
+  Api,
+  | 'getTrends'
+  | 'listTrendChanges'
+  | 'startReferenceRegrade'
+  | 'getReferenceSet'
+  | 'addToReferenceSet'
+  | 'removeFromReferenceSet'
+> {
+  const ref = new Set(withData ? seed : []);
   return {
     async getTrends({ weeks, bucket }) {
       await wait();
@@ -158,7 +189,27 @@ export function createTrendsApi(
     },
     async startReferenceRegrade() {
       await wait();
-      return regrade();
+      if (ref.size === 0)
+        throw new ApiError(409, 'Reference set is empty', 'The reference set has no sessions.');
+      return { ...regrade(), kind: 'grade_batch' };
+    },
+    async getReferenceSet() {
+      await wait();
+      return { target: REFERENCE_TARGET, items: [...ref].map(member) };
+    },
+    async addToReferenceSet(id) {
+      await wait();
+      if (!ref.has(id) && ref.size >= REFERENCE_TARGET)
+        throw new ApiError(
+          409,
+          'Reference set is full',
+          `The reference set holds ${String(REFERENCE_TARGET)} sessions. Remove one first.`,
+        );
+      ref.add(id);
+    },
+    async removeFromReferenceSet(id) {
+      await wait();
+      ref.delete(id);
     },
   };
 }

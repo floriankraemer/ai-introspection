@@ -87,6 +87,7 @@ function NumberSetting({
   hint,
   value,
   min,
+  max = Infinity,
   onCommit,
   placeholder,
 }: {
@@ -94,21 +95,35 @@ function NumberSetting({
   hint?: ReactNode;
   value: number | null;
   min: number;
+  max?: number;
   onCommit: (n: number | null) => void;
   placeholder?: string;
 }) {
   const [draft, setDraft] = useState(value === null ? '' : String(value));
   const parsed = draft.trim() === '' ? null : Number(draft);
-  const invalid = parsed !== null && (!Number.isFinite(parsed) || parsed < min);
+  const invalid = parsed !== null && (!Number.isFinite(parsed) || parsed < min || parsed > max);
   return (
     <Field
       label={label}
-      hint={invalid ? <span className="text-fail">Enter a number of at least {min}.</span> : hint}
+      hint={
+        invalid ? (
+          <span className="text-fail">
+            Enter a number{' '}
+            {max === Infinity
+              ? `of at least ${String(min)}`
+              : `from ${String(min)} to ${String(max)}`}
+            .
+          </span>
+        ) : (
+          hint
+        )
+      }
     >
       <input
         type="number"
         inputMode="numeric"
         min={min}
+        {...(max === Infinity ? {} : { max })}
         className={FIELD}
         value={draft}
         placeholder={placeholder}
@@ -531,35 +546,72 @@ function RepoList({ repos }: { repos: SkillRepo[] }) {
               <option value="pr">Opening a pull request</option>
             </select>
           </label>
-          <div className="flex basis-full flex-col gap-1 text-xs text-muted">
-            <label className="flex items-center gap-2 text-sm text-ink">
-              <input
-                type="checkbox"
-                checked={r.allowExecutable}
-                disabled={patch.isPending}
-                onChange={(e) => {
-                  const on = e.target.checked;
-                  if (
-                    on &&
-                    !window.confirm(
-                      `Allow hooks, settings and scripts in ${r.path}? Claude Code executes these files. Proposals that change them will be flagged for review.`,
-                    )
-                  )
-                    return;
-                  patch.mutate({ id: r.id, allowExecutable: on });
-                }}
-              />
-              Allow hooks, settings and scripts
-              <span className="sr-only"> for {r.path}</span>
-            </label>
-            <span className="text-warn">
-              Claude Code executes these files. Proposals that touch them will be flagged and need
-              an explicit confirmation to accept.
-            </span>
-          </div>
+          <ExecutableToggle r={r} patch={patch} />
         </li>
       ))}
     </ul>
+  );
+}
+
+/** Turning this on needs an inline confirmation: Claude Code executes the files it unlocks. */
+function ExecutableToggle({
+  r,
+  patch,
+}: {
+  r: SkillRepo;
+  patch: ReturnType<typeof usePatchSkillRepo>;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  return (
+    <div className="flex basis-full flex-col gap-1 text-xs text-muted">
+      <label className="flex items-center gap-2 text-sm text-ink">
+        <input
+          type="checkbox"
+          checked={r.allowExecutable}
+          disabled={patch.isPending}
+          onChange={(e) => {
+            if (e.target.checked) setConfirming(true);
+            else patch.mutate({ id: r.id, allowExecutable: false });
+          }}
+        />
+        Allow hooks, settings and scripts
+        <span className="sr-only"> for {r.path}</span>
+      </label>
+      <span className="text-warn">
+        Claude Code executes these files. Proposals that touch them will be flagged and need an
+        explicit confirmation to accept.
+      </span>
+      {confirming && !r.allowExecutable ? (
+        <div
+          role="alertdialog"
+          aria-label={`Confirm executable files for ${r.path}`}
+          className="flex flex-col gap-2 rounded-lg border border-warn-line bg-warn-bg p-3 text-sm text-ink"
+        >
+          <span>
+            Allow hooks, settings and scripts in <code className="break-all">{r.path}</code>? Claude
+            Code executes these files. Proposals that change them will be flagged for review.
+          </span>
+          <div className="flex gap-2">
+            <Button
+              variant="primary"
+              onClick={() => {
+                setConfirming(false);
+                patch.mutate({ id: r.id, allowExecutable: true });
+              }}
+            >
+              Allow
+            </Button>
+            <Button
+              onClick={() => {
+                setConfirming(false);
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -670,6 +722,38 @@ function ScheduleCard({ settings, save }: { settings: SettingsData; save: (p: Pa
   );
 }
 
+function TrendsCard({ settings, save }: { settings: SettingsData; save: (p: Patch) => void }) {
+  return (
+    <section aria-label="Trends" className={SECTION}>
+      <h2 className={H2}>Trends</h2>
+      <NumberSetting
+        label="Compare windows of (days)"
+        hint="1 to 60. Pass rate is compared over this many days before and after each change."
+        value={settings['trends.window_days']}
+        min={1}
+        max={60}
+        onCommit={(n) => {
+          if (n !== null) save({ 'trends.window_days': n });
+        }}
+      />
+      <NumberSetting
+        label="Minimum graded sessions per side"
+        hint="Fewer than this and the verdict is “too early”."
+        value={settings['trends.min_graded']}
+        min={1}
+        onCommit={(n) => {
+          if (n !== null) save({ 'trends.min_graded': n });
+        }}
+      />
+      <p className="m-0 text-xs leading-normal text-muted">
+        A change counts as improved or worse only when a two-sided z-test at 90 % says the gap is
+        not chance. With 10 sessions per side, only gaps of about 35 points are significant. Small
+        improvements need many more sessions, so raise the minimum or the window to see them.
+      </p>
+    </section>
+  );
+}
+
 function TeamCard() {
   return (
     <section
@@ -732,6 +816,7 @@ export function Settings() {
         <SourcesCard settings={q.data} save={save} />
         <JudgeCard settings={q.data} save={save} />
         <ScheduleCard settings={q.data} save={save} />
+        <TrendsCard settings={q.data} save={save} />
         <TeamCard />
       </div>
     </div>

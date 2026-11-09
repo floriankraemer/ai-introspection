@@ -8,11 +8,8 @@ describe('Settings', () => {
     vi.unstubAllGlobals();
   });
 
-  it('confirms before allowing executable files, and turns it off without asking', async () => {
+  it('confirms inline before allowing executable files, and turns it off without asking', async () => {
     const user = userEvent.setup();
-    // happy-dom has no window.confirm to spy on.
-    const confirm = vi.fn().mockReturnValueOnce(false).mockReturnValue(true);
-    vi.stubGlobal('confirm', confirm);
     renderApp('/settings');
     const toggle = await screen.findByRole('checkbox', {
       name: /Allow hooks, settings and scripts for ~\/dev\/agent-skills/,
@@ -20,17 +17,39 @@ describe('Settings', () => {
     expect(toggle).not.toBeChecked();
     expect(screen.getAllByText(/Claude Code executes these files/)).not.toHaveLength(0);
     await user.click(toggle);
+    const ask = await screen.findByRole('alertdialog');
+    await user.click(within(ask).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
     expect(toggle).not.toBeChecked();
     await user.click(toggle);
+    await user.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Allow' }),
+    );
     await waitFor(() => {
       expect(toggle).toBeChecked();
     });
-    expect(confirm).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole('alertdialog')).toBeNull();
     await user.click(toggle);
     await waitFor(() => {
       expect(toggle).not.toBeChecked();
     });
-    expect(confirm).toHaveBeenCalledTimes(2);
+  });
+
+  it('autosaves the trends window and explains the z-test', async () => {
+    const user = userEvent.setup();
+    renderApp('/settings');
+    const days = await screen.findByLabelText('Compare windows of (days)');
+    expect(days).toHaveValue(7);
+    expect(screen.getByLabelText('Minimum graded sessions per side')).toHaveValue(10);
+    expect(screen.getByText(/z-test at 90 %/)).toBeVisible();
+    await user.clear(days);
+    await user.type(days, '99');
+    await user.tab();
+    expect(screen.getByText('Enter a number from 1 to 60.')).toBeVisible();
+    await user.clear(days);
+    await user.type(days, '14');
+    await user.tab();
+    expect(await screen.findByText('All changes saved.')).toBeVisible();
   });
 
   it('shows defaults, autosaves a change and keeps team mode disabled', async () => {

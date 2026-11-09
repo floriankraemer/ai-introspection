@@ -34,6 +34,7 @@ describe('Trends', () => {
     expect(within(tooEarly).getByText('Too early — 3 graded since')).toBeVisible();
     expect(tooEarly).toHaveTextContent('64% → 66%');
     expect(reset).toHaveTextContent('baseline reset');
+    expect(reset).not.toHaveTextContent('null');
     expect(improved).toHaveTextContent('58% → 72%');
     expect(improved).toHaveTextContent('14 → 18 graded');
     expect(within(improved).getByText('Improved')).toBeVisible();
@@ -97,6 +98,22 @@ describe('Trends', () => {
     expect(await screen.findByText(/^Grading…/)).toBeVisible();
     expect(await screen.findByText('Graded.', {}, { timeout: 3000 })).toBeVisible();
     expect(button).toBeEnabled();
+  });
+
+  it('shows the reference set count and its sessions', async () => {
+    const user = userEvent.setup();
+    renderApp('/trends');
+    const card = await screen.findByRole('region', { name: 'Reference set' });
+    expect(await within(card).findByText('Reference set: 6 of 20')).toBeVisible();
+    await user.click(within(card).getByText('Show the sessions'));
+    expect(within(card).getAllByRole('link')).toHaveLength(6);
+  });
+
+  it('points to adding sessions when the reference set is empty', async () => {
+    const user = userEvent.setup();
+    renderApp('/trends', 'ungraded');
+    await user.click(await screen.findByRole('button', { name: 'Re-grade reference set' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('reference set is empty');
   });
 
   it('says so when the judge budget defers the re-grade', async () => {

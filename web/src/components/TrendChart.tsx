@@ -282,8 +282,8 @@ export default function TrendChart({
           ) : null}
           {active.pin.reset ? (
             <span className="text-muted">
-              Comparisons across this line are not like-for-like: the rubric is graded differently
-              after it.
+              Comparisons across this line are not like-for-like: the rubric or judge grades
+              differently after it.
             </span>
           ) : null}
           {active.pin.proposalId ? <Link to="/proposals">Open in Proposals</Link> : null}

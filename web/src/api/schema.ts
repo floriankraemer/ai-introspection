@@ -167,6 +167,8 @@ export interface paths {
               'schedule.improver': 'daily' | 'weekly' | 'manual';
               /** @enum {string} */
               'proposals.accept_mode': 'merge' | 'pr';
+              'trends.window_days': number;
+              'trends.min_graded': number;
               'judge.api_key_set': boolean;
             };
           };
@@ -216,6 +218,8 @@ export interface paths {
             'schedule.improver'?: 'daily' | 'weekly' | 'manual';
             /** @enum {string} */
             'proposals.accept_mode'?: 'merge' | 'pr';
+            'trends.window_days'?: number;
+            'trends.min_graded'?: number;
           };
         };
       };
@@ -245,6 +249,8 @@ export interface paths {
               'schedule.improver': 'daily' | 'weekly' | 'manual';
               /** @enum {string} */
               'proposals.accept_mode': 'merge' | 'pr';
+              'trends.window_days': number;
+              'trends.min_graded': number;
               'judge.api_key_set': boolean;
             };
           };
@@ -2957,6 +2963,479 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/v1/trends': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Pass rate per rubric over time, with change markers and baseline resets */
+    get: {
+      parameters: {
+        query?: {
+          weeks?: number;
+          bucket?: 'week' | 'day';
+        };
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description The series */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/json': components['schemas']['Trends'];
+          };
+        };
+        /** @description Invalid request */
+        400: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Missing or invalid token */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Not found */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Conflicts with the current state */
+        409: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Well-formed but cannot be applied */
+        422: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/trends/changes': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Change log: each change with the pass rate before and after it */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description Newest change first */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/json': components['schemas']['TrendChange'][];
+          };
+        };
+        /** @description Invalid request */
+        400: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Missing or invalid token */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Not found */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Conflicts with the current state */
+        409: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Well-formed but cannot be applied */
+        422: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/trends/reference': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** The reference set: pinned sessions that are re-graded after every change */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description The members */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/json': components['schemas']['ReferenceSet'];
+          };
+        };
+        /** @description Invalid request */
+        400: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Missing or invalid token */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Not found */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Conflicts with the current state */
+        409: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Well-formed but cannot be applied */
+        422: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/trends/reference-regrade': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Re-grade the reference set with every current rubric (409 when it is empty) */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description The grading job */
+        202: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/json': components['schemas']['Job'];
+          };
+        };
+        /** @description Invalid request */
+        400: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Missing or invalid token */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Not found */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Conflicts with the current state */
+        409: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Well-formed but cannot be applied */
+        422: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/sessions/{id}/reference': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Add a session to the reference set (pins it; 409 when the set is full) */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description Added */
+        204: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+        /** @description Invalid request */
+        400: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Missing or invalid token */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Not found */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Conflicts with the current state */
+        409: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Well-formed but cannot be applied */
+        422: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+      };
+    };
+    /** Remove a session from the reference set (it stays pinned) */
+    delete: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path: {
+          id: string;
+        };
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description Removed */
+        204: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content?: never;
+        };
+        /** @description Invalid request */
+        400: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Missing or invalid token */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Not found */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Conflicts with the current state */
+        409: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Well-formed but cannot be applied */
+        422: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+      };
+    };
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/v1/settings/judge-key': {
     parameters: {
       query?: never;
@@ -4074,6 +4553,92 @@ export interface components {
           proposalId: string | null;
         }[];
       } | null;
+    };
+    Trends: {
+      buckets: {
+        /** Format: date-time */
+        start: string;
+        rubrics: {
+          [key: string]: {
+            passRate: number | null;
+            graded: number;
+            passed: number;
+          };
+        };
+      }[];
+      markers: {
+        /** Format: uuid */
+        id: string;
+        /** Format: date-time */
+        at: string;
+        /** @enum {string} */
+        kind: 'proposal_merged' | 'manual_edit' | 'rubric_changed';
+        title: string;
+        /** Format: uuid */
+        proposalId: string | null;
+        files: string[];
+        rubrics: string[];
+      }[];
+      baselineResets: {
+        /** Format: date-time */
+        at: string;
+        rubric: string;
+        reason: string;
+      }[];
+    };
+    TrendChange: {
+      /** Format: uuid */
+      id: string;
+      /** Format: date-time */
+      at: string;
+      /** @enum {string} */
+      kind: 'proposal_merged' | 'manual_edit' | 'rubric_changed';
+      title: string;
+      /** Format: uuid */
+      proposalId: string | null;
+      files: string[];
+      rubrics: string[];
+      before: {
+        passRate: number | null;
+        graded: number;
+        window: number;
+      };
+      after: {
+        passRate: number | null;
+        graded: number;
+        window: number;
+      };
+      /** @enum {string} */
+      verdict: 'improved' | 'worse' | 'no_change' | 'too_early';
+      perRubric: {
+        rubric: string;
+        before: {
+          passRate: number | null;
+          graded: number;
+        };
+        after: {
+          passRate: number | null;
+          graded: number;
+        };
+        /** @enum {string} */
+        verdict: 'improved' | 'worse' | 'no_change' | 'too_early';
+        pValue: number | null;
+      }[];
+    };
+    ReferenceSet: {
+      target: number;
+      items: {
+        /** Format: uuid */
+        id: string;
+        title: string;
+        /** Format: date-time */
+        startedAt: string | null;
+        grades: {
+          rubric: string;
+          passed: boolean | null;
+          status: string;
+        }[];
+      }[];
     };
     DoctorReport: {
       checks: {

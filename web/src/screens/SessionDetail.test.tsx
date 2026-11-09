@@ -4,6 +4,20 @@ import { describe, expect, it } from 'vitest';
 import { renderApp } from '../test-utils.js';
 
 describe('Session detail', () => {
+  it('adds and removes the session from the reference set', async () => {
+    const user = userEvent.setup();
+    renderApp('/sessions/sess-1');
+    await user.click(
+      await screen.findByRole('button', { name: 'Remove from reference set' }, { timeout: 5000 }),
+    );
+    await user.click(
+      await screen.findByRole('button', { name: 'Add to reference set' }, { timeout: 5000 }),
+    );
+    expect(
+      await screen.findByRole('button', { name: 'Remove from reference set' }, { timeout: 5000 }),
+    ).toBeVisible();
+  });
+
   it('marks a stale grade and names the model that answered when it differs', async () => {
     renderApp('/sessions/sess-1');
     const grades = await screen.findByRole('complementary', { name: 'Grades' });

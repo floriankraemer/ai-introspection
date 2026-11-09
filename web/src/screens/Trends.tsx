@@ -1,12 +1,20 @@
 import { Link } from '@tanstack/react-router';
 import { lazy, Suspense, useState } from 'react';
-import { useReferenceRegrade, useRubrics, useTrendChanges, useTrends } from '../api/queries.js';
+import { ApiError } from '../api/client.js';
+import {
+  useReferenceRegrade,
+  useReferenceSet,
+  useRubrics,
+  useTrendChanges,
+  useTrends,
+} from '../api/queries.js';
 import type {
   ChangeVerdict,
   TrendBucketSize,
   TrendChange,
   Trends as TrendData,
 } from '../api/types.js';
+import { titleText } from '../lib/format.js';
 import { JobNote } from '../components/JobNote.js';
 import {
   BTN,
@@ -20,6 +28,7 @@ import {
   FIELD,
   Loading,
   PageHeader,
+  VerdictChip,
 } from '../components/ui.js';
 import {
   bucketTitle,
@@ -142,6 +151,7 @@ export function Trends() {
           stale={trends.isPlaceholderData}
         />
       ) : null}
+      <ReferenceCard />
       <ChangeLog />
     </div>
   );
@@ -240,7 +250,7 @@ function ChartCard({
           <>Buckets with fewer than {LOW_SAMPLE} graded sessions are marked in the tooltip. </>
         )}
         {hasReset
-          ? 'A baseline reset means the rubric was changed: pass rates before and after it are not like-for-like.'
+          ? 'A baseline reset means the rubric or the judge changed: pass rates before and after it are not like-for-like.'
           : null}
       </p>
       <DataTable data={data} series={series} bucket={bucket} />
@@ -313,6 +323,7 @@ const VERDICT: Record<ChangeVerdict, { tone: ChipTone; text: (c: TrendChange) =>
 function ChangeLog() {
   const changes = useTrendChanges();
   const regrade = useReferenceRegrade();
+  const empty = regrade.error instanceof ApiError && regrade.error.status === 409;
   const busy =
     regrade.pending || regrade.job?.status === 'queued' || regrade.job?.status === 'running';
   return (
@@ -326,7 +337,13 @@ function ChangeLog() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <JobNote job={regrade.job} failed={regrade.failed} />
+          {empty ? (
+            <p role="alert" className="m-0 text-[13px] text-fail">
+              The reference set is empty. Open a session and choose “Add to reference set” first.
+            </p>
+          ) : (
+            <JobNote job={regrade.job} failed={regrade.failed} />
+          )}
           <Button disabled={busy} onClick={regrade.start}>
             Re-grade reference set
           </Button>
@@ -378,6 +395,65 @@ function ChangeLog() {
   );
 }
 
+/** The fixed sessions that are re-graded after every change, so before/after is like-for-like. */
+function ReferenceCard() {
+  const ref = useReferenceSet();
+  if (ref.isPending) return <Loading label="Loading reference set" />;
+  if (ref.isError) return <ErrorState error={ref.error} onRetry={() => void ref.refetch()} />;
+  const { items, target } = ref.data;
+  return (
+    <Card role="region" aria-label="Reference set" className="flex flex-col gap-2 px-4 py-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h2 className="m-0 text-base font-semibold">
+          Reference set: {items.length} of {target}
+        </h2>
+        <p className="m-0 text-[13px] text-muted">
+          Pinned sessions that are re-graded after every change. Add them from a session page.
+        </p>
+      </div>
+      {items.length === 0 ? (
+        <p className="m-0 text-sm text-ink-soft">
+          No sessions yet. Open a representative session and choose “Add to reference set”.
+        </p>
+      ) : (
+        <details className="text-sm">
+          <summary className="w-fit cursor-pointer py-1 text-accent">Show the sessions</summary>
+          <ul className="m-0 flex list-none flex-col divide-y divide-line-soft p-0">
+            {items.map((s) => (
+              <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                <div className="flex min-w-0 flex-col">
+                  <Link
+                    to="/sessions/$sessionId"
+                    params={{ sessionId: s.id }}
+                    className="break-words"
+                  >
+                    {titleText(s.title)}
+                  </Link>
+                  <span className="text-xs text-muted">
+                    {s.startedAt ? `Started ${formatDayLocal(s.startedAt)}` : 'Start unknown'}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {s.grades.length === 0 ? (
+                    <span className="text-xs text-muted">Not graded</span>
+                  ) : (
+                    s.grades.map((g) => (
+                      <span key={g.rubric} className="flex items-center gap-1 text-xs text-muted">
+                        {rubricLabel(g.rubric)}
+                        <VerdictChip passed={g.passed} />
+                      </span>
+                    ))
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </Card>
+  );
+}
+
 function ChangeRow({ c }: { c: TrendChange }) {
   const reset = c.kind === 'rubric_changed';
   const v = VERDICT[c.verdict];
@@ -401,7 +477,8 @@ function ChangeRow({ c }: { c: TrendChange }) {
         ) : (
           <div className="flex flex-col">
             <span className="font-semibold">
-              {pct(c.before.passRate)} → {pct(c.after.passRate)}
+              {c.before.passRate === null ? 'no data before' : pct(c.before.passRate)} →{' '}
+              {pct(c.after.passRate)}
             </span>
             <span className="text-xs text-muted">
               {String(c.before.graded)} → {String(c.after.graded)} graded

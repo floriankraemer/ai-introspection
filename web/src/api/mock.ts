@@ -336,6 +336,8 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
     'schedule.grade': 'session_end',
     'schedule.improver': 'daily',
     'proposals.accept_mode': 'merge',
+    'trends.window_days': 7,
+    'trends.min_graded': 10,
   };
   let sources: Source[] = fresh
     ? []
@@ -537,7 +539,25 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
   };
 
   return {
-    ...createTrendsApi(graded || scenario === 'overbudget', wait, () => gradeJob(40)),
+    ...createTrendsApi(
+      graded || scenario === 'overbudget',
+      wait,
+      () => gradeJob(40),
+      (id) => {
+        const s = find(id);
+        return {
+          id,
+          title: s.title,
+          startedAt: s.startedAt,
+          grades: s.grades.map((g) => ({
+            rubric: g.rubric,
+            passed: g.passed,
+            status: g.passed === null ? 'n/a' : 'graded',
+          })),
+        };
+      },
+      sessions.slice(0, 6).map((s) => s.id),
+    ),
     ...createProposalsApi(
       scenario === 'graded' || scenario === 'overbudget',
       wait,

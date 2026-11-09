@@ -47,6 +47,7 @@ export function invalidateKeys(qc: QueryClient, keys: string[]) {
 
 /** Everything that shows a grade, a rubric's trusted flag or its agreement. */
 export const GRADE_KEYS = [
+  'reference-set',
   'rubric',
   'rubrics',
   'session',
@@ -102,8 +103,25 @@ export function useReferenceRegrade() {
     },
     pending: run.isPending,
     failed: run.isError,
+    error: run.error,
     job,
   };
+}
+
+export function useReferenceSet() {
+  const api = useApi();
+  return useQuery({ queryKey: ['reference-set'], queryFn: () => api.getReferenceSet() });
+}
+
+/** Adds or removes one session; the set and the sessions' pinned state refetch. */
+export function useReferenceToggle(sessionId: string) {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (add: boolean) =>
+      add ? api.addToReferenceSet(sessionId) : api.removeFromReferenceSet(sessionId),
+    onSuccess: () => invalidateKeys(qc, ['reference-set']),
+  });
 }
 
 export function useSessions(query: SessionQuery) {

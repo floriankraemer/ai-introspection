@@ -66,8 +66,9 @@ function seed(): Proposal[] {
       rubricNames: ['silent-workaround', 'efficiency'],
       rationale:
         'In 12 failing sessions the agent probed ports 3000–3010 before finding the server. The skill never says how the port is chosen. Reports did not mention it.',
+      // Strictly newer than p2 (3 h): two Date.now() calls ms apart made their order random.
       sessions: 12,
-      ago: 3,
+      ago: 2.9,
       reasons: [
         'Same rubric (silent-workaround) failed in all 12 sessions.',
         'Every session ran the e2e-testing skill.',

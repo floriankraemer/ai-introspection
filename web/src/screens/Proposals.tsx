@@ -592,7 +592,9 @@ export function Proposals() {
   const items = list.items;
   // A picked proposal stays on screen after it leaves the tab, so the outcome of accept or reject
   // (merge commit, PR link) is not replaced by the next one.
-  const selectedId = picked ?? items[0]?.id;
+  // Default to the first item only once every status of the tab has loaded: the statuses arrive
+  // separately and the sort would otherwise move the selection from under the reader.
+  const selectedId = picked ?? (list.loaded ? items[0]?.id : undefined);
   return (
     <div className="flex flex-col gap-5">
       <PageHeader
