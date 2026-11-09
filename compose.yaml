@@ -3,6 +3,7 @@ name: introspect
 services:
   introspect:
     image: introspect:local
+    container_name: introspect
     build:
       context: .
       target: runtime

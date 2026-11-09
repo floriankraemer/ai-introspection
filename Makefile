@@ -44,6 +44,7 @@ help: ## Show this list
 .PHONY: up down restart status logs open doctor claude-login rotate-token
 # Mount points are created here as your user: the Docker engine on Linux would create them as root.
 up: ## Build and start Introspect on http://localhost:7317
+	@docker rm -f introspect-dev >/dev/null 2>&1 || true
 	mkdir -p $(HOME)/.claude/projects $(HOME)/.codex/sessions "$(SKILLS_REPO)" "$(PROJECTS_DIR)"
 	docker compose up -d --build --wait
 
@@ -99,8 +100,11 @@ mount-points:
 install: mount-points ## Install dependencies (pnpm, in the dev container)
 	$(RUN) pnpm install
 
+# The dev server takes port 7317 from the user stack, so that stack is stopped first.
 dev: mount-points ## Start server (7317) and Vite (5173) with live reload
-	$(COMPOSE) run --rm --build --service-ports dev pnpm dev
+	@docker compose stop introspect 2>/dev/null || true
+	@docker rm -f introspect-dev >/dev/null 2>&1 || true
+	$(COMPOSE) run --rm --build --service-ports --name introspect-dev dev pnpm dev
 
 shell: mount-points ## Open a shell in the dev container
 	$(RUN) bash
