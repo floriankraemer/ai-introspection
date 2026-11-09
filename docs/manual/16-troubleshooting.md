@@ -51,9 +51,11 @@ This line is informational and has no fix.
 ### Global skills repository
 
 **Symptom:** Warning "Not set".
-**Cause:** No skills repo is registered.
-**Fix:** Finish step 3 of the setup wizard.
-Or set `INTROSPECT_SKILLS_REPO` in `.env` to your skills repo and run `make up`.
+**Cause:** No skills repo is chosen yet.
+Setting `INTROSPECT_SKILLS_REPO` only mounts the folder at `/repos/skills`; it does not choose it.
+**Fix:** Finish step 3 of the setup wizard (open `/setup`).
+It uses the folder at `/repos/skills`, or creates a new skills repo there when the folder is empty.
+`make dev` keeps its own data, so choose the repo there once as well.
 
 **Symptom:** Failing "… does not exist".
 **Cause:** The mount for `/repos/skills` is missing.

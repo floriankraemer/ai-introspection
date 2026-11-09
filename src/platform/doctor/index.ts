@@ -169,7 +169,7 @@ export async function checkSkillsRepo({ repos }: DoctorInput): Promise<DoctorChe
       'skills-repo',
       label,
       'Not set',
-      'Finish step 3 of the setup wizard (it can create a repository in the empty default folder), or set INTROSPECT_SKILLS_REPO in .env to your skills repository (mounted at /repos/skills).',
+      'Mounting a folder does not choose it. Finish step 3 of the setup wizard: it uses the folder at /repos/skills (set by INTROSPECT_SKILLS_REPO in .env), or creates a repository there when the folder is empty.',
     );
   }
   if (!can(repo.path, constants.R_OK)) {

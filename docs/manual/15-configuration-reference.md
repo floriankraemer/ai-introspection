@@ -18,8 +18,8 @@ A variable you leave out keeps its default.
 |---|---|---|
 | `UID`, `GID` | Your user and group id (`id -u`, `id -g`) | The container runs as this user, so files in mounted folders belong to you, not to root. Set them in `.env` only if the defaults are wrong. |
 | `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, `GIT_COMMITTER_EMAIL` | unset (commits show "Introspect") | The git identity for commits that Introspect makes. Set all four, or none. |
-| `INTROSPECT_SKILLS_REPO` | `~/.introspect/skills` | The folder on your computer that Docker mounts as the global skills repo at `/repos/skills`. Never use `~/.claude`. |
-| `INTROSPECT_PROJECTS_DIR` | `~/.introspect/projects` | The folder with your project repos, mounted at `/repos/projects`. |
+| `INTROSPECT_SKILLS_REPO` | `~/.introspect/skills` | The folder on your computer that Docker mounts as the global skills repo at `/repos/skills`. Choose it once in step 3 of the setup wizard; the mount alone does not. Never use `~/.claude`. |
+| `INTROSPECT_PROJECTS_DIR` | `~/.introspect/projects` | The folder with your project repos, one subfolder per repo, mounted at `/repos/projects`. Add each repo in Settings › Skills repositories. |
 | `GH_TOKEN` | unset | A GitHub token for pull request mode. Use a fine-grained token limited to your repos, with Contents and Pull requests set to read and write. |
 | `TZ` | `UTC` | The time zone, as an IANA name such as `Europe/Berlin`. The daily token budget resets at midnight in this zone, and the monthly budget on the first of the month. |
 | `INTROSPECT_PIDS_LIMIT` | `512` | The process limit of the container. |
