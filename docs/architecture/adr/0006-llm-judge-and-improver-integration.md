@@ -110,3 +110,62 @@ Self-ingest guard: judge and improver CLI or Agent SDK runs start with `cwd` und
 ## Related
 
 - ADR-0005 (budget, jobs), ADR-0007 (redaction), ADR-0010 (worktrees and proposals), overview "Runtime flows".
+
+## Implementation notes (Phase 2, WP5)
+
+- The transport setting is `judge.transport` (`api` or `cli`), as shipped in Phase 1.
+- CLI transport: `claude -p --output-format json --no-session-persistence --tools "" --setting-sources "" --system-prompt <judge prompt> --json-schema <verdict schema>`, prompt on stdin, in a private HOME (`INTROSPECT_CLAUDE_HOME`, default `<data>/claude-home`).
+  Measured on the host: with the real home a trivial request cost 214,000 cache-write tokens (user memory, skills, MCP); with the private home it costs about 850.
+  The adapter refuses to run when the private home overlaps a registered agent-log source, and `introspect doctor` reports the same.
+  The adapter accepts CLI major version 2 only.
+- The CLI judge has its own Claude login, made inside the private home with `claude auth login` (`introspect judge-login`, `make claude-login` in Docker).
+  The host's `~/.claude/.credentials.json` is never mounted or copied by default.
+  Reason: an OAuth login holds a rotating refresh token.
+  A second client that refreshes it can invalidate the copy the user's own `claude` holds, and the user is signed out.
+  The container's login is a separate grant with its own refresh token, so neither side can invalidate the other.
+  A native run may opt in to a one-time copy of a login file (`INTROSPECT_CLAUDE_CREDENTIALS`, copied only when the private home has no login); the copy shares the refresh token, and the docs say so.
+  `claude setup-token` (a long-lived token passed by environment) was not chosen: the token would have to live in `.env` or in the process environment, and the CLI does not store it.
+- Token budget counts fresh input, cache writes and output tokens; cache reads are excluded (they cost about a tenth).
+  Pre-call estimates use 3 characters per token, which errs high.
+- Evidence labels in the prompt are `e<seq>` (the stable event sequence number), mapped to event ids after the call.
+- Re-ingest on an adapter or redaction version change keeps an event's id when the same source record yields it again.
+  Each event stores `source_key`: a hash of its source line plus its index within the line, so the key survives shifts of position.
+  Equal keys (a repeated line) pair in order.
+  Rows stored before migration 0005 pair by position only when kind and time also agree.
+  Events without a match get new ids.
+  A grade whose evidence ids no longer all resolve is marked `stale`: it stays visible, has no verdict in session lists, is left out of pass rates, and the sweep queues it again.
+  A rebuild never restores a payload that retention purged.
+  The rebuilt event set is held in memory while the file is parsed and swapped in with one short transaction (the old design kept one transaction open for the whole parse, which blocks the only SQLite connection).
+  The 60 s reconcile scan (ADR-0005) remains the safety net.
+
+## Implementation notes (Phase 2 review fixes)
+
+- Redaction guard: a session whose `redaction_version` is `off` or differs from the current version is never sent to a judge.
+  `ingest.sessions.traceFor` throws `UnredactedSessionError`, so the sweep, batches, `introspect grade`, the re-grade API and dry runs all pass the same check.
+  The reason is "redaction is off" or "not redacted with current rules — re-import pending"; it shows as `notGradedReason`, and a dry run lists the session under `skipped`.
+  `introspect doctor` warns while redaction is off.
+- Every response that was paid for reaches the ledger.
+  Judges throw `JudgeCallError` (usage and answering model attached) for a response that is not a verdict.
+  An unusable answer (cut off, not JSON, off schema) counts as one of the grader's own two attempts; after the second the grade is stored as `invalid`, and the job queue never retries a paid call.
+  An error that is not an unusable answer (the CLI reports `is_error`) is recorded and then raised.
+  A call with no response at all leaves no row.
+- Prompt layout: the rubric is in the system prompt, before the trace.
+  The trace sits alone in the user message between `<trace-TOKEN>` tags, where TOKEN is 96 random bits chosen per request and stated in the system prompt.
+  Text in the trace that matches the token, `<trace` or `<rubric` is neutralised (`<` becomes `&lt;`).
+  Every score needs evidence labels, passing ones too, unless the session has fewer than 3 events.
+  Because the token changes per request, no part of the user message is cacheable; the earlier cache breakpoint after the trace is gone, and the rubrics of one session each pay for the trace.
+  This trades cost for isolation; Message Batches (see the revisit triggers) is the lever for cost.
+- Budget: `reserve` checks the limits and inserts a ledger row with the estimate (`status = 'reserved'`) in one transaction, with a row lock on the workspace so parallel grades on Postgres serialise; SQLite has one writer.
+  `settle` replaces the estimate with the real usage (`ok` or `error`), `release` drops a reservation whose call got no response.
+  Every attempt reserves again.
+  An estimate larger than the whole limit fails the grade with the reason (HTTP 422 for a dry run) instead of deferring it for ever.
+  A reservation older than 30 minutes (a crashed process) stops counting.
+  The overspend is at most one call's gap between estimate and actual usage.
+- Budget windows (day and month) follow the time zone in env `TZ`, UTC when unset.
+- `grade.judge_model` is the model asked for and keys the uniqueness and skip checks; `grade.answered_model` is the model that answered (a fallback may differ).
+  The ledger records the answering model, which is what is billed.
+- `grade_batch` goes on after a failing session: the error is added to the job progress (`failed`, `errors`) and the batch continues.
+  A budget deferral still pauses the whole batch.
+- The grade sweep runs every 5 minutes, and rubric files are read from git at most every 5 minutes (a UI edit refreshes the cache at once).
+- The condenser's last resort cuts the middle of the text, never the end, so the final assistant message stays.
+  Only labels that appear in the text that is sent resolve to event ids.

@@ -11,7 +11,14 @@ export const jobSchema = z
     id: z.uuid(),
     kind: z.string(),
     status: z.enum(['queued', 'running', 'succeeded', 'failed', 'dead', 'deferred']),
-    progress: z.object({ done: z.number().int(), total: z.number().int() }).nullable(),
+    progress: z
+      .object({
+        done: z.number().int(),
+        total: z.number().int(),
+        failed: z.number().int().optional(),
+        errors: z.array(z.string()).optional(),
+      })
+      .nullable(),
     error: z.string().nullable(),
     attempts: z.number().int(),
     maxAttempts: z.number().int(),

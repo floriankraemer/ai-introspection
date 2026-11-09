@@ -4,6 +4,16 @@ import { fileURLToPath } from 'node:url';
 import { commitPaths } from '../../platform/git/index.js';
 
 // Resolved next to this file; the build copies the folder to dist (package.json `build`).
+export {
+  createRubrics,
+  type Rubric,
+  type RubricEdit,
+  type RubricProblem,
+  type RubricStore,
+  type RubricVersion,
+} from './store.js';
+export { parseRubric, serializeRubric, type RubricSpec } from './rubric-file.js';
+
 const STARTER_DIR = fileURLToPath(new URL('./starter/', import.meta.url));
 const RUBRICS_DIR = 'rubrics';
 

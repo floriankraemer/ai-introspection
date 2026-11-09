@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { renderApp } from '../test-utils.js';
@@ -16,6 +16,25 @@ describe('Settings', () => {
     expect(await screen.findByLabelText('Monthly ceiling (USD)')).toBeInTheDocument();
     expect(screen.queryByLabelText('Daily token budget')).not.toBeInTheDocument();
     expect(await screen.findByText('All changes saved.')).toBeInTheDocument();
+  });
+
+  it('shows the container login state and command when the judge runs via the CLI', async () => {
+    const user = userEvent.setup();
+    renderApp('/settings');
+    await user.selectOptions(await screen.findByLabelText('Runs via'), 'cli');
+    const login = await screen.findByRole('group', { name: 'Claude login' });
+    expect(await within(login).findByText('Logged in')).toBeInTheDocument();
+    expect(login).toHaveTextContent('Logged in to Claude inside the container.');
+    expect(login).not.toHaveTextContent('credentials');
+  });
+
+  it('tells you to run make claude-login when the container is not logged in', async () => {
+    const user = userEvent.setup();
+    renderApp('/settings', 'ungraded');
+    await user.selectOptions(await screen.findByLabelText('Runs via'), 'cli');
+    const login = await screen.findByRole('group', { name: 'Claude login' });
+    expect(await within(login).findByText('Not logged in')).toBeInTheDocument();
+    expect(within(login).getByText('make claude-login')).toBeInTheDocument();
   });
 
   it('rejects a retention below the minimum', async () => {
@@ -46,5 +65,17 @@ describe('Settings', () => {
     await user.type(box, 'acme_[[a-z]+');
     await user.tab();
     expect(await screen.findByText('All changes saved.')).toBeInTheDocument();
+  });
+
+  it('shows how much of the token budget is used, and flags an exhausted one', async () => {
+    renderApp('/settings');
+    expect(await screen.findByText('Used 120k of 1M tokens today.')).toBeInTheDocument();
+  });
+
+  it('says grading is deferred when the daily budget is used up', async () => {
+    renderApp('/settings', 'overbudget');
+    expect(
+      await screen.findByText(/Used 1M of 1M tokens today\. Grading is deferred/),
+    ).toBeInTheDocument();
   });
 });

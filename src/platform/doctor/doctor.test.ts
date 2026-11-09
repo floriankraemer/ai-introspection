@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment -- vitest asymmetric matchers are typed any */
 import { execFileSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -9,6 +10,7 @@ import {
   checkGitIdentity,
   checkJudge,
   checkOwnership,
+  checkRedaction,
   checkSkillsRepo,
   checkSources,
   checkWatcher,
@@ -21,14 +23,28 @@ import {
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'introspect-doctor-'));
 const missingProgram = () => Promise.reject(Object.assign(new Error('nope'), { code: 'ENOENT' }));
 
+const judge = (over: Partial<DoctorInput['judge']> = {}): DoctorInput['judge'] => ({
+  transport: 'api',
+  keySet: true,
+  fake: false,
+  cli: {
+    home: '/data/claude-home',
+    loginPresent: true,
+    isolationProblem: null,
+  },
+  ...over,
+});
+
 function input(over: Partial<DoctorInput> = {}): DoctorInput {
   return {
     dataDir: tmp(),
     watchPoll: true,
+    redactionEnabled: true,
     db: {},
     sources: [],
     repos: [],
-    judge: { transport: 'api', keySet: true },
+    rubricProblems: [],
+    judge: judge(),
     env: {},
     uid: process.getuid?.(),
     run: missingProgram,
@@ -146,16 +162,41 @@ describe('gh check', () => {
 describe('judge check', () => {
   it('needs a key for the api transport', async () => {
     expect((await checkJudge(input())).status).toBe('ok');
-    expect((await checkJudge(input({ judge: { transport: 'api', keySet: false } }))).status).toBe(
-      'warn',
-    );
+    expect((await checkJudge(input({ judge: judge({ keySet: false }) }))).status).toBe('warn');
   });
-  it('needs the claude binary for the cli transport', async () => {
-    const cli = { transport: 'cli' as const, keySet: false };
+  it('needs the claude binary, a login and an isolated home for the cli transport', async () => {
+    const cli = judge({ transport: 'cli', keySet: false });
+    const found = () => Promise.resolve('2.1.0');
     expect((await checkJudge(input({ judge: cli }))).status).toBe('warn');
-    expect(
-      (await checkJudge(input({ judge: cli, run: () => Promise.resolve('1.0') }))).status,
-    ).toBe('ok');
+    expect((await checkJudge(input({ judge: cli, run: found }))).status).toBe('ok');
+    const noLogin = judge({
+      transport: 'cli',
+      cli: { home: '/x', loginPresent: false, isolationProblem: null },
+    });
+    const missing = await checkJudge(input({ judge: noLogin, run: found }));
+    expect(missing).toMatchObject({
+      status: 'warn',
+      detail: expect.stringContaining('never uses your host login'),
+      fix: expect.stringContaining('make claude-login'),
+    });
+    const overlapping = judge({
+      transport: 'cli',
+      cli: { home: '/x', loginPresent: true, isolationProblem: '/a overlaps /b' },
+    });
+    expect((await checkJudge(input({ judge: overlapping, run: found }))).status).toBe('fail');
+  });
+  it('warns when the fake judge is active', async () => {
+    expect((await checkJudge(input({ judge: judge({ fake: true }) }))).status).toBe('warn');
+  });
+});
+
+describe('redaction check', () => {
+  it('warns when redaction is off and says what that means for grading', () => {
+    expect(checkRedaction(input()).status).toBe('ok');
+    expect(checkRedaction(input({ redactionEnabled: false }))).toMatchObject({
+      status: 'warn',
+      detail: expect.stringContaining('never sent to a judge'),
+    });
   });
 });
 

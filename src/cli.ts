@@ -1,7 +1,13 @@
 #!/usr/bin/env node
 import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
-import { runDoctorCommand, runImportCommand, startServer } from './platform/bootstrap.js';
+import {
+  judgeLogin,
+  runDoctorCommand,
+  runGradeCommand,
+  runImportCommand,
+  startServer,
+} from './platform/bootstrap.js';
 import { formatReport, hasFailure } from './platform/doctor/index.js';
 import { loadConfig } from './platform/config/index.js';
 
@@ -51,6 +57,48 @@ async function importCommand(): Promise<void> {
   );
 }
 
+/** `7d`, `48h` or `2w` as a point in time that long ago. */
+function parseSince(text: string, now = new Date()): Date {
+  const m = /^(\d+)([hdw])$/.exec(text);
+  if (!m) throw new Error('--since takes a number and a unit: 12h, 7d or 2w');
+  const unit = { h: 3_600_000, d: 86_400_000, w: 7 * 86_400_000 }[m[2] as 'h' | 'd' | 'w'];
+  return new Date(now.getTime() - Number(m[1]) * unit);
+}
+
+const GRADE_USAGE =
+  'Usage: introspect grade --session <id> | --since <12h|7d|2w> | --all [--policy]';
+
+async function gradeCommand(): Promise<void> {
+  const sessionId = option('session');
+  const since = option('since');
+  const all = process.argv.includes('--all');
+  if ([sessionId !== undefined, since !== undefined, all].filter(Boolean).length !== 1)
+    throw new Error(GRADE_USAGE);
+  const summary = await runGradeCommand(loadConfig(), {
+    sessionId,
+    since: since === undefined ? undefined : parseSince(since),
+    all,
+    policy: process.argv.includes('--policy'),
+  });
+  console.log(
+    `Graded ${String(summary.graded)}, skipped ${String(summary.skipped)}, deferred for budget ${String(summary.deferred)}, failed ${String(summary.failed)} (${String(summary.sessions)} sessions).`,
+  );
+  for (const [reason, n] of Object.entries(summary.skippedReasons))
+    console.log(`  skipped ${String(n)}: ${reason}`);
+  for (const e of summary.errors) console.error(e);
+  if (summary.failed > 0) process.exit(1);
+}
+
+/** Signs the judge in to Claude, in its own private home, never with the host's login. */
+async function judgeLoginCommand(): Promise<void> {
+  const { claudeHome } = loadConfig();
+  console.log(
+    `Signing the judge in to Claude. Its login is kept in ${claudeHome}, apart from yours.`,
+  );
+  const code = await judgeLogin(claudeHome);
+  if (code !== 0) process.exit(code ?? 1);
+}
+
 async function doctorCommand(): Promise<void> {
   const report = await runDoctorCommand(loadConfig());
   console.log(formatReport(report));
@@ -75,9 +123,19 @@ if (command === 'serve') {
     console.error(e instanceof Error ? e.message : e);
     process.exit(1);
   });
+} else if (command === 'judge-login') {
+  judgeLoginCommand().catch((e: unknown) => {
+    console.error(e instanceof Error ? e.message : e);
+    process.exit(1);
+  });
+} else if (command === 'grade') {
+  gradeCommand().catch((e: unknown) => {
+    console.error(e instanceof Error ? e.message : e);
+    process.exit(1);
+  });
 } else {
   console.error(
-    'Usage: introspect serve | open | doctor | import [--agent <agent> --path <folder>]',
+    'Usage: introspect serve | open | doctor | judge-login | import [--agent <agent> --path <folder>] | grade --session <id> | --since <7d> | --all [--policy]',
   );
   process.exit(1);
 }

@@ -7,6 +7,14 @@ export { unsafePatternReason };
 
 /** Bump when rules change; `ingest_warnings` and re-ingest key off it (ADR-0007). */
 export const REDACTION_VERSION = '2';
+
+/** Why a session stored with this redaction version must not reach a judge, or null when it may. */
+export function redactionRefusal(version: string | null): string | null {
+  if (version === REDACTION_VERSION) return null;
+  return version === 'off'
+    ? 'redaction is off'
+    : 'not redacted with current rules \u2014 re-import pending';
+}
 const FIELD_TIME_BUDGET_MS = 200;
 /**
  * A regex never sees more than this much text at once, so one rule cannot run for long between two

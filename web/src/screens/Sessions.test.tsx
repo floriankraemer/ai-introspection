@@ -43,4 +43,42 @@ describe('Sessions', () => {
       '/settings',
     );
   });
+
+  it('grades the selected sessions as one batch', async () => {
+    const user = userEvent.setup();
+    renderApp('/');
+    const grade = await screen.findByRole('button', { name: 'Grade selected' });
+    expect(grade).toBeDisabled();
+    await user.click(
+      await screen.findByRole('checkbox', { name: 'Select Add OAuth to API service' }),
+    );
+    await user.click(screen.getByRole('checkbox', { name: 'Select Fix flaky e2e login test' }));
+    expect(screen.getByRole('checkbox', { name: 'Select all loaded sessions' })).toHaveProperty(
+      'indeterminate',
+      true,
+    );
+    await user.click(screen.getByRole('button', { name: 'Grade selected (2)' }));
+    expect(await screen.findByText('Graded.', {}, { timeout: 3000 })).toBeInTheDocument();
+    // The selection is cleared once the batch is queued.
+    expect(screen.getByRole('button', { name: 'Grade selected' })).toBeDisabled();
+  });
+
+  it('selects every loaded session from the header checkbox', async () => {
+    const user = userEvent.setup();
+    renderApp('/');
+    await screen.findByRole('link', { name: 'Add OAuth to API service' });
+    await user.click(screen.getByRole('checkbox', { name: 'Select all loaded sessions' }));
+    const n = screen.getAllByRole('checkbox', { name: /^Select (?!all)/ }).length;
+    expect(screen.getByRole('button', { name: `Grade selected (${String(n)})` })).toBeEnabled();
+  });
+
+  it('shows a deferred batch as over budget', async () => {
+    const user = userEvent.setup();
+    renderApp('/', 'overbudget');
+    await user.click(
+      await screen.findByRole('checkbox', { name: 'Select Add OAuth to API service' }),
+    );
+    await user.click(screen.getByRole('button', { name: 'Grade selected (1)' }));
+    expect(await screen.findByText(/Deferred: the daily token budget/)).toBeInTheDocument();
+  });
 });

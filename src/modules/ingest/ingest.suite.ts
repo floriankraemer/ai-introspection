@@ -3,6 +3,7 @@ import {
   copyFileSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -14,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ConflictError } from '../../platform/errors.js';
+import { newId } from '../../platform/db/ids.js';
 import { fromJson } from '../../platform/db/json.js';
 import { LOCAL_USER_ID, LOCAL_WORKSPACE_ID } from '../../platform/identity/index.js';
 import { createJobQueue } from '../../platform/jobs/queue.js';
@@ -629,6 +631,177 @@ export function ingestSuite(name: string, make: TestDbFactory): void {
           .where('kind', '=', 'x')
           .execute();
         expect(left.map((r) => r.id)).toEqual(['018f0000-0000-7000-8000-00000000000c']);
+      });
+    });
+
+    it('re-ingests a session whose adapter version is outdated, keeping pins and event ids', async () => {
+      await importAll();
+      const id = await sessionIdOf('claude_code');
+      const before = await ingest.sessions.events(id, { filter: 'all', limit: 500 });
+      // A row stored by an older release: wrong version and legacy token counts (cache included in `in`).
+      await t.handle.db
+        .updateTable('session')
+        .set({ adapter_version: '0', tokens_in: 99_999, pinned: true })
+        .where('id', '=', id)
+        .execute();
+      expect(await ingest.reconcile()).toBeGreaterThanOrEqual(1);
+      const job = await t.handle.db
+        .selectFrom('job')
+        .selectAll()
+        .where('kind', '=', 'ingest_file')
+        .where('status', '=', 'queued')
+        .execute();
+      const forced = job.filter((j) => (fromJson(j.payload) as { force?: boolean }).force);
+      expect(forced).toHaveLength(1);
+      await ingest.handlers.ingest_file?.run({ payload: fromJson(forced[0]?.payload) } as never);
+
+      const detail = await ingest.sessions.get(id);
+      expect(detail?.tokensIn).toBe(CLAUDE_TOKENS.in);
+      const row = await t.handle.db
+        .selectFrom('session')
+        .select(['adapter_version', 'pinned'])
+        .where('id', '=', id)
+        .executeTakeFirstOrThrow();
+      expect(row.adapter_version).not.toBe('0');
+      expect(Boolean(row.pinned)).toBe(true);
+      const after = await ingest.sessions.events(id, { filter: 'all', limit: 500 });
+      expect(after?.items.map((e) => e.id)).toEqual(before?.items.map((e) => e.id));
+      // Current rows are left alone: no further forced job is queued.
+      await ingest.reconcile();
+      const again = await t.handle.db
+        .selectFrom('job')
+        .select('payload')
+        .where('kind', '=', 'ingest_file')
+        .execute();
+      expect(again.filter((j) => (fromJson(j.payload) as { force?: boolean }).force)).toHaveLength(
+        1,
+      );
+    });
+
+    describe('forced re-ingest', () => {
+      /** Forces a rebuild of the Claude session as the reconcile job does after a version bump. */
+      const forceRebuild = async (id: string): Promise<void> => {
+        await t.handle.db
+          .updateTable('session')
+          .set({ adapter_version: '0' })
+          .where('id', '=', id)
+          .execute();
+        await ingest.reconcile();
+        const job = await t.handle.db
+          .selectFrom('job')
+          .selectAll()
+          .where('kind', '=', 'ingest_file')
+          .where('status', '=', 'queued')
+          .execute();
+        const forced = job.filter((j) => (fromJson(j.payload) as { force?: boolean }).force);
+        expect(forced).toHaveLength(1);
+        await ingest.handlers.ingest_file?.run({ payload: fromJson(forced[0]?.payload) } as never);
+      };
+      const eventsOf = (id: string) =>
+        t.handle.db
+          .selectFrom('event')
+          .select(['id', 'seq', 'call_id', 'source_key', 'input', 'output', 'payload_purged_at'])
+          .where('session_id', '=', id)
+          .orderBy('seq')
+          .execute();
+      const addGrade = async (sessionId: string, evidence: string[]): Promise<string> => {
+        const rubricId = newId();
+        await t.handle.db
+          .insertInto('rubric')
+          .values({
+            id: rubricId,
+            workspace_id: LOCAL_WORKSPACE_ID,
+            name: `r-${rubricId}`,
+            version: rubricId,
+            ordinal: 1,
+            scale: '[0,1]',
+            pass_threshold: 0.5,
+            body_md: 'x',
+            created_at: new Date().toISOString(),
+          })
+          .execute();
+        const id = newId();
+        await t.handle.db
+          .insertInto('grade')
+          .values({
+            id,
+            workspace_id: LOCAL_WORKSPACE_ID,
+            session_id: sessionId,
+            rubric_id: rubricId,
+            rubric_version: rubricId,
+            score: 0,
+            passed: false,
+            reason: 'x',
+            evidence_event_ids: JSON.stringify(evidence),
+            judge_model: 'fake-judge',
+            transport: 'fake',
+            graded_at: new Date().toISOString(),
+          })
+          .execute();
+        return id;
+      };
+      const statusOf = async (gradeId: string): Promise<string> =>
+        (
+          await t.handle.db
+            .selectFrom('grade')
+            .select('status')
+            .where('id', '=', gradeId)
+            .executeTakeFirstOrThrow()
+        ).status;
+
+      it('keeps the id of every event that is still in the log, even when events before it vanish', async () => {
+        await importAll();
+        const id = await sessionIdOf('claude_code');
+        const before = await eventsOf(id);
+        expect(before.every((e) => e.source_key !== null)).toBe(true);
+        const mcp = before.find((e) => e.call_id === 'toolu_mcp');
+        const edit = before.find((e) => e.call_id === 'toolu_edit');
+        const last = before.at(-1);
+        if (!mcp || !edit || !last) throw new Error('fixture changed');
+        const keeps = await addGrade(id, [edit.id, last.id]);
+        const loses = await addGrade(id, [mcp.id, edit.id]);
+
+        // The log loses the record of the MCP call (a newer adapter that no longer emits it, say):
+        // every later event moves up one position.
+        const lines = readFileSync(sources.claudeFile, 'utf8').split('\n');
+        const gone = lines.findIndex((l) => l.includes('"toolu_mcp"') && l.includes('tool_use"'));
+        expect(gone).toBeGreaterThan(0);
+        lines.splice(gone, 1);
+        writeFileSync(sources.claudeFile, lines.join('\n'));
+        await forceRebuild(id);
+
+        const after = await eventsOf(id);
+        expect(after).toHaveLength(before.length - 1);
+        expect(after.find((e) => e.call_id === 'toolu_edit')?.id).toBe(edit.id); // not shifted by position
+        expect(after.at(-1)?.id).toBe(last.id);
+        expect(after.some((e) => e.id === mcp.id)).toBe(false);
+        expect(await statusOf(keeps)).toBe('ok');
+        expect(await statusOf(loses)).toBe('stale'); // its evidence no longer resolves
+      });
+
+      it('matches rows stored before the source key existed by position, kind and time', async () => {
+        await importAll();
+        const id = await sessionIdOf('claude_code');
+        const before = await eventsOf(id);
+        await t.handle.db.updateTable('event').set({ source_key: null }).execute();
+        const grade = await addGrade(id, [before[3]?.id ?? '', before.at(-1)?.id ?? '']);
+        await forceRebuild(id);
+        expect((await eventsOf(id)).map((e) => e.id)).toEqual(before.map((e) => e.id));
+        expect(await statusOf(grade)).toBe('ok');
+      });
+
+      it('never brings back a payload that retention already purged', async () => {
+        await importAll();
+        const id = await sessionIdOf('claude_code');
+        await t.handle.db.updateTable('session').set({ status: 'ended' }).execute();
+        expect(await ingest.purgePayloads(0)).toBeGreaterThan(0);
+        const purged = await eventsOf(id);
+        expect(purged.every((e) => e.input === null && e.output === null)).toBe(true);
+        await forceRebuild(id);
+        const after = await eventsOf(id);
+        expect(after.map((e) => e.id)).toEqual(purged.map((e) => e.id));
+        expect(after.every((e) => e.input === null && e.output === null)).toBe(true);
+        expect(after.every((e) => e.payload_purged_at !== null)).toBe(true);
       });
     });
 

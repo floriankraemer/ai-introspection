@@ -51,7 +51,8 @@ export function createWorker(opts: WorkerOptions): Worker {
       await handler.run(job);
       await queue.complete(job.id, workerId, now());
     } catch (error) {
-      if (error instanceof DeferJob) await queue.defer(job.id, workerId, error.runAfter);
+      if (error instanceof DeferJob)
+        await queue.defer(job.id, workerId, error.runAfter, error.message);
       else
         await queue.fail(
           job.id,

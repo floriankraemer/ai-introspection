@@ -6,13 +6,16 @@ import type { Schedule } from '../../platform/jobs/scheduler.js';
 import type { JobQueue } from '../../platform/jobs/queue.js';
 import type { SettingsService } from '../settings/index.js';
 import { finalizeSession } from './finalize.js';
+import { adapterFor } from './adapters/index.js';
 import { ingestFile, SESSION_IDLE_MS, type PipelineDeps } from './pipeline.js';
-import { loadOrCreateRedactionKey } from './redaction.js';
+import { loadOrCreateRedactionKey, REDACTION_VERSION } from './redaction.js';
 import { purgeFinishedJobs, purgePayloads, pinSession } from './retention.js';
 import { createSessionQueries } from './sessions.js';
 import { createSources, detectSources, listSessionFiles, type SourceDto } from './sources.js';
 import { createWatcher, type SourceWatcher } from './watcher.js';
 import type { Agent } from './types.js';
+
+export type { GradeCandidate, RedactedTrace, TraceRecord } from './types.js';
 
 export type { Agent, EventKind } from './types.js';
 export type { SourceDto, SourceStatus, DetectedSource } from './sources.js';
@@ -25,7 +28,8 @@ export type {
   SessionSummary,
   TraceEvent,
 } from './sessions.js';
-export { REDACTION_VERSION } from './redaction.js';
+export { REDACTION_VERSION, redactionRefusal } from './redaction.js';
+export { UnredactedSessionError } from './sessions.js';
 
 export const IMPORT_JOB = 'import_history';
 export const INGEST_FILE_JOB = 'ingest_file';
@@ -125,7 +129,49 @@ export function createIngest(deps: IngestDeps) {
         }
       }
     }
+    queued += await reingestOutdated();
     await finalizeIdle();
+    return queued;
+  }
+
+  /**
+   * Sessions stored by an older adapter or redaction version are rebuilt from their source file, so
+   * parser and redaction fixes reach existing data (legacy token counts included). One job per
+   * session and version pair; a source file that is gone leaves the session as it is.
+   */
+  async function reingestOutdated(): Promise<number> {
+    const redactionOn = (await deps.settings.get())['redaction.enabled'];
+    const rows = await db
+      .selectFrom('session')
+      .innerJoin('ingest_cursor', 'ingest_cursor.session_id', 'session.id')
+      .innerJoin('source', 'source.id', 'ingest_cursor.source_id')
+      .select([
+        'session.id',
+        'session.agent',
+        'session.adapter_version',
+        'session.redaction_version',
+        'ingest_cursor.source_id',
+        'ingest_cursor.file_path',
+      ])
+      .where('session.workspace_id', '=', workspaceId)
+      .where('source.enabled', '=', true)
+      .execute();
+    let queued = 0;
+    for (const r of rows) {
+      const adapterVersion = adapterFor(r.agent as Agent).version;
+      const outdated =
+        r.adapter_version !== adapterVersion ||
+        (redactionOn && r.redaction_version !== REDACTION_VERSION);
+      if (!outdated || !(await stat(r.file_path).catch(() => null))) continue;
+      const id = await deps.queue.enqueue({
+        workspaceId,
+        kind: INGEST_FILE_JOB,
+        payload: { sourceId: r.source_id, path: r.file_path, force: true },
+        idempotencyKey: `${INGEST_FILE_JOB}:reingest:${r.id}:${adapterVersion}:${REDACTION_VERSION}`,
+        maxAttempts: 2,
+      });
+      if (id) queued += 1;
+    }
     return queued;
   }
 
@@ -182,9 +228,13 @@ export function createIngest(deps: IngestDeps) {
     [INGEST_FILE_JOB]: {
       concurrency: 1,
       run: async (job) => {
-        const { sourceId, path } = job.payload as { sourceId: string; path: string };
+        const { sourceId, path, force } = job.payload as {
+          sourceId: string;
+          path: string;
+          force?: boolean;
+        };
         const source = (await sources.enabledRows()).find((s) => s.id === sourceId);
-        if (source) await ingestFile(pipeline, source, path);
+        if (source) await ingestFile(pipeline, source, path, { force: force === true });
       },
     },
     [RECONCILE_JOB]: {

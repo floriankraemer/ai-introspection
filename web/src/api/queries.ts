@@ -1,11 +1,13 @@
 import {
   keepPreviousData,
+  type QueryClient,
   queryOptions,
   useInfiniteQuery,
   useMutation,
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
+import { useEffect } from 'react';
 import { useApi } from './context.js';
 import type { Api, EventFilter, Job, Settings, SessionQuery } from './types.js';
 
@@ -22,9 +24,27 @@ export function usePatchSettings() {
     mutationFn: (patch: Parameters<Api['patchSettings']>[0]) => api.patchSettings(patch),
     onSuccess: (s) => {
       qc.setQueryData(['settings'], s);
+      // The budget changes with the limits; the doctor's judge check with the transport.
+      void invalidateKeys(qc, ['budget', 'doctor']);
     },
   });
 }
+
+/** Marks the given query families stale; the ones on screen refetch right away. */
+export function invalidateKeys(qc: QueryClient, keys: string[]) {
+  return Promise.all(keys.map((key) => qc.invalidateQueries({ queryKey: [key] })));
+}
+
+/** Everything that shows a grade, a rubric's trusted flag or its agreement. */
+export const GRADE_KEYS = [
+  'rubric',
+  'rubrics',
+  'session',
+  'sessions',
+  'session-events',
+  'trend-summary',
+  'budget',
+];
 
 /** Health checks are cheap but must be re-run on demand, so they are never served stale. */
 export function useDoctor() {
@@ -73,7 +93,8 @@ export function useSessionEvents(id: string, filter: EventFilter) {
   });
 }
 
-const TERMINAL: Job['status'][] = ['succeeded', 'failed', 'dead'];
+// A deferred job waits for the budget window to reset; polling it every second would be noise.
+const TERMINAL: Job['status'][] = ['succeeded', 'failed', 'dead', 'deferred'];
 
 /** Polls a job once a second until it reaches a terminal status. */
 export function useJob(id: string | null) {
@@ -95,6 +116,56 @@ export function useStartImport() {
       qc.setQueryData(['job', job.id], job);
     },
   });
+}
+
+/** Starts an import and follows it; once it succeeds every query is refetched (new sessions, sources). */
+export function useImport() {
+  const qc = useQueryClient();
+  const start = useStartImport();
+  const job = useJob(start.data?.id ?? null);
+  const status = job.data?.status;
+  useEffect(() => {
+    if (status === 'succeeded') void qc.invalidateQueries();
+  }, [status, qc]);
+  return { start, job };
+}
+
+export function useBudget() {
+  const api = useApi();
+  return useQuery({ queryKey: ['budget'], queryFn: () => api.getBudget(), staleTime: 0 });
+}
+
+export function useRubrics() {
+  const api = useApi();
+  return useQuery({ queryKey: ['rubrics'], queryFn: () => api.listRubrics() });
+}
+
+export function useRubric(name: string | null) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['rubric', name],
+    queryFn: () => api.getRubric(name ?? ''),
+    enabled: name !== null,
+  });
+}
+
+/** Starts a grade job (re-grade or batch) and follows it; when it succeeds, grades are refetched. */
+export function useGradeJob(start: (api: Api, ids: string[]) => Promise<Job>) {
+  const api = useApi();
+  const qc = useQueryClient();
+  const run = useMutation({
+    mutationFn: (ids: string[]) => start(api, ids),
+    onSuccess: (job) => {
+      qc.setQueryData(['job', job.id], job);
+    },
+  });
+  const job = useJob(run.data?.id ?? null);
+  const status = job.data?.status;
+  useEffect(() => {
+    // Any terminal status: a failed or deferred job may still have graded some sessions.
+    if (status && TERMINAL.includes(status)) void invalidateKeys(qc, GRADE_KEYS);
+  }, [status, qc]);
+  return { run, job: job.data ?? run.data ?? null };
 }
 
 export type { Settings };

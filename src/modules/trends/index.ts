@@ -1,3 +1,4 @@
+import type { createGrading } from '../grading/index.js';
 import type { createIngest } from '../ingest/index.js';
 
 const DAY_MS = 86_400_000;
@@ -9,14 +10,17 @@ export interface TrendSummary {
   rubrics: { name: string; passRate: number | null; target: number; gradedCount: number }[];
 }
 
-/** Header counts of the Sessions screen. Grading arrives in Phase 2, so nothing is graded and no rubric reports a rate yet. */
-export function createTrends(ingest: Pick<ReturnType<typeof createIngest>, 'sessions'>) {
+/** Header counts and pass-rate cards of the Sessions screen. */
+export function createTrends(
+  ingest: Pick<ReturnType<typeof createIngest>, 'sessions'>,
+  grading: Pick<ReturnType<typeof createGrading>, 'trendRubrics'>,
+) {
   return {
     async summary(days: number, now = new Date()): Promise<TrendSummary> {
-      const sessionsCollected = await ingest.sessions.countStartedSince(
-        new Date(now.getTime() - days * DAY_MS),
-      );
-      return { days, sessionsCollected, sessionsGraded: 0, rubrics: [] };
+      const since = new Date(now.getTime() - days * DAY_MS);
+      const sessionsCollected = await ingest.sessions.countStartedSince(since);
+      const { sessionsGraded, rubrics } = await grading.trendRubrics(since);
+      return { days, sessionsCollected, sessionsGraded, rubrics };
     },
   };
 }

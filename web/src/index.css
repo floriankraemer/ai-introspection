@@ -28,6 +28,9 @@
   --fail-ink: #b42318;
   --fail-bg: #fef3f2;
   --fail-line: #fecdca;
+  --warn-ink: #7a2e0e;
+  --warn-bg: #fffaeb;
+  --warn-line: #fedf89;
 }
 
 :root[data-theme='dark'] {
@@ -52,6 +55,9 @@
   --fail-ink: #fda29b;
   --fail-bg: #2d1412;
   --fail-line: #6b2420;
+  --warn-ink: #fedf89;
+  --warn-bg: #2b2008;
+  --warn-line: #5c4410;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -77,6 +83,9 @@
     --fail-ink: #fda29b;
     --fail-bg: #2d1412;
     --fail-line: #6b2420;
+    --warn-ink: #fedf89;
+    --warn-bg: #2b2008;
+    --warn-line: #5c4410;
   }
 }
 
@@ -103,6 +112,9 @@
   --color-fail: var(--fail-ink);
   --color-fail-bg: var(--fail-bg);
   --color-fail-line: var(--fail-line);
+  --color-warn: var(--warn-ink);
+  --color-warn-bg: var(--warn-bg);
+  --color-warn-line: var(--warn-line);
 }
 
 @layer base {
@@ -141,4 +153,13 @@
     font-size: 14px;
     white-space: nowrap;
   }
+}
+
+/* Calibration and dry-run rows where the judge disagrees with you: a quiet tint and the same
+   3px accent as failed trace rows, instead of a solid fill. */
+.row-disagree {
+  background: color-mix(in srgb, var(--fail-bg) 45%, transparent);
+}
+.row-disagree > :first-child {
+  box-shadow: inset 3px 0 0 var(--fail-ink);
 }

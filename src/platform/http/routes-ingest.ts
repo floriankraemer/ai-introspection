@@ -2,15 +2,18 @@ import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { Readable } from 'node:stream';
 import { createRoute, z, type OpenAPIHono } from '@hono/zod-openapi';
+import type { Grading } from '../../modules/grading/index.js';
 import type { IngestService } from '../../modules/ingest/index.js';
 import type { createTrends } from '../../modules/trends/index.js';
 import type { JobQueue } from '../jobs/queue.js';
 import { ApiError, problemResponses } from './problem.js';
+import { gradeDetailSchema } from './routes-grading.js';
 import { agentSchema, DEFAULT_PAGE, jobSchema, MAX_PAGE, security, toJobDto } from './schemas.js';
 
 export interface IngestRouteDeps {
   queue: JobQueue;
   ingest: IngestService;
+  grading: Grading;
   trends: ReturnType<typeof createTrends>;
 }
 
@@ -77,6 +80,8 @@ const sessionDetailSchema = z
     }),
     eventCount: z.number().int(),
     errorCount: z.number().int(),
+    /** Newest grade per rubric. */
+    grades: z.array(gradeDetailSchema),
   })
   .openapi('SessionDetail');
 
@@ -246,21 +251,21 @@ const trendSummary = createRoute({
 /** Thin handlers: parse with zod, call one module API, map the result (ADR-0009 rule 5). */
 export function registerIngestRoutes(
   app: OpenAPIHono,
-  { queue, ingest, trends }: IngestRouteDeps,
+  { queue, ingest, grading, trends }: IngestRouteDeps,
 ): void {
   app.openapi(listSessions, async (c) =>
-    c.json(await ingest.sessions.list(c.req.valid('query')), 200),
+    c.json(await grading.sessions.list(c.req.valid('query')), 200),
   );
 
   app.openapi(getSession, async (c) => {
-    const session = await ingest.sessions.get(c.req.valid('param').id);
+    const session = await grading.sessions.get(c.req.valid('param').id);
     if (!session) throw new ApiError(404, 'Not found', 'No such session');
     return c.json(session, 200);
   });
 
   app.openapi(listEvents, async (c) => {
     const { filter, cursor, limit: pageSize } = c.req.valid('query');
-    const page = await ingest.sessions.events(c.req.valid('param').id, {
+    const page = await grading.sessions.events(c.req.valid('param').id, {
       filter,
       cursor,
       limit: pageSize,

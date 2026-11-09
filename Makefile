@@ -6,7 +6,7 @@ export GID ?= $(shell id -g)
 COMPOSE := docker compose -f compose.dev.yaml
 RUN := $(COMPOSE) run --rm --build dev
 
-.PHONY: mount-points install lint test test-pg build up open doctor down dev shell
+.PHONY: mount-points install lint test test-pg build up open doctor claude-login down dev shell
 
 # Host folders mounted into the user stack. Same defaults as compose.yaml; the shell environment
 # wins over .env, as it does for Compose.
@@ -45,6 +45,12 @@ open:
 
 doctor:
 	docker compose exec introspect introspect doctor
+
+# Signs the judge in to Claude, once. The login lives in the container's own home (/data/claude-home),
+# never in ~/.claude: a second client of your login could rotate its refresh token and sign you out.
+# It prints a URL to open in your browser; paste the code it shows back here.
+claude-login:
+	docker compose exec -it introspect introspect judge-login
 
 down:
 	docker compose down

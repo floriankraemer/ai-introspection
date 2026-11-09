@@ -18,12 +18,29 @@ export interface DoctorReport {
 export interface DoctorInput {
   dataDir: string;
   watchPoll: boolean;
+  /** The `redaction.enabled` setting; sessions stored while it is off never reach a judge. */
+  redactionEnabled: boolean;
   /** `error` is set when the database cannot be read or is not migrated. */
   db: { error?: string };
   sources: { agent: string; path: string; enabled: boolean }[];
   /** Registered skills repositories (global and project). */
   repos: { kind: 'global' | 'project'; path: string; hasRubrics: boolean }[];
-  judge: { transport: 'api' | 'cli'; keySet: boolean };
+  /** Parse errors of rubric files in the global skills repository. */
+  rubricProblems: string[];
+  judge: {
+    transport: 'api' | 'cli';
+    keySet: boolean;
+    /** `INTROSPECT_JUDGE=fake`: the test-only judge replaces both transports. */
+    fake: boolean;
+    cli: {
+      /** The judge's private HOME, where its own login lives. */
+      home: string;
+      /** The judge's own login exists in `home`. */
+      loginPresent: boolean;
+      /** Why the CLI's private home could be ingested as agent logs, or null. */
+      isolationProblem: string | null;
+    };
+  };
   env: NodeJS.ProcessEnv;
   uid: number | undefined;
   /** Runs a program and returns stdout; rejects when it is missing or exits non-zero. */
@@ -217,7 +234,15 @@ export async function checkGh({ env, run }: DoctorInput): Promise<DoctorCheck> {
 }
 
 export async function checkJudge({ judge, env, run }: DoctorInput): Promise<DoctorCheck> {
-  const label = `Judge credential (${judge.transport})`;
+  const label = `Judge (${judge.fake ? 'fake' : judge.transport})`;
+  if (judge.fake)
+    return problem(
+      'warn',
+      'judge',
+      label,
+      'INTROSPECT_JUDGE=fake is set: grades come from the test-only fake judge',
+      'Unset INTROSPECT_JUDGE and run `make up` to grade with a real model.',
+    );
   if (judge.transport === 'api') {
     return judge.keySet || env.ANTHROPIC_API_KEY
       ? ok('judge', label, 'An API key is stored')
@@ -233,15 +258,60 @@ export async function checkJudge({ judge, env, run }: DoctorInput): Promise<Doct
     () => true,
     () => false,
   );
-  return found
-    ? ok('judge', label, 'The claude CLI is available')
-    : problem(
-        'warn',
-        'judge',
-        label,
-        'The claude CLI is not installed',
-        'Install it and mount your login, or switch the judge to the API transport in Settings.',
-      );
+  if (!found)
+    return problem(
+      'warn',
+      'judge',
+      label,
+      'The claude CLI is not installed',
+      'Use the Docker image (it ships the CLI), or install `claude` and run `introspect judge-login`; or switch the judge to the API transport in Settings.',
+    );
+  if (!judge.cli.loginPresent)
+    return problem(
+      'warn',
+      'judge',
+      label,
+      `The judge has no Claude login of its own in ${judge.cli.home}. It never uses your host login: a second client of the same login can rotate its refresh token and sign you out.`,
+      "Run `make claude-login` (Docker) or `introspect judge-login` (native) and sign in once; the login stays in the judge's private home.",
+    );
+  if (judge.cli.isolationProblem)
+    return problem(
+      'fail',
+      'judge',
+      label,
+      judge.cli.isolationProblem,
+      'Set INTROSPECT_CLAUDE_HOME to a folder outside every agent-log source.',
+    );
+  return ok(
+    'judge',
+    label,
+    "The claude CLI and the judge's own login are present; judge runs use a private home that no source reads",
+  );
+}
+
+export function checkRedaction({ redactionEnabled }: DoctorInput): DoctorCheck {
+  const label = 'Redaction';
+  if (redactionEnabled) return ok('redaction', label, 'On: secrets are masked before storage');
+  return problem(
+    'warn',
+    'redaction',
+    label,
+    'Redaction is off: new sessions are stored unredacted and are never sent to a judge',
+    'Turn "Redact secrets" on in Settings; sessions stored while it was off are rebuilt from their log files and then become gradable.',
+  );
+}
+
+export function checkRubrics({ rubricProblems, repos }: DoctorInput): DoctorCheck[] {
+  if (rubricProblems.length === 0 || !repos.some((r) => r.kind === 'global')) return [];
+  return [
+    problem(
+      'warn',
+      'rubrics',
+      'Rubric files',
+      rubricProblems.join('; '),
+      'Fix the frontmatter (name, scale, pass_threshold) of these files in rubrics/ of the skills repository.',
+    ),
+  ];
 }
 
 export function checkOwnership({ repos, uid }: DoctorInput): DoctorCheck {
@@ -276,6 +346,8 @@ export async function runDoctor(input: DoctorInput): Promise<DoctorReport> {
     await checkGitIdentity(input),
     await checkGh(input),
     await checkJudge(input),
+    checkRedaction(input),
+    ...checkRubrics(input),
     checkOwnership(input),
   ];
   return { checks };

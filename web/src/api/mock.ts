@@ -1,9 +1,14 @@
 import { ApiError } from './client.js';
 import type {
   Api,
+  Budget,
+  CalibrationRow,
   DetectedSource,
   DoctorCheck,
+  GradeDetail,
   Job,
+  RubricDetail,
+  RubricSummary,
   SessionDetail,
   SessionGrade,
   SessionSummary,
@@ -16,9 +21,10 @@ import type {
 /**
  * Fixture-backed implementation of `Api` for building the UI before the backend exists.
  * Scenarios: `graded` (default, full demo), `ungraded` (phase 1: nothing graded),
- * `empty` (configured, no sessions), `fresh` (nothing configured: shows the setup wizard).
+ * `empty` (configured, no sessions), `fresh` (nothing configured: shows the setup wizard),
+ * `overbudget` (graded, but the judge budget is used up: grade jobs are deferred).
  */
-export type MockScenario = 'graded' | 'ungraded' | 'empty' | 'fresh';
+export type MockScenario = 'graded' | 'ungraded' | 'empty' | 'fresh' | 'overbudget';
 
 const RUBRICS = [
   { name: 'Efficiency', target: 0.7 },
@@ -26,6 +32,85 @@ const RUBRICS = [
   { name: 'Verbosity', target: 0.7 },
   { name: 'Silent workaround', target: 0.8 },
 ];
+
+/** Rubric files as the API shows them: slug names, body with frontmatter. */
+const RUBRIC_FILES: {
+  name: string;
+  version: number;
+  passThreshold: number;
+  wrong: number;
+  passRate: number;
+  question: string;
+}[] = [
+  {
+    name: 'efficiency',
+    version: 3,
+    passThreshold: 0.6,
+    wrong: 3,
+    passRate: 0.58,
+    question:
+      'Did the agent work toward the result, or waste effort on redundant steps and back-and-forth?',
+  },
+  {
+    name: 'redundant-tests',
+    version: 2,
+    passThreshold: 0.6,
+    wrong: 1,
+    passRate: 0.71,
+    question: 'Do the tests the agent wrote duplicate coverage or ignore the test-pyramid rule?',
+  },
+  {
+    name: 'verbosity',
+    version: 1,
+    passThreshold: 0.6,
+    wrong: 2,
+    passRate: 0.84,
+    question: 'Are the final summary and the code comments short and free of filler?',
+  },
+  {
+    name: 'silent-workaround',
+    version: 1,
+    passThreshold: 0.8,
+    wrong: 4,
+    passRate: 0.66,
+    question: 'Did a tool or instruction fail, and did the final report leave that out?',
+  },
+];
+
+/** Like the real API: the text below the frontmatter; the fields travel separately. */
+const rubricBody = (r: (typeof RUBRIC_FILES)[number]) => `${r.question}
+
+- 1.0  Direct path; information gathering proportional to the task
+- 0.6  Some detours, recovered quickly
+- 0.2  Repeated failed calls or environment probing a skill should cover
+
+Return: score, one-paragraph reason, ids of the events that justify it.
+`;
+
+/** Splits a whole rubric file the way the server does: frontmatter fields and the body below. */
+function splitRubricFile(text: string): { fields: Map<string, string>; body: string } | null {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(text.trimStart());
+  if (!m) return null;
+  const fields = new Map<string, string>();
+  for (const line of (m[1] ?? '').split(/\r?\n/)) {
+    const i = line.indexOf(':');
+    if (i > 0) fields.set(line.slice(0, i).trim(), line.slice(i + 1).trim());
+  }
+  return { fields, body: (m[2] ?? '').trim() + '\n' };
+}
+
+const REASONS: Record<string, string> = {
+  Efficiency: 'Spent ~7 min probing ports. The e2e skill gives no way to find the dev-server port.',
+  'Redundant tests': '46 unit tests; guidelines prefer a few end-to-end tests for auth flows.',
+  Verbosity: 'The final summary is short and the code carries no filler comments.',
+  'Silent workaround':
+    '11 tool errors were routed around; final summary reports success without mentioning them.',
+};
+/** Event ids that justify each grade in the fixture trace (`e1`… in order). */
+const EVIDENCE: Record<string, string[]> = {
+  Efficiency: ['e7', 'e8', 'e9', 'e10', 'e11', 'e12', 'e13', 'e14', 'e15', 'e16', 'e17', 'e18'],
+  'Silent workaround': ['e22', 'e25'],
+};
 
 const JOB_META = {
   attempts: 1,
@@ -307,6 +392,127 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
         });
   const trace = buildTrace();
 
+  const gradesOf = (s: SessionSummary): GradeDetail[] =>
+    s.grades.map((g) => ({
+      rubric: g.rubric,
+      rubricVersion: g.rubric === 'Efficiency' ? 3 : 1,
+      rubricSha: '9f3c2a1b7d4e',
+      status: g.rubric === 'Silent workaround' ? 'stale' : 'ok',
+      answeredModel: g.rubric === 'Redundant tests' ? 'claude-haiku-4-5' : 'claude-sonnet-5-5',
+      score: g.score,
+      passed: g.passed,
+      reason:
+        g.passed === null
+          ? 'This rubric does not apply to this session.'
+          : (REASONS[g.rubric] ?? ''),
+      evidenceEventIds: g.passed === null ? [] : (EVIDENCE[g.rubric] ?? []),
+      judgeModel: 'claude-sonnet-5-5',
+      transport: settings['judge.transport'],
+      gradedAt: s.startedAt,
+      trusted: rubrics.get(g.rubric.toLowerCase().replace(/ /g, '-'))?.trusted ?? false,
+    }));
+
+  // Rubric state is mutable so saving, labelling and re-reading behave like the real thing.
+  const titles = SESSIONS.slice(0, 10).map((x, i) => ({
+    id: `sess-${String(i + 1)}`,
+    title: x.title,
+  }));
+  const rubrics = new Map<string, RubricDetail>(
+    RUBRIC_FILES.map((r) => {
+      const calibration: CalibrationRow[] = titles.map((t, i) => {
+        const human = i % 2 === 0;
+        const agrees = i >= r.wrong;
+        return {
+          sessionId: t.id,
+          title: t.title,
+          human: { passed: human, score: human ? 0.8 : 0.2, note: null },
+          judge: {
+            passed: agrees ? human : !human,
+            score: (agrees ? human : !human) ? 0.8 : 0.2,
+            reason: null,
+          },
+          agrees,
+        };
+      });
+      return [
+        r.name,
+        {
+          name: r.name,
+          version: r.version,
+          scale: [0, 0.2, 0.4, 0.6, 0.8, 1],
+          passThreshold: r.passThreshold,
+          appliesTo: 'all',
+          sha: `${String(r.version)}f3c2a1b7d`,
+          target: null,
+          labelCount: 10,
+          trusted: 10 - r.wrong >= 8,
+          agreement: { agree: 10 - r.wrong, total: 10 },
+          passRate: r.passRate,
+          body: rubricBody(r),
+          versions: Array.from({ length: r.version }, (_, v) => ({
+            sha: `${String(v + 1)}f3c2a1b7d`,
+            version: v + 1,
+            at: new Date(Date.now() - (r.version - v) * 40 * H).toISOString(),
+            message: v === 0 ? `Add ${r.name} rubric` : `Tighten ${r.name} levels`,
+          })),
+          calibration,
+        },
+      ];
+    }),
+  );
+  const summaryOf = (r: RubricDetail): RubricSummary => ({
+    name: r.name,
+    version: r.version,
+    scale: r.scale,
+    passThreshold: r.passThreshold,
+    appliesTo: r.appliesTo,
+    trusted: r.trusted,
+    agreement: r.agreement,
+    passRate: r.passRate,
+    sha: r.sha,
+    target: r.target,
+    labelCount: r.labelCount,
+  });
+  const recount = (r: RubricDetail) => {
+    const rows = r.calibration.filter((c) => c.agrees !== null);
+    const agree = rows.filter((c) => c.agrees).length;
+    r.agreement = { agree, total: r.calibration.length };
+    r.trusted = r.calibration.length >= 10 && agree / r.calibration.length >= 0.8;
+  };
+  const budget = (): Budget => ({
+    mode: settings['budget.mode'],
+    tokensToday: scenario === 'overbudget' ? (settings['budget.tokens_per_day'] ?? 0) : 120_000,
+    tokensPerDay: settings['budget.tokens_per_day'],
+    usdMonth: 4.2,
+    usdPerMonth: settings['budget.usd_per_month'],
+    deferredJobs: scenario === 'overbudget' ? 3 : 0,
+    tokensResetAt: new Date(Date.now() + 8 * H).toISOString(),
+    usdResetAt: new Date(Date.now() + 20 * 24 * H).toISOString(),
+  });
+  const gradeJob = (n: number): Job => {
+    const job: Job =
+      scenario === 'overbudget'
+        ? {
+            id: `job-${String(jobs.size + 1)}`,
+            kind: 'grade',
+            status: 'deferred',
+            progress: { done: 0, total: n },
+            error:
+              'Deferred: the daily token budget (1M) is used up. Grading resumes after midnight.',
+            ...JOB_META,
+          }
+        : {
+            id: `job-${String(jobs.size + 1)}`,
+            kind: 'grade',
+            status: 'queued',
+            progress: { done: 0, total: n },
+            error: null,
+            ...JOB_META,
+          };
+    jobs.set(job.id, job);
+    return job;
+  };
+
   const find = (id: string) => {
     const s = sessions.find((x) => x.id === id);
     if (!s) throw new ApiError(404, 'Not found', `No session ${id}`);
@@ -431,6 +637,13 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
       await wait();
       const job = jobs.get(id);
       if (!job) throw new ApiError(404, 'Not found', `No job ${id}`);
+      if (job.kind === 'grade') {
+        if (job.status === 'deferred') return job;
+        const total = job.progress?.total ?? 1;
+        const next: Job = { ...job, status: 'succeeded', progress: { done: total, total } };
+        jobs.set(id, next);
+        return next;
+      }
       // Each poll advances the import, so tests and demos need no timers.
       const done = Math.min(job.progress?.total ?? 0, (job.progress?.done ?? 0) + 81);
       const next: Job = {
@@ -489,14 +702,20 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
         outcome: { kind: 'pr_merged', ref: '128', url: null },
         eventCount: trace.length,
         errorCount: trace.filter((e) => e.isError).length,
+        grades: gradesOf(s),
       };
       return detail;
     },
     async listEvents(id, { filter, cursor, limit = 200 }) {
       await wait();
       find(id);
+      const evidence = new Set(gradesOf(find(id)).flatMap((g) => g.evidenceEventIds));
       const all =
-        filter === 'errors' ? trace.filter((e) => e.isError) : filter === 'evidence' ? [] : trace;
+        filter === 'errors'
+          ? trace.filter((e) => e.isError)
+          : filter === 'evidence'
+            ? trace.filter((e) => evidence.has(e.id))
+            : trace;
       const start = Number(cursor ?? 0);
       return {
         items: all.slice(start, start + limit),
@@ -507,9 +726,141 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
     async exchangeToken() {
       await wait();
     },
+    async regradeSession(id) {
+      await wait();
+      find(id);
+      return gradeJob(1);
+    },
+    async gradeBatch(ids) {
+      await wait();
+      return gradeJob(ids.length);
+    },
+    async listRubrics() {
+      await wait();
+      return fresh || scenario === 'ungraded' ? [] : [...rubrics.values()].map(summaryOf);
+    },
+    async getRubric(name) {
+      await wait();
+      const r = rubrics.get(name);
+      if (!r) throw new ApiError(404, 'Not found', `No rubric ${name}`);
+      return structuredClone(r);
+    },
+    async putRubric(name, { body, passThreshold, message }) {
+      await wait();
+      const old = rubrics.get(name);
+      const version = (old?.version ?? 0) + 1;
+      const file = splitRubricFile(body);
+      const f = file?.fields;
+      const next: RubricDetail = {
+        name,
+        scale: [0, 0.2, 0.4, 0.6, 0.8, 1],
+        appliesTo: 'all',
+        sha: '',
+        labelCount: 0,
+        trusted: false,
+        agreement: { agree: 0, total: 0 },
+        passRate: null,
+        calibration: [],
+        ...old,
+        version,
+        body: file?.body ?? body,
+        passThreshold,
+        ...(f?.has('scale') ? { scale: JSON.parse(f.get('scale') ?? '[]') as number[] } : {}),
+        ...(f?.has('applies_to') ? { appliesTo: f.get('applies_to') ?? 'all' } : {}),
+        target: f?.has('target') ? Number(f.get('target')) : (old?.target ?? null),
+        versions: [
+          ...(old?.versions ?? []),
+          { sha: `${String(version)}a7e1c90d4`, version, at: new Date().toISOString(), message },
+        ],
+      };
+      rubrics.set(name, next);
+      return structuredClone(next);
+    },
+    async dryRunRubric(name, { sessionIds: ids }) {
+      await wait();
+      if (!rubrics.has(name)) throw new ApiError(404, 'Not found', `No rubric ${name}`);
+      if (scenario === 'overbudget')
+        throw new ApiError(
+          429,
+          'Budget used up',
+          'The daily token budget is used up. Dry-runs resume after midnight.',
+        );
+      return {
+        verdicts: ids.map((sid, i) => {
+          const passed = i % 3 !== 0;
+          const mine = rubrics.get(name)?.calibration.find((c) => c.sessionId === sid)
+            ?.human.passed;
+          return {
+            sessionId: sid,
+            rubric: name,
+            status: 'ok' as const,
+            judgeModel: 'claude-sonnet-5-5',
+            answeredModel: 'claude-sonnet-5-5',
+            transport: settings['judge.transport'],
+            humanPassed: mine ?? null,
+            agrees: mine === undefined ? null : mine === passed,
+            score: passed ? 0.8 : 0.2,
+            passed,
+            reason: passed
+              ? 'Direct path, a few reads before the edit.'
+              : 'Repeated failed calls probing for the dev-server port.',
+            evidenceEventIds: passed ? [] : ['e7', 'e8'],
+          };
+        }),
+        skipped: [],
+        usage: { tokens: 6000 * ids.length, costUsd: 0.02 * ids.length },
+      };
+    },
+    async addLabel(name, label) {
+      await wait();
+      const r = rubrics.get(name.toLowerCase().replace(/ /g, '-'));
+      if (!r) throw new ApiError(404, 'Not found', `No rubric ${name}`);
+      const title = sessions.find((x) => x.id === label.sessionId)?.title ?? label.sessionId;
+      const g = gradesOf(find(label.sessionId)).find(
+        (x) => x.rubric.toLowerCase().replace(/ /g, '-') === r.name,
+      );
+      const row: CalibrationRow = {
+        sessionId: label.sessionId,
+        title,
+        human: { passed: label.passed, score: label.score ?? null, note: label.note || null },
+        judge: g ? { passed: g.passed, score: g.score, reason: g.reason } : null,
+        agrees: g && g.passed !== null ? g.passed === label.passed : null,
+      };
+      r.calibration = [row, ...r.calibration.filter((c) => c.sessionId !== label.sessionId)];
+      recount(r);
+    },
+    async getBudget() {
+      await wait();
+      return budget();
+    },
     async getDoctor() {
       await wait();
-      return { checks: doctor };
+      const cli = settings['judge.transport'] === 'cli';
+      const loggedIn = scenario !== 'ungraded'; // the ungraded scenario has never logged in
+      const judge: DoctorCheck = cli
+        ? loggedIn
+          ? {
+              id: 'judge',
+              label: 'Judge (claude CLI)',
+              status: 'ok',
+              detail: 'Logged in to Claude inside the container.',
+              fix: null,
+            }
+          : {
+              id: 'judge',
+              label: 'Judge (claude CLI)',
+              status: 'warn',
+              detail: 'Not logged in to Claude inside the container.',
+              fix: 'Run `make claude-login`, then run the checks again.',
+            }
+        : {
+            id: 'judge',
+            label: 'Judge (Anthropic API)',
+            status: settings['judge.api_key_set'] ? 'ok' : 'warn',
+            detail: settings['judge.api_key_set'] ? 'An API key is stored.' : 'No API key.',
+            fix: null,
+          };
+      return { checks: [...doctor, judge] };
     },
   };
 }

@@ -2,7 +2,7 @@ import { serveStatic } from '@hono/node-server/serve-static';
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { relative } from 'node:path';
 import { localGuard, requireToken } from './auth.js';
-import { ConflictError, InvalidInputError } from '../errors.js';
+import { BudgetExceededError, ConflictError, InvalidInputError } from '../errors.js';
 import { ApiError, problemResponse } from './problem.js';
 import { registerRoutes, type RouteDeps } from './routes.js';
 
@@ -46,6 +46,10 @@ export function createApp(deps: AppDeps): OpenAPIHono {
       return problemResponse(c, err.status, err.title, { detail: err.message });
     if (err instanceof InvalidInputError)
       return problemResponse(c, 422, 'Unprocessable request', { detail: err.message });
+    if (err instanceof BudgetExceededError)
+      return problemResponse(c, 429, 'Budget used up', {
+        detail: `${err.message}; it resets at ${err.runAfter.toISOString()}`,
+      });
     if (err instanceof ConflictError)
       return problemResponse(c, 409, 'Conflict', { detail: err.message });
     console.error(err);

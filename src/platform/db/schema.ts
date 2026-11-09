@@ -90,6 +90,8 @@ export interface Schema {
     payload_purged_at: Ts | null;
     /** Tool-use id that pairs a result with its call, also across ingest chunks. */
     call_id: string | null;
+    /** Stable key of the source record (line hash, index in the line); lets a re-ingest keep the id. */
+    source_key: string | null;
   };
   signal: {
     session_id: string;
@@ -123,6 +125,7 @@ export interface Schema {
     session_id: string;
     user_id: string;
     label: 'pass' | 'fail';
+    score: number | null;
     note: string | null;
     created_at: Ts;
   };
@@ -139,6 +142,8 @@ export interface Schema {
     tokens_out: Generated<number>;
     cost_estimate: number | null;
     ref_id: string | null;
+    /** `reserved` while the call is in flight (counts its estimate against the budget), then `ok` or `error`. */
+    status: Generated<'reserved' | 'ok' | 'error'>;
   };
   grade: {
     id: string;
@@ -150,9 +155,13 @@ export interface Schema {
     passed: Bool | null;
     reason: string | null;
     evidence_event_ids: Json | null;
+    /** The model asked for; unique per session and rubric version. */
     judge_model: string;
+    /** The model that answered (may differ: fallback). */
+    answered_model: string | null;
     transport: string;
-    status: Generated<'ok' | 'refused' | 'invalid'>;
+    /** `stale`: an evidence event id no longer resolves after a re-ingest; excluded from pass rates. */
+    status: Generated<'ok' | 'refused' | 'invalid' | 'stale'>;
     llm_call_id: string | null;
     graded_at: Ts;
   };

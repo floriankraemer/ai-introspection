@@ -4,6 +4,10 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  build: {
+    // The CodeMirror editor chunk is loaded on demand by the Rubrics screen only.
+    chunkSizeWarningLimit: 600,
+  },
   server: {
     port: 5173,
     // In the dev container the server (`pnpm dev`) runs next to Vite; override to target another.

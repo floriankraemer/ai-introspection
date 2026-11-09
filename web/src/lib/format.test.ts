@@ -59,7 +59,12 @@ describe('formatting', () => {
 
 describe('formatTokens', () => {
   it('abbreviates thousands and millions', () => {
-    expect([950, 62_000, 4_180_000].map(formatTokens)).toEqual(['950', '62k', '4.2M']);
+    expect([950, 62_000, 4_180_000, 1_000_000].map(formatTokens)).toEqual([
+      '950',
+      '62k',
+      '4.2M',
+      '1M',
+    ]);
   });
 });
 

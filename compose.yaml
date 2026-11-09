@@ -28,6 +28,10 @@ services:
       GIT_COMMITTER_NAME:
       GIT_COMMITTER_EMAIL:
       GH_TOKEN:
+      # Test-only judge (`fake`); leave it out of .env for real grading.
+      INTROSPECT_JUDGE:
+      # Time zone of the budget windows ("tokens per day", "dollars per month"); UTC when unset.
+      TZ:
     volumes:
       - data:/data
       # Agent logs, read-only. Compose has no optional bind mounts: a missing folder is created
@@ -41,6 +45,9 @@ services:
         source: ${HOME}/.codex/sessions
         target: /sources/codex/sessions
         read_only: true
+      # No Claude login is mounted. The CLI judge signs in on its own (`make claude-login`) and keeps
+      # that login in /data/claude-home, a private home no source reads. Your ~/.claude stays
+      # untouched, so the container can never rotate or invalidate your own login.
       # Global skills repository and project repositories, read-write: Introspect commits
       # rubrics and merges proposals there. `make up` creates both folders as your user first.
       # The default is a dedicated folder, never ~/.claude: that holds your Claude credentials,

@@ -3,6 +3,7 @@ import {
   createRootRouteWithContext,
   createRoute,
   createRouter,
+  lazyRouteComponent,
   Outlet,
   redirect,
   type RouterHistory,
@@ -13,7 +14,7 @@ import type { Agent, Api, SessionResultFilter } from './api/types.js';
 import { Shell } from './components/Shell.js';
 import { ErrorState } from './components/ui.js';
 import { AuthExchange, AuthRequired } from './screens/AuthRequired.js';
-import { Proposals, Rubrics, Trends } from './screens/Placeholders.js';
+import { Proposals, Trends } from './screens/Placeholders.js';
 import { SessionDetail } from './screens/SessionDetail.js';
 import { Sessions, type SessionsSearch } from './screens/Sessions.js';
 import { Settings } from './screens/Settings.js';
@@ -88,7 +89,12 @@ const sessionDetail = createRoute({
   },
 });
 
-const rubrics = createRoute({ getParentRoute: () => shell, path: '/rubrics', component: Rubrics });
+const rubrics = createRoute({
+  getParentRoute: () => shell,
+  path: '/rubrics',
+  // Lazy: the screen pulls in the CodeMirror editor, which the other screens never need.
+  component: lazyRouteComponent(() => import('./screens/Rubrics.js'), 'Rubrics'),
+});
 const proposals = createRoute({
   getParentRoute: () => shell,
   path: '/proposals',

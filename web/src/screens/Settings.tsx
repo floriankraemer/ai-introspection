@@ -2,8 +2,17 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useState, type ReactNode } from 'react';
 import { useApi } from '../api/context.js';
-import { usePatchSettings, useSettings, useSkillRepos, useSources } from '../api/queries.js';
-import type { Agent, Settings as SettingsData, SourceStatus } from '../api/types.js';
+import {
+  invalidateKeys,
+  useBudget,
+  useDoctor,
+  usePatchSettings,
+  useSettings,
+  useSkillRepos,
+  useSources,
+} from '../api/queries.js';
+import { formatTokens } from '../lib/format.js';
+import type { Agent, BudgetMode, Settings as SettingsData, SourceStatus } from '../api/types.js';
 import { HealthCheck } from '../components/HealthCheck.js';
 import { JudgeTest } from '../components/JudgeTest.js';
 import {
@@ -177,7 +186,7 @@ function SourcesCard({ settings, save }: { settings: SettingsData; save: (p: Pat
     onSuccess: async () => {
       setAdding(false);
       setPath('');
-      await qc.invalidateQueries({ queryKey: ['sources'] });
+      await invalidateKeys(qc, ['sources', 'doctor']);
     },
   });
   return (
@@ -293,6 +302,47 @@ function SourcesCard({ settings, save }: { settings: SettingsData; save: (p: Pat
   );
 }
 
+/** CLI transport: the login lives in the container, so show what the doctor found and how to log in. */
+function CliLogin() {
+  const doctor = useDoctor();
+  const check = doctor.data?.checks.find((c) => c.id === 'judge');
+  const ok = check?.status === 'ok';
+  return (
+    <div
+      aria-label="Claude login"
+      role="group"
+      className="flex flex-col gap-1.5 rounded-lg border border-line-soft bg-surface-alt p-3 text-sm"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <strong>Claude login in the container</strong>
+        {doctor.isPending ? (
+          <span className="text-muted">Checking…</span>
+        ) : doctor.isError || !check ? (
+          <Chip>Unknown</Chip>
+        ) : (
+          <Chip tone={ok ? 'pass' : check.status === 'fail' ? 'fail' : 'warn'}>
+            {ok ? 'Logged in' : 'Not logged in'}
+          </Chip>
+        )}
+        <Button
+          className="ml-auto h-10"
+          disabled={doctor.isFetching}
+          onClick={() => void doctor.refetch()}
+        >
+          {doctor.isFetching ? 'Checking…' : 'Check again'}
+        </Button>
+      </div>
+      {check ? <p className="m-0 text-muted">{check.detail}</p> : null}
+      {ok ? null : (
+        <p className="m-0 text-ink-soft">
+          To log in, run <code>make claude-login</code> in your project folder, then press Check
+          again.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function JudgeCard({ settings, save }: { settings: SettingsData; save: (p: Patch) => void }) {
   const api = useApi();
   const qc = useQueryClient();
@@ -301,7 +351,7 @@ function JudgeCard({ settings, save }: { settings: SettingsData; save: (p: Patch
     mutationFn: () => api.putJudgeKey(key.trim()),
     onSuccess: async () => {
       setKey('');
-      await qc.invalidateQueries({ queryKey: ['settings'] });
+      await invalidateKeys(qc, ['settings', 'doctor']);
     },
   });
   const mode = settings['budget.mode'];
@@ -354,6 +404,7 @@ function JudgeCard({ settings, save }: { settings: SettingsData; save: (p: Patch
           </Field>
         </form>
       ) : null}
+      {settings['judge.transport'] === 'cli' ? <CliLogin /> : null}
       <JudgeTest transport={settings['judge.transport']} apiKey={key.trim()} />
       <Select
         label="Grade"
@@ -398,7 +449,37 @@ function JudgeCard({ settings, save }: { settings: SettingsData; save: (p: Patch
           }}
         />
       ) : null}
+      <BudgetUsage mode={mode} />
     </section>
+  );
+}
+
+/** What the judge has used so far, so a deferred or over-budget grade has a visible reason. */
+function BudgetUsage({ mode }: { mode: BudgetMode }) {
+  const budget = useBudget();
+  if (budget.isPending) return <p className="m-0 text-[13px] text-muted">Loading usage…</p>;
+  if (budget.isError)
+    return (
+      <p className="m-0 text-[13px] text-fail">Could not load usage: {budget.error.message}</p>
+    );
+  const b = budget.data;
+  const tokensOver = b.tokensPerDay !== null && b.tokensToday >= b.tokensPerDay;
+  const usdOver = b.usdPerMonth !== null && b.usdMonth >= b.usdPerMonth;
+  return (
+    <div className="flex flex-col gap-1 text-[13px]" aria-label="Budget usage" role="group">
+      {mode !== 'usd_month' && b.tokensPerDay !== null ? (
+        <p className={`m-0 ${tokensOver ? 'text-warn' : 'text-muted'}`}>
+          Used {formatTokens(b.tokensToday)} of {formatTokens(b.tokensPerDay)} tokens today.
+          {tokensOver ? ' Grading is deferred until the budget resets at midnight.' : ''}
+        </p>
+      ) : null}
+      {mode !== 'tokens_day' && b.usdPerMonth !== null ? (
+        <p className={`m-0 ${usdOver ? 'text-warn' : 'text-muted'}`}>
+          Spent ${b.usdMonth.toFixed(2)} of ${String(b.usdPerMonth)} this month.
+          {usdOver ? ' Grading is deferred until next month.' : ''}
+        </p>
+      ) : null}
+    </div>
   );
 }
 

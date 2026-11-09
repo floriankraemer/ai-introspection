@@ -9,6 +9,14 @@ export const BACKOFF_BASE_MS = 30_000;
 const DEFAULT_MAX_ATTEMPTS = 5;
 const CLAIMABLE: JobStatus[] = ['queued', 'failed', 'deferred'];
 
+/** How far a long job is; `failed` and `errors` list the items a batch gave up on and went on. */
+export interface JobProgress {
+  done: number;
+  total: number;
+  failed?: number;
+  errors?: string[];
+}
+
 export interface Job {
   id: string;
   workspaceId: string;
@@ -25,7 +33,7 @@ export interface Job {
   lastError: string | null;
   createdAt: string;
   finishedAt: string | null;
-  progress: { done: number; total: number } | null;
+  progress: JobProgress | null;
 }
 
 export interface EnqueueInput {
@@ -75,13 +83,13 @@ export interface JobQueue {
   /** Retry with backoff, or `dead` after the last attempt. */
   fail(jobId: string, workerId: string, error: string, now?: Date): Promise<JobStatus>;
   /** Wait for a budget or time window without consuming an attempt. */
-  defer(jobId: string, workerId: string, runAfter: Date): Promise<void>;
+  defer(jobId: string, workerId: string, runAfter: Date, reason?: string): Promise<void>;
   /** Returns jobs whose worker vanished to `queued` (or `dead` when out of attempts). */
   reapExpired(now?: Date): Promise<number>;
   /** The "retry" action for dead jobs in Settings. */
   retryDead(jobId: string, now?: Date): Promise<boolean>;
   /** Long jobs (imports) report how far they are; shown by the SPA. */
-  setProgress(jobId: string, progress: { done: number; total: number }): Promise<void>;
+  setProgress(jobId: string, progress: JobProgress): Promise<void>;
   get(jobId: string): Promise<Job | null>;
   /** Newest first; `cursor` is the last id of the previous page. */
   list(opts: { status?: JobStatus; cursor?: string; limit: number }): Promise<Job[]>;
@@ -195,7 +203,7 @@ export function createJobQueue({ db, dialect }: DbHandle): JobQueue {
       });
     },
 
-    async defer(jobId, workerId, runAfter) {
+    async defer(jobId, workerId, runAfter, reason) {
       await db
         .updateTable('job')
         .set((eb) => ({
@@ -204,6 +212,8 @@ export function createJobQueue({ db, dialect }: DbHandle): JobQueue {
           run_after: iso(runAfter),
           lease_until: null,
           locked_by: null,
+          // Why it waits (for example the budget); shown as the job's error.
+          ...(reason !== undefined && { last_error: reason }),
         }))
         .where('id', '=', jobId)
         .where('locked_by', '=', workerId)

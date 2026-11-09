@@ -57,6 +57,19 @@ const DEFAULTS: Omit<Settings, 'judge.api_key_set'> = {
   'proposals.accept_mode': 'merge',
 };
 
+/**
+ * SQLite hands back the stored JSON text; Postgres hands back the parsed value, which for the enum
+ * settings is a bare string that `fromJson` would try to parse again. No setting value is itself
+ * valid JSON when it is a string (they are enum names), so a failed parse means "already parsed".
+ */
+function readValue(stored: unknown): unknown {
+  try {
+    return fromJson(stored);
+  } catch {
+    return stored;
+  }
+}
+
 export interface SettingsService {
   get(): Promise<Settings>;
   update(patch: SettingsPatch): Promise<Settings>;
@@ -71,7 +84,7 @@ export function createSettings(db: Db, workspaceId: string, secrets: SecretStore
       .select(['key', 'value'])
       .where('workspace_id', '=', workspaceId)
       .execute();
-    const stored = Object.fromEntries(rows.map((r) => [r.key, fromJson(r.value)]));
+    const stored = Object.fromEntries(rows.map((r) => [r.key, readValue(r.value)]));
     return settingsSchema.parse({
       ...DEFAULTS,
       ...stored,

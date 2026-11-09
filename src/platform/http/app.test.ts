@@ -7,6 +7,7 @@ import { createSkillRepos } from '../../modules/improvement/index.js';
 import { createIngest } from '../../modules/ingest/index.js';
 import { createSecretStore, createSettings } from '../../modules/settings/index.js';
 import { createTrends } from '../../modules/trends/index.js';
+import { wireGrading } from './wire-grading.js';
 import { LOCAL_USER_ID, LOCAL_WORKSPACE_ID } from '../identity/index.js';
 import { createJobQueue } from '../jobs/queue.js';
 import { sqliteTestDb, type TestDb } from '../testkit/db.js';
@@ -38,6 +39,14 @@ beforeAll(async () => {
     queue,
     pollMode: false,
   });
+  const skillRepos = createSkillRepos(t.handle.db, LOCAL_WORKSPACE_ID);
+  const { grading, rubrics, judges } = wireGrading({
+    db: t.handle.db,
+    ingest,
+    settings,
+    queue,
+    skillRepos,
+  });
   app = createApp({
     webDir: dir,
     port: PORT,
@@ -45,8 +54,11 @@ beforeAll(async () => {
     queue,
     settings,
     ingest,
-    trends: createTrends(ingest),
-    skillRepos: createSkillRepos(t.handle.db, LOCAL_WORKSPACE_ID),
+    grading,
+    rubrics,
+    judges,
+    trends: createTrends(ingest, grading),
+    skillRepos,
     doctor: () =>
       Promise.resolve({
         checks: [{ id: 'x', label: 'X', status: 'ok' as const, detail: 'fine', fix: null }],
