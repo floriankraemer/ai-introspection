@@ -32,9 +32,11 @@ module.exports = {
     },
     {
       name: 'platform-never-imports-modules',
-      comment: 'platform/* is a shared kernel without domain logic (ADR-0009 rule 4).',
+      comment:
+        'platform/* is a shared kernel without domain logic (ADR-0009 rule 4). ' +
+        'The composition roots platform/http (thin route handlers, rule 5) and platform/bootstrap.ts call module APIs by design.',
       severity: 'error',
-      from: { path: '^src/platform/' },
+      from: { path: '^src/platform/(?!http/|bootstrap\\.ts$)' },
       to: { path: '^src/modules/' },
     },
     ...modules.flatMap((from) =>
