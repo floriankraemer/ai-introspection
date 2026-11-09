@@ -72,6 +72,11 @@ A change that targets several rubrics has one extra row per rubric.
 **Re-grade reference set** grades the pinned sessions again now.
 If the set is empty, the screen says: The reference set is empty, and asks you to open a session and choose “Add to reference set” first.
 
+To get an after-change verdict, grade more sessions after the change and wait until the compare window has passed.
+The default window is 7 days (see [Settings](11-screen-settings.md)).
+Until enough sessions are graded after the change, the verdict stays **Too early — N graded since**.
+Sessions that ran after the change are graded by themselves, or you can select them on the [Sessions](06-screen-sessions.md) screen.
+
 If the log is empty, it shows **No changes merged yet**.
 Accept a proposal, or edit a skill in your skills repo, and the change appears.
 Introspect finds manual edits by scanning the repos every 15 minutes.

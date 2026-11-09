@@ -7,7 +7,7 @@ Full documentation: [User manual](docs/manual/README.md) (setup, daily use, trou
 ## Quick start
 
 ```sh
-git clone <repo-url> && cd ai-introspection
+git clone https://github.com/floriankraemer/ai-introspection.git && cd ai-introspection
 make up      # builds and starts Introspect; creates the mounted folders as your user
 make open    # prints the sign-in link; open it in your browser
 ```
@@ -100,6 +100,7 @@ Run it in the stack with `docker compose exec introspect introspect improve --no
 ## Development
 
 Everything runs in Docker; the host needs only Docker with Compose.
+Run `make` to see every command, grouped by task.
 
 - `make dev` starts the server (7317) and Vite (5173) with live reload.
 - `make test` runs the unit tests; `make test-pg` runs the Postgres tests.

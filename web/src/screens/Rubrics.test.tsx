@@ -99,7 +99,20 @@ describe('Rubrics', () => {
     renderApp('/rubrics');
     const aside = await screen.findByRole('complementary', { name: 'Calibration' });
     await user.click(await within(aside).findByRole('button', { name: 'Add label…' }));
-    await user.selectOptions(await within(aside).findByLabelText('Session to label'), 'sess-11');
+    const picker = await within(aside).findByLabelText('Session to label');
+    // Only sessions the judge graded with this rubric, each with its verdict.
+    await waitFor(() => {
+      expect(within(picker).getAllByRole('option').length).toBeGreaterThan(1);
+    });
+    const labels = within(picker)
+      .getAllByRole('option')
+      .map((o) => o.textContent);
+    expect(labels.every((l) => l === 'Pick a session…' || /— judge: (Pass|Fail)$/.test(l))).toBe(
+      true,
+    );
+    await user.selectOptions(picker, 'sess-11');
+    // No verdict preselected: saving needs an explicit choice.
+    expect(within(aside).getByRole('button', { name: 'Save label' })).toBeDisabled();
     await user.click(within(aside).getByLabelText('Fail'));
     await user.click(within(aside).getByRole('button', { name: 'Save label' }));
     expect(await within(aside).findByText('7 / 11')).toBeInTheDocument();

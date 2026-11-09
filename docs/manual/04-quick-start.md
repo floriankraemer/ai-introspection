@@ -10,7 +10,7 @@ Before you start, check the [requirements](03-requirements.md) and read the [saf
 1. Clone the repository and change into it.
 
    ```sh
-   git clone <repo-url> ai-introspection
+   git clone https://github.com/floriankraemer/ai-introspection.git ai-introspection
    cd ai-introspection
    ```
 
@@ -73,6 +73,21 @@ Before you start, check the [requirements](03-requirements.md) and read the [saf
 If something does not work, run `make doctor`.
 It prints one line per check and one fix line for each problem.
 See [Troubleshooting](16-troubleshooting.md).
+
+## Try it without a model
+
+> **NOTICE: This is for evaluation only.**
+> The fake judge and the fake improver do not read your sessions and produce placeholder results.
+
+To try Introspect without Claude access and without spending tokens, add these lines to `.env` before `make up`:
+
+```sh
+INTROSPECT_JUDGE=fake
+INTROSPECT_IMPROVER=fake
+```
+
+The Health check in [Settings](11-screen-settings.md) shows a warning while a fake is active.
+Remove both lines and restart (`make up`) to use real grading.
 
 ## What you can do next
 

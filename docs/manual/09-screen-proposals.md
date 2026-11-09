@@ -16,10 +16,17 @@ This page describes the screen.
 - **Run improver now** starts the improver at once.
   It uses tokens and sends redacted content to Anthropic.
   Normally it runs every day at 06:00 (see [Settings](11-screen-settings.md)).
+  The schedule follows the server time zone (`TZ` in `.env`, default UTC).
+  The browser shows times in your local time, so "06:00" can appear at another hour.
 - The line "Last run Just now: succeeded, 1 proposal." reports the last run.
   **Cluster outcomes (1)** lists what the improver did with each group of failures.
+- The improver looks at grades made in the last 24 hours.
+  The window applies to when a session was graded, not to when it happened.
+  A session you graded today counts, even if it ran last week.
+- When the daily token budget is used up, a banner says so and tells you when grading and the improver resume.
 - "Next run Tue 06:00 AM." tells you when the next scheduled run starts.
-- A line such as "Redundant tests needs calibration — excluded" names rubrics the improver skipped because they are not trusted.
+- A line such as "Excluded until calibrated: Redundant tests, Silent workaround, Verbosity (one trusted rubric is enough to run)" names the rubrics the improver skipped because they are not trusted.
+  One trusted rubric is enough for a run: the improver works on the trusted rubrics and lists the others here.
   **Calibrate in Rubrics** opens the Rubrics screen.
 
 ## Tabs

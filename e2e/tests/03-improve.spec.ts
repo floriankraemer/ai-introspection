@@ -47,7 +47,8 @@ test('improve: trusted rubrics, proposals, invalid edit, accept, reject', async 
     .getByRole('button', { name: /redundant-tests/ })
     .click();
   await page.getByRole('button', { name: 'Add label…' }).click();
-  await page.getByLabel('Session to label').selectOption({ label: first.title });
+  await page.getByLabel('Session to label').selectOption({ label: `${first.title} — judge: Pass` });
+  await page.getByLabel('Pass', { exact: true }).check();
   await page.getByRole('button', { name: 'Save label' }).click();
   await expect(page.getByRole('complementary', { name: 'Calibration' })).toContainText('1 / 10');
   await page.reload();
@@ -62,7 +63,7 @@ test('improve: trusted rubrics, proposals, invalid edit, accept, reject', async 
   await expect(page.getByText('No rubric is trusted yet')).toHaveCount(0);
   await page.getByRole('button', { name: 'Run improver now' }).click();
   await expect(page.getByText(/Last run .*succeeded, 1 proposal/)).toBeVisible();
-  await expect(page.getByText(/Verbosity needs calibration/)).toBeVisible();
+  await expect(page.getByText(/Excluded until calibrated: .*Verbosity/)).toBeVisible();
   const first1 = page.getByRole('button', { name: /Address efficiency failures/ });
   await expect(first1).toBeVisible();
 

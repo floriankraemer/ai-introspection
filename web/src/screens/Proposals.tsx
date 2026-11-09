@@ -1,3 +1,4 @@
+import { BudgetBanner } from '../components/BudgetBanner.js';
 import { Link } from '@tanstack/react-router';
 import { lazy, Suspense, useState } from 'react';
 import { ApiError } from '../api/client.js';
@@ -112,10 +113,8 @@ function LastRun({ run }: { run: ImproverRun }) {
       <NextRun className="!text-[13px]" />
       {run.untrustedRubrics.length > 0 ? (
         <p className="m-0 rounded-lg border border-warn-line bg-warn-bg px-3 py-2.5 leading-normal text-warn">
-          {run.untrustedRubrics
-            .map((r) => `${rubricLabel(r)} needs calibration — excluded`)
-            .join('; ')}
-          . <Link to="/rubrics">Calibrate in Rubrics</Link>
+          Excluded until calibrated: {run.untrustedRubrics.map(rubricLabel).join(', ')} (one trusted
+          rubric is enough to run). <Link to="/rubrics">Calibrate in Rubrics</Link>
         </p>
       ) : null}
     </div>
@@ -606,6 +605,7 @@ export function Proposals() {
         subtitle="Drafted by the nightly improver from the last 24 h of failing grades. Nothing changes until you accept."
         actions={<RunNow />}
       />
+      <BudgetBanner />
       {runs.data?.[0] ? <LastRun run={runs.data[0]} /> : null}
       <div className="flex flex-wrap items-start gap-5">
         <div className="flex min-w-0 flex-[1_1_280px] flex-col gap-2">

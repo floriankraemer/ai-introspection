@@ -20,7 +20,8 @@ export function LabelForm({
 }: {
   rubric: string;
   sessionId?: string;
-  defaultPassed: boolean;
+  /** Preset verdict; leave out to require an explicit pick. */
+  defaultPassed?: boolean;
   /** Sessions that already have a label for this rubric. */
   skip?: string[];
   onDone: () => void;
@@ -30,24 +31,28 @@ export function LabelForm({
   const qc = useQueryClient();
   const name = useId();
   const sessions = useSessions({ result: 'all', limit: 50 });
-  const options = (sessions.data?.pages.flatMap((p) => p.items) ?? []).filter(
-    (s) => !skip.includes(s.id),
-  );
+  // The picker offers only sessions the judge has already graded for this rubric, with its verdict.
+  const options = (sessions.data?.pages.flatMap((p) => p.items) ?? []).flatMap((s) => {
+    const g = s.grades.find((x) => x.rubric === rubric);
+    return skip.includes(s.id) || g?.passed == null ? [] : [{ s, judge: g.passed }];
+  });
   const [picked, setPicked] = useState('');
-  const [passed, setPassed] = useState(defaultPassed);
+  const [passed, setPassed] = useState<boolean | undefined>(defaultPassed);
   const [score, setScore] = useState('');
   const [note, setNote] = useState('');
   const target = sessionId ?? picked;
   const parsed = score.trim() === '' ? undefined : Number(score);
   const scoreBad = parsed !== undefined && !(parsed >= 0 && parsed <= 1);
   const save = useMutation({
-    mutationFn: () =>
-      api.addLabel(rubric, {
+    mutationFn: () => {
+      if (passed === undefined) throw new Error('Pick Pass or Fail first');
+      return api.addLabel(rubric, {
         sessionId: target,
         passed,
         ...(parsed === undefined ? {} : { score: parsed }),
         note: note.trim(),
-      }),
+      });
+    },
     onSuccess: async () => {
       // A label moves agreement, so the trusted flag on every grade, session and trend follows.
       await invalidateKeys(qc, GRADE_KEYS);
@@ -59,7 +64,7 @@ export function LabelForm({
       className="flex flex-col gap-3 rounded-lg border border-line bg-surface-alt p-3"
       onSubmit={(e) => {
         e.preventDefault();
-        if (target && !scoreBad && !save.isPending) save.mutate();
+        if (target && passed !== undefined && !scoreBad && !save.isPending) save.mutate();
       }}
     >
       {sessionId ? null : (
@@ -72,9 +77,9 @@ export function LabelForm({
             }}
           >
             <option value="">Pick a session…</option>
-            {options.map((s) => (
+            {options.map(({ s, judge }) => (
               <option key={s.id} value={s.id}>
-                {titleText(s.title)}
+                {titleText(s.title)} — judge: {judge ? 'Pass' : 'Fail'}
               </option>
             ))}
           </select>
@@ -131,7 +136,11 @@ export function LabelForm({
         </p>
       ) : null}
       <div className="flex flex-wrap gap-2">
-        <Button type="submit" variant="primary" disabled={!target || scoreBad || save.isPending}>
+        <Button
+          type="submit"
+          variant="primary"
+          disabled={!target || passed === undefined || scoreBad || save.isPending}
+        >
           Save label
         </Button>
         <Button onClick={onCancel}>Cancel</Button>

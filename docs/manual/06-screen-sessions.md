@@ -55,6 +55,9 @@ It grades sessions that signals flagged (for example many failed tool calls) and
 Use the following procedure to grade other sessions now.
 
 > **NOTICE: Grading sends the redacted session to Anthropic and uses your budget.**
+> Every selected session is graded with every rubric, so "Select all" on a long list can use the whole daily budget.
+> When the budget is used up, a banner shows on this screen and on Proposals.
+> The improver then waits too, until the budget resets or you raise it in **Settings › Judge and budget**.
 
 ![Three sessions are selected and the Grade selected button shows the count.](images/sessions-select.png)
 
@@ -66,6 +69,11 @@ Use the following procedure to grade other sessions now.
    To select every loaded row, tick the box in the table header.
 
 2. Click **Grade selected (3)**.
+
+   If the selection would use more than the tokens left today, Introspect asks first.
+   The message reads, for example, "Grading 50 sessions × 4 rubrics uses about 12M tokens; 3M left today. About 12 sessions fit."
+   The estimate is rough: it assumes about 60k tokens for each session and rubric.
+   Choose **Grade 12 that fit** to grade only that many, **Grade all anyway (rest waits for tomorrow)** to queue everything, or **Cancel**.
 
    The note "Grading…" with a counter appears next to the buttons.
 

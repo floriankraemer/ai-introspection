@@ -500,7 +500,6 @@ function Calibration({ detail }: { detail: RubricDetail }) {
       {adding ? (
         <LabelForm
           rubric={detail.name}
-          defaultPassed={true}
           skip={detail.calibration.map((c) => c.sessionId)}
           onDone={() => {
             setAdding(false);

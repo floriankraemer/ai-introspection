@@ -1,6 +1,6 @@
 import { Link } from '@tanstack/react-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useGradeJob, useImport, useSessions, useTrendSummary } from '../api/queries.js';
+import { useBudget, useGradeJob, useImport, useSessions, useTrendSummary } from '../api/queries.js';
 import type { Agent, SessionResultFilter, SessionSummary, TrendSummary } from '../api/types.js';
 import {
   Button,
@@ -16,6 +16,9 @@ import {
   VerdictChip,
 } from '../components/ui.js';
 import { JobNote } from '../components/JobNote.js';
+import { BudgetBanner } from '../components/BudgetBanner.js';
+import { estimateGrading } from '../lib/budget.js';
+import { formatTokens } from '../lib/format.js';
 import { rubricLabel } from '../lib/trends.js';
 import { AGENT_LABEL, formatPercent, plural, formatWhen, titleText } from '../lib/format.js';
 
@@ -207,6 +210,8 @@ export function Sessions({
   const [resetKey, setResetKey] = useState(0);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const grade = useGradeJob((api, ids) => api.gradeBatch(ids));
+  const budget = useBudget();
+  const [confirming, setConfirming] = useState(false);
   const range = search.range ?? '7';
   const summary = useTrendSummary(RANGE_DAYS[range]);
   // Until something is graded, "Failed any rubric" would always be empty, so default to All.
@@ -239,6 +244,14 @@ export function Sessions({
     if (!next.delete(id)) next.add(id);
     setSelected(next);
   };
+  const estimate = budget.data
+    ? estimateGrading(budget.data, selected.size, s.rubrics.length)
+    : null;
+  const startGrading = (ids: string[]) => {
+    grade.run.mutate(ids);
+    setSelected(new Set());
+    setConfirming(false);
+  };
   // Nothing in the chosen period is not the same as nothing collected: older sessions may exist.
   const noData = s.sessionsCollected === 0 && !filtered && items.length === 0;
   // A short list under a narrowing filter: say what it hides, so the empty space is not a mystery.
@@ -257,8 +270,8 @@ export function Sessions({
               disabled={selected.size === 0 || grade.run.isPending}
               title={selected.size === 0 ? 'Select sessions in the table first' : undefined}
               onClick={() => {
-                grade.run.mutate([...selected]);
-                setSelected(new Set());
+                if (estimate?.over) setConfirming(true);
+                else startGrading([...selected]);
               }}
             >
               Grade selected{selected.size ? ` (${String(selected.size)})` : ''}
@@ -267,6 +280,46 @@ export function Sessions({
           </>
         }
       />
+      <BudgetBanner />
+      {confirming && estimate?.over ? (
+        <div
+          role="alertdialog"
+          aria-label="Confirm grading"
+          className="flex flex-col gap-3 rounded-lg border border-warn-line bg-warn-bg px-3 py-2.5 text-warn"
+        >
+          <p className="m-0 leading-normal">
+            Grading {plural(selected.size, 'session')} × {plural(s.rubrics.length, 'rubric')} uses
+            about {formatTokens(estimate.needed)} tokens; {formatTokens(estimate.left ?? 0)} left
+            today. About {plural(estimate.fits, 'session')} fit.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {estimate.fits > 0 ? (
+              <Button
+                variant="primary"
+                onClick={() => {
+                  startGrading([...selected].slice(0, estimate.fits));
+                }}
+              >
+                Grade {estimate.fits} that fit
+              </Button>
+            ) : null}
+            <Button
+              onClick={() => {
+                startGrading([...selected]);
+              }}
+            >
+              Grade all anyway (rest waits for tomorrow)
+            </Button>
+            <Button
+              onClick={() => {
+                setConfirming(false);
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : null}
       {noData ? (
         <EmptyState
           title="No sessions collected yet"

@@ -179,3 +179,11 @@ Introspect marks the setup as complete and starts the first import.
 
 The wizard does not ask for a GitHub token or a time zone.
 Set those in `.env` (see the [configuration reference](15-configuration-reference.md)).
+
+## Try the wizard without a model
+
+You can run the whole wizard without Claude access.
+Set `INTROSPECT_JUDGE=fake` and `INTROSPECT_IMPROVER=fake` in `.env`, then run `make up`.
+This is for evaluation only: the fakes produce placeholder grades and proposals.
+The Health check shows a warning while a fake is active.
+See the [quick start](04-quick-start.md#try-it-without-a-model).

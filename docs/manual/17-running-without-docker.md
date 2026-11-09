@@ -21,7 +21,7 @@ What differs is isolation: the process runs with all your user rights, and no re
 1. Clone the repository and change into it.
 
    ```sh
-   git clone <repo-url> ai-introspection
+   git clone https://github.com/floriankraemer/ai-introspection.git ai-introspection
    cd ai-introspection
    ```
 

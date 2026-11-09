@@ -77,6 +77,8 @@ Folders must be readable inside the container, so a new folder also needs a moun
 Below the budget, a line shows the use so far, for example "Used 25k of 1M tokens today."
 If the limit is reached, it also says that grading waits until midnight, or until next month.
 The time zone for these windows comes from `TZ` in `.env`.
+Schedules (grading and the improver) follow the same server time zone, default UTC.
+The browser shows times in your local time.
 
 ## Schedule
 

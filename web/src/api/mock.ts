@@ -186,7 +186,8 @@ const SESSIONS: {
     repo: ['web-app', 'api-service', 'infra'][i % 3] ?? 'web-app',
     ago: (80 + i * 70) * H,
     errors: i % 4,
-    g: [],
+    // sess-11 is graded but has no calibration label yet.
+    g: i === 4 ? [true, true, true, true] : [],
   })),
 ];
 
