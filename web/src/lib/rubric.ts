@@ -18,6 +18,30 @@ export function writeThreshold(body: string, value: number): string {
   return body.replace(m[1], fm);
 }
 
+/**
+ * `GET /v1/rubrics/{name}` returns the text below the frontmatter plus the parsed fields. The editor
+ * shows the whole file, so this puts the frontmatter back (same layout as the server's serializer).
+ */
+export function composeRubricFile(d: {
+  name: string;
+  scale: number[];
+  passThreshold: number;
+  appliesTo: string;
+  target: number | null;
+  body: string;
+}): string {
+  if (d.body.trimStart().startsWith('---')) return d.body;
+  const scale = d.scale.map((n) => (Number.isInteger(n) ? n.toFixed(1) : String(n))).join(', ');
+  const head = [
+    `name: ${d.name}`,
+    `scale: [${scale}]`,
+    `pass_threshold: ${String(d.passThreshold)}`,
+    `applies_to: ${d.appliesTo}`,
+    ...(d.target === null ? [] : [`target: ${String(d.target)}`]),
+  ];
+  return `---\n${head.join('\n')}\n---\n\n${d.body.trim()}\n`;
+}
+
 export const NEW_RUBRIC_BODY = (name: string) => `---
 name: ${name}
 scale: [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]

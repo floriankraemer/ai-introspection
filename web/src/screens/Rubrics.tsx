@@ -2,7 +2,14 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { lazy, Suspense, useState } from 'react';
 import { useApi } from '../api/context.js';
-import { useRubric, useRubrics, useSessions, useSkillRepos } from '../api/queries.js';
+import {
+  GRADE_KEYS,
+  invalidateKeys,
+  useRubric,
+  useRubrics,
+  useSessions,
+  useSkillRepos,
+} from '../api/queries.js';
 import type { CalibrationRow, DryRunResult, RubricDetail, RubricSummary } from '../api/types.js';
 import { LabelForm } from '../components/LabelForm.js';
 import {
@@ -17,7 +24,12 @@ import {
   VerdictChip,
 } from '../components/ui.js';
 import { formatTokens, formatWhen, titleText } from '../lib/format.js';
-import { NEW_RUBRIC_BODY, readThreshold, writeThreshold } from '../lib/rubric.js';
+import {
+  composeRubricFile,
+  NEW_RUBRIC_BODY,
+  readThreshold,
+  writeThreshold,
+} from '../lib/rubric.js';
 
 // CodeMirror is ~150 KB gzip; it loads only when this screen shows an editor.
 const MarkdownEditor = lazy(() => import('../components/MarkdownEditor.js'));
@@ -166,7 +178,9 @@ function RubricEditor({
 }) {
   const api = useApi();
   const qc = useQueryClient();
-  const [body, setBody] = useState(detail.body);
+  // The API returns the body without its frontmatter; the editor works on the whole file.
+  const file = composeRubricFile(detail);
+  const [body, setBody] = useState(file);
   const [threshold, setThreshold] = useState(String(detail.passThreshold));
   const [message, setMessage] = useState(`Update ${detail.name} rubric`);
   const [target, setTarget] = useState<'calibration' | 'recent'>('calibration');
@@ -174,7 +188,7 @@ function RubricEditor({
   const dryIds = target === 'calibration' && ids.calibration.length ? ids.calibration : ids.recent;
   const value = Number(threshold);
   const thresholdOk = threshold.trim() !== '' && value >= 0 && value <= 1;
-  const dirty = body !== detail.body || (thresholdOk && value !== detail.passThreshold);
+  const dirty = body !== file || (thresholdOk && value !== detail.passThreshold);
 
   const save = useMutation({
     mutationFn: () =>
@@ -182,7 +196,11 @@ function RubricEditor({
     onSuccess: async (next) => {
       qc.setQueryData(['rubric', detail.name], next);
       onSaved(next.version);
-      await qc.invalidateQueries({ queryKey: ['rubrics'] });
+      // A new version changes which grades are current, the trusted flag and the pass rates.
+      await invalidateKeys(
+        qc,
+        GRADE_KEYS.filter((k) => k !== 'rubric'),
+      );
     },
   });
   const dry = useMutation({

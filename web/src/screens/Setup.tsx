@@ -1,8 +1,8 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import { useApi } from '../api/context.js';
-import { useJob, usePatchSettings, useStartImport } from '../api/queries.js';
+import { invalidateKeys, useImport, usePatchSettings } from '../api/queries.js';
 import type { DetectedSource, JudgeTransport, SkillRepo } from '../api/types.js';
 import { FailingChecks } from '../components/HealthCheck.js';
 import { JudgeTest } from '../components/JudgeTest.js';
@@ -231,10 +231,9 @@ function SkillsStep({
 
 function DoneStep() {
   const patch = usePatchSettings();
-  const start = useStartImport();
+  const { start, job } = useImport();
   const navigate = useNavigate();
   const started = useRef(false);
-  const job = useJob(start.data?.id ?? null);
   const { mutateAsync: markDone } = patch;
   const { mutate: startImport } = start;
 
@@ -327,9 +326,11 @@ export function Setup() {
   const path = edited ?? repos.data?.[0]?.path ?? '';
   const entry = repos.data?.find((r) => r.path === path);
   const canInit = Boolean(entry && (!entry.isGitRepo || entry.isEmpty));
+  const qc = useQueryClient();
   const init = useMutation({
     mutationFn: () => api.initGlobalSkillRepo(path.trim()),
     onSuccess: (r) => {
+      void invalidateKeys(qc, ['skill-repos', 'rubrics', 'doctor']);
       setError(null);
       setRepo(r);
     },
@@ -340,6 +341,7 @@ export function Setup() {
   const copy = useMutation({
     mutationFn: () => api.copyStarterRubrics(),
     onSuccess: (r) => {
+      void invalidateKeys(qc, ['skill-repos', 'rubrics', 'doctor']);
       setCopied(r.copied);
       setRepo((x) => (x ? { ...x, hasRubrics: true } : x));
     },
@@ -375,6 +377,7 @@ export function Setup() {
       return null;
     },
     onSuccess: (r) => {
+      void invalidateKeys(qc, ['sources', 'settings', 'skill-repos', 'doctor']);
       // After applying a repo without rubrics, stay so the user sees the starter-rubrics offer.
       if (step === 2 && r && !r.hasRubrics) return;
       next();

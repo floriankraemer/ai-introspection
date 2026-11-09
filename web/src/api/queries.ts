@@ -1,5 +1,6 @@
 import {
   keepPreviousData,
+  type QueryClient,
   queryOptions,
   useInfiniteQuery,
   useMutation,
@@ -23,10 +24,27 @@ export function usePatchSettings() {
     mutationFn: (patch: Parameters<Api['patchSettings']>[0]) => api.patchSettings(patch),
     onSuccess: (s) => {
       qc.setQueryData(['settings'], s);
-      void qc.invalidateQueries({ queryKey: ['budget'] });
+      // The budget changes with the limits; the doctor's judge check with the transport.
+      void invalidateKeys(qc, ['budget', 'doctor']);
     },
   });
 }
+
+/** Marks the given query families stale; the ones on screen refetch right away. */
+export function invalidateKeys(qc: QueryClient, keys: string[]) {
+  return Promise.all(keys.map((key) => qc.invalidateQueries({ queryKey: [key] })));
+}
+
+/** Everything that shows a grade, a rubric's trusted flag or its agreement. */
+export const GRADE_KEYS = [
+  'rubric',
+  'rubrics',
+  'session',
+  'sessions',
+  'session-events',
+  'trend-summary',
+  'budget',
+];
 
 /** Health checks are cheap but must be re-run on demand, so they are never served stale. */
 export function useDoctor() {
@@ -100,6 +118,18 @@ export function useStartImport() {
   });
 }
 
+/** Starts an import and follows it; once it succeeds every query is refetched (new sessions, sources). */
+export function useImport() {
+  const qc = useQueryClient();
+  const start = useStartImport();
+  const job = useJob(start.data?.id ?? null);
+  const status = job.data?.status;
+  useEffect(() => {
+    if (status === 'succeeded') void qc.invalidateQueries();
+  }, [status, qc]);
+  return { start, job };
+}
+
 export function useBudget() {
   const api = useApi();
   return useQuery({ queryKey: ['budget'], queryFn: () => api.getBudget(), staleTime: 0 });
@@ -132,10 +162,8 @@ export function useGradeJob(start: (api: Api, ids: string[]) => Promise<Job>) {
   const job = useJob(run.data?.id ?? null);
   const status = job.data?.status;
   useEffect(() => {
-    if (status === 'succeeded') {
-      for (const key of ['sessions', 'session', 'session-events', 'trend-summary', 'budget'])
-        void qc.invalidateQueries({ queryKey: [key] });
-    }
+    // Any terminal status: a failed or deferred job may still have graded some sessions.
+    if (status && TERMINAL.includes(status)) void invalidateKeys(qc, GRADE_KEYS);
   }, [status, qc]);
   return { run, job: job.data ?? run.data ?? null };
 }

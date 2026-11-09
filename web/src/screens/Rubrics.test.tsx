@@ -35,6 +35,9 @@ describe('Rubrics', () => {
     await user.click(save);
 
     expect(await screen.findByText(/Saved as v4 and committed/)).toBeInTheDocument();
+    // The whole file was sent, so the frontmatter survives the round trip.
+    expect(await editor()).toHaveTextContent('name: efficiency');
+    expect(await editor()).toHaveTextContent('pass_threshold: 0.8');
     expect(screen.getByRole('button', { name: 'Save as v5 (commit)' })).toBeDisabled();
     await user.click(screen.getByText(/History \(4 versions\)/));
     expect(screen.getByText(/Raise the bar/)).toBeInTheDocument();

@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useId, useState } from 'react';
 import { useApi } from '../api/context.js';
-import { useSessions } from '../api/queries.js';
+import { GRADE_KEYS, invalidateKeys, useSessions } from '../api/queries.js';
 import { titleText } from '../lib/format.js';
 import { Button, Field, FIELD } from './ui.js';
 
@@ -49,10 +49,8 @@ export function LabelForm({
         note: note.trim(),
       }),
     onSuccess: async () => {
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: ['rubric'] }),
-        qc.invalidateQueries({ queryKey: ['rubrics'] }),
-      ]);
+      // A label moves agreement, so the trusted flag on every grade, session and trend follows.
+      await invalidateKeys(qc, GRADE_KEYS);
       onDone();
     },
   });

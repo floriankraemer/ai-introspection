@@ -77,13 +77,8 @@ const RUBRIC_FILES: {
   },
 ];
 
-const rubricBody = (r: (typeof RUBRIC_FILES)[number]) => `---
-name: ${r.name}
-scale: [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
-pass_threshold: ${String(r.passThreshold)}
-applies_to: all
----
-${r.question}
+/** Like the real API: the text below the frontmatter; the fields travel separately. */
+const rubricBody = (r: (typeof RUBRIC_FILES)[number]) => `${r.question}
 
 - 1.0  Direct path; information gathering proportional to the task
 - 0.6  Some detours, recovered quickly
@@ -91,6 +86,18 @@ ${r.question}
 
 Return: score, one-paragraph reason, ids of the events that justify it.
 `;
+
+/** Splits a whole rubric file the way the server does: frontmatter fields and the body below. */
+function splitRubricFile(text: string): { fields: Map<string, string>; body: string } | null {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(text.trimStart());
+  if (!m) return null;
+  const fields = new Map<string, string>();
+  for (const line of (m[1] ?? '').split(/\r?\n/)) {
+    const i = line.indexOf(':');
+    if (i > 0) fields.set(line.slice(0, i).trim(), line.slice(i + 1).trim());
+  }
+  return { fields, body: (m[2] ?? '').trim() + '\n' };
+}
 
 const REASONS: Record<string, string> = {
   Efficiency: 'Spent ~7 min probing ports. The e2e skill gives no way to find the dev-server port.',
@@ -104,7 +111,6 @@ const EVIDENCE: Record<string, string[]> = {
   Efficiency: ['e7', 'e8', 'e9', 'e10', 'e11', 'e12', 'e13', 'e14', 'e15', 'e16', 'e17', 'e18'],
   'Silent workaround': ['e22', 'e25'],
 };
-const UNTRUSTED = new Set(['Silent workaround']);
 
 const JOB_META = {
   attempts: 1,
@@ -391,7 +397,8 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
       rubric: g.rubric,
       rubricVersion: g.rubric === 'Efficiency' ? 3 : 1,
       rubricSha: '9f3c2a1b7d4e',
-      status: 'ok',
+      status: g.rubric === 'Silent workaround' ? 'stale' : 'ok',
+      answeredModel: g.rubric === 'Redundant tests' ? 'claude-haiku-4-5' : 'claude-sonnet-5-5',
       score: g.score,
       passed: g.passed,
       reason:
@@ -402,7 +409,7 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
       judgeModel: 'claude-sonnet-5-5',
       transport: settings['judge.transport'],
       gradedAt: s.startedAt,
-      trusted: !UNTRUSTED.has(g.rubric),
+      trusted: rubrics.get(g.rubric.toLowerCase().replace(/ /g, '-'))?.trusted ?? false,
     }));
 
   // Rubric state is mutable so saving, labelling and re-reading behave like the real thing.
@@ -742,12 +749,13 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
       await wait();
       const old = rubrics.get(name);
       const version = (old?.version ?? 0) + 1;
+      const file = splitRubricFile(body);
+      const f = file?.fields;
       const next: RubricDetail = {
         name,
         scale: [0, 0.2, 0.4, 0.6, 0.8, 1],
         appliesTo: 'all',
         sha: '',
-        target: null,
         labelCount: 0,
         trusted: false,
         agreement: { agree: 0, total: 0 },
@@ -755,8 +763,11 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
         calibration: [],
         ...old,
         version,
-        body,
+        body: file?.body ?? body,
         passThreshold,
+        ...(f?.has('scale') ? { scale: JSON.parse(f.get('scale') ?? '[]') as number[] } : {}),
+        ...(f?.has('applies_to') ? { appliesTo: f.get('applies_to') ?? 'all' } : {}),
+        target: f?.has('target') ? Number(f.get('target')) : (old?.target ?? null),
         versions: [
           ...(old?.versions ?? []),
           { sha: `${String(version)}a7e1c90d4`, version, at: new Date().toISOString(), message },
@@ -784,6 +795,7 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
             rubric: name,
             status: 'ok' as const,
             judgeModel: 'claude-sonnet-5-5',
+            answeredModel: 'claude-sonnet-5-5',
             transport: settings['judge.transport'],
             humanPassed: mine ?? null,
             agrees: mine === undefined ? null : mine === passed,
@@ -804,12 +816,15 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
       const r = rubrics.get(name.toLowerCase().replace(/ /g, '-'));
       if (!r) throw new ApiError(404, 'Not found', `No rubric ${name}`);
       const title = sessions.find((x) => x.id === label.sessionId)?.title ?? label.sessionId;
+      const g = gradesOf(find(label.sessionId)).find(
+        (x) => x.rubric.toLowerCase().replace(/ /g, '-') === r.name,
+      );
       const row: CalibrationRow = {
         sessionId: label.sessionId,
         title,
         human: { passed: label.passed, score: label.score ?? null, note: label.note || null },
-        judge: null,
-        agrees: null,
+        judge: g ? { passed: g.passed, score: g.score, reason: g.reason } : null,
+        agrees: g && g.passed !== null ? g.passed === label.passed : null,
       };
       r.calibration = [row, ...r.calibration.filter((c) => c.sessionId !== label.sessionId)];
       recount(r);
@@ -820,7 +835,32 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
     },
     async getDoctor() {
       await wait();
-      return { checks: doctor };
+      const cli = settings['judge.transport'] === 'cli';
+      const loggedIn = scenario !== 'ungraded'; // the ungraded scenario has never logged in
+      const judge: DoctorCheck = cli
+        ? loggedIn
+          ? {
+              id: 'judge',
+              label: 'Judge (claude CLI)',
+              status: 'ok',
+              detail: 'Logged in to Claude inside the container.',
+              fix: null,
+            }
+          : {
+              id: 'judge',
+              label: 'Judge (claude CLI)',
+              status: 'warn',
+              detail: 'Not logged in to Claude inside the container.',
+              fix: 'Run `make claude-login`, then run the checks again.',
+            }
+        : {
+            id: 'judge',
+            label: 'Judge (Anthropic API)',
+            status: settings['judge.api_key_set'] ? 'ok' : 'warn',
+            detail: settings['judge.api_key_set'] ? 'An API key is stored.' : 'No API key.',
+            fix: null,
+          };
+      return { checks: [...doctor, judge] };
     },
   };
 }

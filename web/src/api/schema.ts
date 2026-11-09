@@ -3005,6 +3005,8 @@ export interface components {
       progress: {
         done: number;
         total: number;
+        failed?: number;
+        errors?: string[];
       } | null;
       error: string | null;
       attempts: number;
@@ -3072,11 +3074,12 @@ export interface components {
       reason: string;
       evidenceEventIds: string[];
       judgeModel: string;
+      answeredModel: string | null;
       transport: string;
       /** Format: date-time */
       gradedAt: string;
       /** @enum {string} */
-      status: 'ok' | 'refused' | 'invalid';
+      status: 'ok' | 'refused' | 'invalid' | 'stale';
       trusted: boolean;
     };
     TraceEvent: {
@@ -3184,6 +3187,7 @@ export interface components {
       reason: string;
       evidenceEventIds: string[];
       judgeModel: string;
+      answeredModel: string;
       transport: string;
       humanPassed: boolean | null;
       agrees: boolean | null;

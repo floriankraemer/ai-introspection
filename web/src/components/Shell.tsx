@@ -1,6 +1,6 @@
 import { Link, Outlet, useRouterState } from '@tanstack/react-router';
-import { useState } from 'react';
-import { applyThemePref, getThemePref, type ThemePref } from '../lib/theme.js';
+import { useEffect, useState } from 'react';
+import { applyThemePref, getThemePref, THEME_KEY, type ThemePref } from '../lib/theme.js';
 
 const NAV = [
   { to: '/', label: 'Sessions', match: (p: string) => p === '/' || p.startsWith('/sessions') },
@@ -12,6 +12,20 @@ const NAV = [
 
 function ThemeSelect() {
   const [pref, setPref] = useState<ThemePref>(getThemePref);
+  // The select and the page theme come from one value, so they cannot disagree; another tab's
+  // change arrives as a storage event.
+  useEffect(() => {
+    applyThemePref(pref);
+  }, [pref]);
+  useEffect(() => {
+    const sync = (e: StorageEvent) => {
+      if (e.key === null || e.key === THEME_KEY) setPref(getThemePref());
+    };
+    window.addEventListener('storage', sync);
+    return () => {
+      window.removeEventListener('storage', sync);
+    };
+  }, []);
   return (
     <label className="ml-auto flex flex-col gap-1 px-3 text-xs lg:mt-auto lg:ml-0 lg:pt-6 text-muted">
       Theme
@@ -19,9 +33,7 @@ function ThemeSelect() {
         className="h-10 rounded-lg border border-line bg-surface px-2 text-sm text-ink"
         value={pref}
         onChange={(e) => {
-          const next = e.target.value as ThemePref;
-          setPref(next);
-          applyThemePref(next);
+          setPref(e.target.value as ThemePref);
         }}
       >
         <option value="system">System</option>

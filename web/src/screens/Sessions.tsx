@@ -1,13 +1,6 @@
-import { useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
-import {
-  useGradeJob,
-  useJob,
-  useSessions,
-  useStartImport,
-  useTrendSummary,
-} from '../api/queries.js';
+import { useGradeJob, useImport, useSessions, useTrendSummary } from '../api/queries.js';
 import type { Agent, SessionResultFilter, SessionSummary, TrendSummary } from '../api/types.js';
 import {
   Button,
@@ -25,13 +18,8 @@ import { JobNote } from '../components/JobNote.js';
 import { AGENT_LABEL, formatPercent, formatWhen, titleText } from '../lib/format.js';
 
 function ImportButton() {
-  const qc = useQueryClient();
-  const start = useStartImport();
-  const job = useJob(start.data?.id ?? null);
+  const { start, job } = useImport();
   const status = job.data?.status;
-  useEffect(() => {
-    if (status === 'succeeded') void qc.invalidateQueries();
-  }, [status, qc]);
   const running = start.isPending || status === 'queued' || status === 'running';
   const p = job.data?.progress;
   return (

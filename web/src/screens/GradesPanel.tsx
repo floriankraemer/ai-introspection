@@ -24,15 +24,27 @@ function GradeCard({
     <Card className="flex flex-col gap-2 p-4">
       <div className="flex items-center justify-between gap-2">
         <strong className="text-[15px]">{g.rubric}</strong>
-        <VerdictChip passed={g.passed} score={g.score} />
+        {g.status === 'stale' ? (
+          <Chip
+            tone="na"
+            title="A newer rubric version is being graded; this verdict is from the old one."
+          >
+            stale — re-grading
+          </Chip>
+        ) : (
+          <VerdictChip passed={g.passed} score={g.score} />
+        )}
       </div>
       <p className="m-0 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
         <span>
           v{g.rubricVersion} · {g.judgeModel} · {TRANSPORT[g.transport] ?? g.transport}
         </span>
-        {g.status === 'ok' ? null : (
+        {g.status === 'refused' || g.status === 'invalid' ? (
           <Chip tone="fail">{g.status === 'refused' ? 'judge refused' : 'invalid verdict'}</Chip>
-        )}
+        ) : null}
+        {g.answeredModel && g.answeredModel !== g.judgeModel ? (
+          <span>answered by {g.answeredModel}</span>
+        ) : null}
         {g.trusted ? null : (
           <Chip
             tone="warn"
