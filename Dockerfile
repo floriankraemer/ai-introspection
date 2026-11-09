@@ -39,8 +39,14 @@ ENV NODE_ENV=production \
     INTROSPECT_HOST=0.0.0.0 \
     INTROSPECT_DATA_DIR=/data
 WORKDIR /app
+# git: skills repositories are read and committed to (starter rubrics, later proposals).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 # /data is world-writable (sticky) so the container works with any host UID:GID.
-RUN mkdir /data && chmod 1777 /data
+RUN mkdir /data && chmod 1777 /data \
+ && printf '#!/bin/sh\nexec node /app/dist/cli.js "$@"\n' > /usr/local/bin/introspect \
+ && chmod 755 /usr/local/bin/introspect
 COPY --from=build /app/package.json ./
 COPY --from=build /app/node_modules node_modules
 COPY --from=build /app/dist dist
@@ -50,5 +56,5 @@ VOLUME /data
 EXPOSE 7317
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \
   CMD ["node", "-e", "fetch('http://127.0.0.1:7317/v1/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
-ENTRYPOINT ["node", "dist/cli.js"]
+ENTRYPOINT ["introspect"]
 CMD ["serve"]

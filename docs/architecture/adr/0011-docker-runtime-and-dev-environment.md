@@ -79,7 +79,19 @@ Runtime (`compose.yaml`):
     This mount is the one weaker isolation point: the container can read the user's Claude credentials.
     Users who choose the API-key transport do not need it and can remove the mount.
     Both are added in the phase that introduces the transport (Phase 2); Phase 0 ships only the log mounts.
-- Skills repository and project repositories are mounted read-write when the git integration lands (ADR-0010).
+- Skills repository and project repositories are mounted read-write (ADR-0010):
+  - `${INTROSPECT_SKILLS_REPO:-${HOME}/.introspect/skills}` at `/repos/skills`; the setup wizard proposes this path (`GET /v1/skill-repos/detected`).
+    The default is a dedicated folder and never `~/.claude`.
+    A read-write mount of `~/.claude` would expose `.credentials.json`, hooks and transcripts for writing and would defeat the read-only log mounts.
+    Users point `INTROSPECT_SKILLS_REPO` at their existing skills repository, or let Introspect create one:
+    `detected` reports an empty folder as `{isGitRepo: false, hasRubrics: false, isEmpty: true}`, and `POST /v1/skill-repos/global/init {path}` runs `git init` (branch `main`), copies the starter rubrics and makes the first commit.
+    Init is allowed only for an empty or missing folder below a mounted root (`/repos`, or `~/.introspect` for a host install), so it never touches existing files.
+  - `${INTROSPECT_PROJECTS_DIR:-${HOME}/.introspect/projects}` at `/repos/projects`, for project repositories.
+  - `make up` creates both folders as the host user, for the same reason as the log folders.
+- Git identity: `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME` and `GIT_COMMITTER_EMAIL` pass from `.env` to the container in pass-through form, so an unset variable stays unset (git rejects an empty name).
+  Without them, Introspect commits as "Introspect".
+- Diagnosis: `introspect doctor` (`make doctor`, and `GET /v1/doctor` for the Settings panel) checks the data folder, database, source mounts, skills repository, git identity, `gh`, the judge credential and bind-mount ownership, and prints one fix line per problem.
+  It exits 1 when a check fails; warnings do not change the exit code.
 
 Development (`compose.dev.yaml`, `.devcontainer/`, `Makefile`):
 

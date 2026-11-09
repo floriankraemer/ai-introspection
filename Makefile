@@ -6,7 +6,13 @@ export GID ?= $(shell id -g)
 COMPOSE := docker compose -f compose.dev.yaml
 RUN := $(COMPOSE) run --rm --build dev
 
-.PHONY: mount-points install lint test test-pg build up down dev shell
+.PHONY: mount-points install lint test test-pg build up open doctor down dev shell
+
+# Host folders mounted into the user stack. Same defaults as compose.yaml; the shell environment
+# wins over .env, as it does for Compose.
+env_file_value = $(shell sed -n 's/^$(1)=//p' .env 2>/dev/null | tail -n 1)
+SKILLS_REPO := $(or $(INTROSPECT_SKILLS_REPO),$(call env_file_value,INTROSPECT_SKILLS_REPO),$(HOME)/.introspect/skills)
+PROJECTS_DIR := $(or $(INTROSPECT_PROJECTS_DIR),$(call env_file_value,INTROSPECT_PROJECTS_DIR),$(HOME)/.introspect/projects)
 
 # Docker would create these bind-mount points as root if they were missing.
 mount-points:
@@ -28,9 +34,17 @@ test-pg: mount-points
 build: mount-points
 	$(RUN) pnpm build
 
+# Created here as your user: the Docker engine on Linux would create missing mount points as root.
 up:
-	mkdir -p $(HOME)/.claude/projects $(HOME)/.codex/sessions
-	docker compose up -d --build
+	mkdir -p $(HOME)/.claude/projects $(HOME)/.codex/sessions "$(SKILLS_REPO)" "$(PROJECTS_DIR)"
+	docker compose up -d --build --wait
+
+# Prints the URL that signs this browser in.
+open:
+	docker compose exec introspect introspect open
+
+doctor:
+	docker compose exec introspect introspect doctor
 
 down:
 	docker compose down
