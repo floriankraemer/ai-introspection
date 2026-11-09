@@ -85,10 +85,18 @@ export function tokenReader(dataDir: string): () => string {
   };
   stamp = stampOf();
   return () => {
-    const now = stampOf();
-    if (now !== stamp) {
-      token = readFileSync(path, 'utf8').trim();
-      stamp = now;
+    try {
+      const now = stampOf();
+      if (now !== stamp) {
+        // A rotation writes atomically, but a short or empty read must never become the token.
+        const next = readFileSync(path, 'utf8').trim();
+        if (next.length >= TOKEN_HEX_LENGTH) {
+          token = next;
+          stamp = now;
+        }
+      }
+    } catch {
+      // Keep the token we have.
     }
     return token;
   };
@@ -99,7 +107,11 @@ function digest(value: string): Buffer {
 }
 
 export function tokenMatches(expected: string, candidate: string | undefined): boolean {
-  return candidate !== undefined && timingSafeEqual(digest(expected), digest(candidate));
+  return (
+    candidate !== undefined &&
+    candidate !== '' &&
+    timingSafeEqual(digest(expected), digest(candidate))
+  );
 }
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);

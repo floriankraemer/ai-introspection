@@ -1,3 +1,4 @@
+import { isNode, isScalar, parseAllDocuments, visit } from 'yaml';
 import { InvalidInputError } from '../../platform/errors.js';
 
 /** At most this many files and changed lines per proposal (ADR-0010). */
@@ -277,24 +278,46 @@ const SAFE_FRONTMATTER_KEYS = new Set([
   'compatibility',
 ]);
 
-/** Top-level YAML keys of a markdown file's frontmatter, or null without frontmatter. Unreadable lines become `?`. */
-function frontmatterKeys(content: string): Map<string, string> | null {
+/** Marks frontmatter that cannot be read with certainty. It is not a safe key, so the guard refuses it. */
+const UNREADABLE = '?unreadable';
+
+/**
+ * Top-level keys (with their parsed values) of a markdown file's frontmatter, or null without frontmatter.
+ * Fails closed: parse errors, several documents, anchors, aliases, merge keys, a non-mapping root and
+ * non-string keys all yield the single unsafe key `?unreadable`.
+ */
+function frontmatterKeys(content: string): Map<string, unknown> | null {
   const lines = content.replace(/^\uFEFF/, '').split(/\r?\n/);
   if (lines[0]?.trim() !== '---') return null;
-  const keys = new Map<string, string>();
-  for (const line of lines.slice(1)) {
-    if (line.trim() === '---' || line.trim() === '...') return keys;
-    if (line.trim() === '' || /^\s/.test(line) || line.startsWith('#')) {
-      // Continuation of the previous key's value: part of that value.
-      const last = [...keys.keys()].at(-1);
-      if (last !== undefined) keys.set(last, `${keys.get(last) ?? ''}\n${line}`);
-      continue;
-    }
-    const m = /^([A-Za-z][\w-]*)[ \t]*:(?:[ \t]|$)(.*)$/.exec(line);
-    keys.set(m?.[1] ?? `?${line.slice(0, 20)}`, m?.[2] ?? '');
+  const end = lines.findIndex((l, i) => i > 0 && l.trimEnd() === '---');
+  const unreadable = new Map<string, unknown>([[UNREADABLE, true]]);
+  if (end < 0) return unreadable;
+  try {
+    const docs = parseAllDocuments(lines.slice(1, end).join('\n'), {
+      uniqueKeys: true,
+      strict: true,
+    });
+    const doc = docs[0];
+    if (docs.length !== 1 || !doc || doc.errors.length > 0 || doc.warnings.length > 0)
+      return unreadable;
+    let indirect = false as boolean; // set by the visitor callbacks
+    visit(doc, {
+      Alias: () => void (indirect = true),
+      Node: (_k, node) => {
+        if (isNode(node) && 'anchor' in node && node.anchor) indirect = true;
+      },
+      Pair: (_k, pair) => {
+        if (!isScalar(pair.key) || typeof pair.key.value !== 'string' || pair.key.value === '<<')
+          indirect = true;
+      },
+    });
+    const root: unknown = doc.toJS();
+    if (indirect || typeof root !== 'object' || root === null || Array.isArray(root))
+      return unreadable;
+    return new Map(Object.entries(root));
+  } catch {
+    return unreadable;
   }
-  keys.set('?unterminated', '');
-  return keys;
 }
 
 /**
@@ -306,9 +329,9 @@ export function frontmatterProblem(after: string, before?: string): string | nul
   const keys = frontmatterKeys(after);
   const unsafe = [...(keys?.keys() ?? [])].filter((k) => !SAFE_FRONTMATTER_KEYS.has(k));
   if (unsafe.length > 0)
-    return `its frontmatter sets ${unsafe.map((k) => k.replace(/^\?.*/, 'an unreadable key')).join(', ')}, which can grant tools or run code`;
+    return `its frontmatter sets ${unsafe.map((k) => (k === UNREADABLE ? 'an unreadable key' : k)).join(', ')}, which can grant tools or run code`;
   const was = before === undefined ? undefined : frontmatterKeys(before)?.get('disallowedTools');
-  if (was !== undefined && keys?.get('disallowedTools') !== was)
+  if (was !== undefined && JSON.stringify(keys?.get('disallowedTools')) !== JSON.stringify(was))
     return 'its frontmatter drops or changes a disallowedTools restriction';
   return null;
 }

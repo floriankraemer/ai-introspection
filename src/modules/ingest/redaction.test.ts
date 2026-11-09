@@ -12,6 +12,85 @@ import { SECRETS } from '../../platform/testkit/agent-fixtures.js';
 
 const redactor = createRedactor({ key: Buffer.from('k'.repeat(32)) });
 
+describe('redaction of JSON', () => {
+  const run = (v: unknown): unknown => JSON.parse(redactor.redact(JSON.stringify(v)).text);
+  const S = 'hunter2-secret-value';
+
+  it.each([
+    ['name/value', { name: 'API_KEY', value: S }, 'value'],
+    ['key/Value', { key: 'db_password', Value: S }, 'Value'],
+    ['Name/value', { Name: 'GITHUB_TOKEN', value: S }, 'value'],
+  ])('redacts the value of a %s pair', (_n, obj, field) => {
+    const out = run(obj) as Record<string, string>;
+    expect(out[field]).toMatch(/^\[REDACTED:keyed-secret:/);
+  });
+
+  it('leaves a name/value pair of an ordinary variable alone', () => {
+    const pair = { name: 'PATH', value: '/usr/bin:/bin' };
+    expect(run(pair)).toEqual(pair);
+  });
+
+  it('propagates a secret key into nested objects, arrays and numbers', () => {
+    const out = JSON.stringify(
+      run({ credentials: { inner: { a: S }, list: [S, 'x'] }, password: 123456789 }),
+    );
+    expect(out).not.toContain(S);
+    expect(out).not.toContain('123456789');
+  });
+
+  it('redacts the argument after a secret flag in an argv array', () => {
+    const out = run({ argv: ['tool', '--password', S, '--api-key', S, '--name', 'bob'] }) as {
+      argv: string[];
+    };
+    expect(JSON.stringify(out)).not.toContain(S);
+    expect(out.argv.at(-1)).toBe('bob');
+    expect(out.argv[0]).toBe('tool');
+  });
+
+  it('keeps token counters and plural token lists', () => {
+    const usage = {
+      usage: {
+        input_tokens: 1234,
+        output_tokens: 5678,
+        cache_read_input_tokens: 99999,
+        max_tokens: 4096,
+      },
+      maxTokens: 20000,
+      totalTokens: 12345,
+      tokens: ['ab', 'cdefg'],
+    };
+    expect(redactor.redact(JSON.stringify(usage))).toEqual({
+      text: JSON.stringify(usage),
+      failed: false,
+      count: 0,
+    });
+  });
+
+  it('still redacts a lone token key', () => {
+    expect(JSON.stringify(run({ refresh_token: S, accessToken: S }))).not.toContain(S);
+  });
+
+  it('does not lose deeply nested JSON to a failure', () => {
+    const depth = 30_000;
+    const text = `${'{"a":'.repeat(depth)}"${SECRETS.github}"${'}'.repeat(depth)}`;
+    const r = redactor.redact(text);
+    expect(r.failed).toBe(false);
+    expect(r.text).not.toContain(SECRETS.github);
+  });
+
+  it('falls back to text rules for a document with too many leaves', () => {
+    const text = JSON.stringify([...Array<string>(60_000).fill('x'), SECRETS.github]);
+    const r = redactor.redact(text);
+    expect(r.failed).toBe(false);
+    expect(r.text).not.toContain(SECRETS.github);
+  });
+
+  it('keeps a __proto__ key as data', () => {
+    const r = redactor.redact(`{"__proto__":{"password":"${S}"}}`);
+    expect(r.text).not.toContain(S);
+  });
+});
+
 describe('redaction', () => {
   it.each([
     ['anthropic-api-key', `key ${SECRETS.anthropic} end`],
@@ -222,7 +301,7 @@ describe('redaction', () => {
   });
 
   it('bumps the redaction version', () => {
-    expect(REDACTION_VERSION).toBe('3');
+    expect(REDACTION_VERSION).toBe('4');
   });
 
   it('redacts 1 MB of pathological input in under a second', () => {

@@ -48,6 +48,7 @@ export function createApp(deps: AppDeps): OpenAPIHono {
         frameAncestors: ["'none'"],
         objectSrc: ["'none'"],
         baseUri: ["'none'"],
+        formAction: ["'self'"],
       },
       xFrameOptions: 'DENY',
       referrerPolicy: 'no-referrer',
@@ -56,7 +57,9 @@ export function createApp(deps: AppDeps): OpenAPIHono {
   const appHeaders = headers(["'self'"]);
   const authHeaders = headers([AUTH_SCRIPT_HASH]);
   const pick: MiddlewareHandler = (c, next) =>
-    c.req.path === '/auth' ? authHeaders(c, next) : appHeaders(c, next);
+    c.req.path.replace(/\/+/g, '/').replace(/(?<=.)\/$/, '') === '/auth'
+      ? authHeaders(c, next)
+      : appHeaders(c, next);
   app.use('*', pick);
   app.use('*', localGuard(deps.port));
   app.use('/v1/*', requireToken(deps.token, OPEN_PATHS));

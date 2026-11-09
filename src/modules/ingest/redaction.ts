@@ -6,7 +6,7 @@ import { unsafePatternReason } from '../../platform/regex/index.js';
 export { unsafePatternReason };
 
 /** Bump when rules change; `ingest_warnings` and re-ingest key off it (ADR-0007). */
-export const REDACTION_VERSION = '3';
+export const REDACTION_VERSION = '4';
 
 /** Why a session stored with this redaction version must not reach a judge, or null when it may. */
 export function redactionRefusal(version: string | null): string | null {
@@ -51,11 +51,21 @@ const PLACEHOLDER_VALUE =
 /** Names whose value is a secret. The name must end the key. */
 const KEY_NAME_SOURCE =
   '(?:password|passwd|pwd|secret|token|api[_-]?key|private[_-]?key|secret[_-]?key|access[_-]?key|account[_-]?key|credential)';
-/** Same names, anchored, for JSON object keys. */
+/** Counters, not credentials: `max_tokens`, `input_tokens`, `cache_read_input_tokens`, `totalTokens`, ... */
+const TOKEN_COUNT_KEY =
+  /(?:max|min|input|output|prompt|completion|total|cache[_-]?(?:read|creation|write)\w*)[_-]?tokens?$/i;
+/** Same names for JSON object keys. A plural `tokens` is a list of model tokens, not a credential. */
 const SECRET_JSON_KEY = new RegExp(
-  `${KEY_NAME_SOURCE}s?$|^(?:authorization|cookie|set-cookie)$`,
+  `(?:${KEY_NAME_SOURCE.replace('token|', '')}s?|token)$|^(?:authorization|cookie|set-cookie)$`,
   'i',
 );
+const isSecretKey = (key: string): boolean =>
+  SECRET_JSON_KEY.test(key) && !TOKEN_COUNT_KEY.test(key);
+/** A command-line flag whose next argument is a secret: `--password hunter2`, `--api-key abc`. */
+const SECRET_FLAG =
+  /^--[\w-]*(?:password|passwd|secret|token|api-?key|private-?key|access-?key|credential)s?$/i;
+/** More leaves than this and the JSON is redacted as plain text instead; it bounds the work for one field. */
+const MAX_JSON_LEAVES = 50_000;
 
 // A vendored subset of the gitleaks default rules (MIT), written as JS regexes, plus the generic entropy rule.
 const BUILT_IN_RULES: readonly Rule[] = [
@@ -336,6 +346,8 @@ export function createRedactor(opts: {
 
   /** Thrown when a field runs past its time budget; the field then fails closed. */
   class OutOfTime extends Error {}
+  /** Thrown when a JSON document has too many leaves to walk; it is then redacted as text. */
+  class TooBig extends Error {}
 
   return {
     redactWhole: (text) => placeholder('sensitive-file', text),
@@ -375,21 +387,61 @@ export function createRedactor(opts: {
         }
         return out;
       };
-      /** String leaves are redacted as decoded text: in the JSON text a value starts with `\"`, which hides it from the rules. */
-      const walk = (value: unknown, key?: string): unknown => {
-        if (typeof value === 'string') {
-          if (key !== undefined && SECRET_JSON_KEY.test(key) && value.length >= 4) {
-            if (!PLACEHOLDER_VALUE.test(value)) {
+      /**
+       * String leaves are redacted as decoded text: in the JSON text a value starts with `\"`, which hides it
+       * from the rules. Iterative (hostile input can nest far deeper than the call stack); edits the parsed
+       * tree in place. A secret key marks everything below it, a `{name: "API_KEY", value}` pair marks the
+       * value, and the argument after `--password` style flags is a secret.
+       */
+      const walk = (root: unknown): unknown => {
+        const holder: Record<string, unknown> = { root };
+        const set = (parent: object, key: string, value: unknown): void => {
+          // defineProperty, not assignment: a JSON key `__proto__` must stay an own property.
+          Object.defineProperty(parent, key, {
+            value,
+            writable: true,
+            enumerable: true,
+            configurable: true,
+          });
+        };
+        const stack: { parent: object; key: string; value: unknown; secret: boolean }[] = [
+          { parent: holder, key: 'root', value: root, secret: false },
+        ];
+        let leaves = 0;
+        for (let item = stack.pop(); item; item = stack.pop()) {
+          const { parent, key, value, secret } = item;
+          if (typeof value === 'string' || typeof value === 'number') {
+            if (++leaves > MAX_JSON_LEAVES) throw new TooBig();
+            const text = String(value);
+            if (secret && text.length >= 4 && !PLACEHOLDER_VALUE.test(text)) {
               count += 1;
-              return placeholder('keyed-secret', value);
-            }
+              set(parent, key, placeholder('keyed-secret', text));
+            } else if (typeof value === 'string') set(parent, key, redactText(value));
+          } else if (Array.isArray(value)) {
+            value.forEach((v: unknown, i) => {
+              const before: unknown = value[i - 1];
+              stack.push({
+                parent: value,
+                key: String(i),
+                value: v,
+                secret: secret || (typeof before === 'string' && SECRET_FLAG.test(before)),
+              });
+            });
+          } else if (typeof value === 'object' && value !== null) {
+            const entries = Object.entries(value);
+            const namesSecret = entries.some(
+              ([k, v]) => /^(?:name|key)$/i.test(k) && typeof v === 'string' && isSecretKey(v),
+            );
+            for (const [k, v] of entries)
+              stack.push({
+                parent: value,
+                key: k,
+                value: v,
+                secret: secret || isSecretKey(k) || (namesSecret && /^value$/i.test(k)),
+              });
           }
-          return redactText(value);
         }
-        if (Array.isArray(value)) return value.map((v) => walk(v, key));
-        if (typeof value === 'object' && value !== null)
-          return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, walk(v, k)]));
-        return value;
+        return holder.root;
       };
       try {
         // Zero-width characters inside a key name would hide it from the rules; they carry no meaning in a secret scan.
@@ -404,12 +456,18 @@ export function createRedactor(opts: {
           }
           if (parsed !== undefined) {
             const before = count;
-            const walked = walk(parsed);
-            return {
-              text: count === before ? clean : JSON.stringify(walked),
-              failed: false,
-              count,
-            };
+            try {
+              const walked = walk(parsed);
+              return {
+                text: count === before ? clean : JSON.stringify(walked),
+                failed: false,
+                count,
+              };
+            } catch (error) {
+              if (error instanceof OutOfTime) throw error;
+              // Too many leaves, or too deep to serialise: the rules still see the whole text.
+              count = before;
+            }
           }
         }
         return { text: redactText(clean), failed: false, count };

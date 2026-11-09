@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { OpenAPIHono } from '@hono/zod-openapi';
@@ -12,7 +12,14 @@ import { LOCAL_USER_ID, LOCAL_WORKSPACE_ID } from '../identity/index.js';
 import { createJobQueue } from '../jobs/queue.js';
 import { sqliteTestDb, type TestDb } from '../testkit/db.js';
 import { createApp, OPENAPI_INFO } from './app.js';
-import { loadOrCreateToken, requireToken, rotateToken, TOKEN_COOKIE, tokenReader } from './auth.js';
+import {
+  loadOrCreateToken,
+  requireToken,
+  rotateToken,
+  TOKEN_COOKIE,
+  tokenMatches,
+  tokenReader,
+} from './auth.js';
 
 const PORT = 7317;
 const BASE = `http://127.0.0.1:${String(PORT)}`;
@@ -164,7 +171,7 @@ describe('browser hardening', () => {
   it('sends a strict CSP and the other security headers', async () => {
     const res = await get('/v1/health');
     expect(res.headers.get('content-security-policy')).toBe(
-      "default-src 'self'; script-src 'self'; img-src 'self' data:; frame-ancestors 'none'; object-src 'none'; base-uri 'none'",
+      "default-src 'self'; script-src 'self'; img-src 'self' data:; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'",
     );
     expect(res.headers.get('x-frame-options')).toBe('DENY');
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
@@ -173,6 +180,11 @@ describe('browser hardening', () => {
 
   it('allows only the hash of the sign-in script inline, on /auth', async () => {
     const res = await get('/auth');
+    expect(res.headers.get('content-security-policy')).toMatch(/script-src 'sha256-[\w+/=]+'/);
+  });
+
+  it.each(['/auth', '/auth/', '//auth', '/auth//'])('uses the sign-in CSP on %s', async (path) => {
+    const res = await get(path);
     expect(res.headers.get('content-security-policy')).toMatch(/script-src 'sha256-[\w+/=]+'/);
   });
 
@@ -211,6 +223,27 @@ describe('token rotation', () => {
     expect((await call(old)).status).toBe(401);
     expect((await call(fresh)).status).toBe(200);
     expect(statSync(join(dir, 'token')).mode & 0o777).toBe(0o600);
+  });
+
+  it('keeps the old token when the file is briefly empty or short, or unreadable', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'introspect-rot-'));
+    const read = tokenReader(dir);
+    const old = read();
+    const file = join(dir, 'token');
+    writeFileSync(file, '');
+    expect(read()).toBe(old);
+    writeFileSync(file, 'abc\n');
+    expect(read()).toBe(old);
+    rmSync(file);
+    expect(read()).toBe(old);
+    const fresh = 'f'.repeat(old.length);
+    writeFileSync(file, `${fresh}\n`);
+    expect(read()).toBe(fresh);
+  });
+
+  it('never matches an empty candidate', () => {
+    expect(tokenMatches('', '')).toBe(false);
+    expect(tokenMatches('a'.repeat(64), '')).toBe(false);
   });
 
   it('keeps the session cookie for 30 days', async () => {

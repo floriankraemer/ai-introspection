@@ -140,6 +140,14 @@ describe('verifyChange', () => {
       ['model', 'model: opus'],
       ['an unknown key', 'name: a\nsomething-new: 1'],
       ['a quoted key', '"hooks": x'],
+      ['uniformly indented keys', ' name: a\n hooks: x'],
+      ['tab-indented keys', '\tname: a\n\thooks: x'],
+      ['a document-end marker before hooks', 'name: a\n...\nhooks: x'],
+      ['an anchor and merge key', 'x: &a {hooks: 1}\n<<: *a'],
+      ['a duplicate key', 'name: a\nname: b'],
+      ['a non-mapping root', '- hooks'],
+      ['a non-string key', '1: a'],
+      ['a parse error', 'name: [unclosed'],
     ])('refuses frontmatter with %s unless allowExecutable, then warns', async (_n, yaml) => {
       const head = commit({ 'agents/a.md': fm(yaml) });
       await expect(verifyChange(repo, base, head, POLICY)).rejects.toThrow(/frontmatter/);
