@@ -1,0 +1,61 @@
+import type { Api } from './types.js';
+
+/** RFC 9457 problem+json, as returned by every `/v1` error (ADR-0008). */
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly title: string,
+    readonly detail: string | null,
+  ) {
+    super(detail ?? title);
+    this.name = 'ApiError';
+  }
+}
+
+async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const init: RequestInit = {
+    method,
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json',
+      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  };
+  const res = await fetch(`/v1${path}`, init);
+  if (!res.ok) {
+    const p = (await res.json().catch(() => ({}))) as { title?: string; detail?: string };
+    throw new ApiError(res.status, p.title ?? res.statusText, p.detail ?? null);
+  }
+  return res.status === 204 ? (undefined as T) : ((await res.json()) as T);
+}
+
+function qs(params: Record<string, string | number | undefined>): string {
+  const u = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') u.set(k, String(v));
+  const s = u.toString();
+  return s ? `?${s}` : '';
+}
+
+const id = encodeURIComponent;
+
+export const realApi: Api = {
+  getSettings: () => request('GET', '/settings'),
+  patchSettings: (patch) => request('PATCH', '/settings', patch),
+  putJudgeKey: (apiKey) => request('PUT', '/settings/judge-key', { apiKey }),
+  testJudge: (body) => request('POST', '/judge/test', body),
+  listSources: () => request('GET', '/sources'),
+  detectSources: () => request('GET', '/sources/detected'),
+  addSource: (body) => request('POST', '/sources', body),
+  listSkillRepos: () => request('GET', '/skill-repos'),
+  putGlobalSkillRepo: (path) => request('PUT', '/skill-repos/global', { path }),
+  copyStarterRubrics: () => request('POST', '/skill-repos/global/starter-rubrics'),
+  patchSkillRepo: (rid, body) => request('PATCH', `/skill-repos/${id(rid)}`, body),
+  startImport: () => request('POST', '/imports'),
+  getJob: (jid) => request('GET', `/jobs/${id(jid)}`),
+  getTrendSummary: (days) => request('GET', `/trends/summary${qs({ days })}`),
+  listSessions: (q) => request('GET', `/sessions${qs({ ...q })}`),
+  getSession: (sid) => request('GET', `/sessions/${id(sid)}`),
+  listEvents: (sid, q) => request('GET', `/sessions/${id(sid)}/events${qs({ ...q })}`),
+  exchangeToken: (token) => request('POST', '/auth/session', { token }),
+};

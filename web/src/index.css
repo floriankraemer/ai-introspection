@@ -1,1 +1,144 @@
+@import '@fontsource/inter/latin-400.css';
+@import '@fontsource/inter/latin-500.css';
+@import '@fontsource/inter/latin-600.css';
+@import '@fontsource/inter/latin-700.css';
+@import '@fontsource/jetbrains-mono/latin-400.css';
 @import 'tailwindcss';
+
+/* Design tokens. Light values are taken from the mockups; dark values keep the same roles. */
+:root {
+  color-scheme: light;
+  --page: #f6f6f4;
+  --surface: #ffffff;
+  --surface-alt: #fafaf8;
+  --surface-sunken: #f2f2ef;
+  --line: #d4d4d0;
+  --line-soft: #e7e7e3;
+  --line-dashed: #a3a39e;
+  --ink: #1a1a1a;
+  --ink-soft: #3f3f3b;
+  --ink-muted: #55554f;
+  --accent: #1d4ed8;
+  --accent-hover: #1e3a8a;
+  --accent-ink: #ffffff;
+  --accent-soft: #eef2ff;
+  --pass-ink: #067647;
+  --pass-bg: #ecfdf3;
+  --pass-line: #abefc6;
+  --fail-ink: #b42318;
+  --fail-bg: #fef3f2;
+  --fail-line: #fecdca;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --page: #111113;
+  --surface: #1a1a1d;
+  --surface-alt: #151517;
+  --surface-sunken: #26262a;
+  --line: #3a3a40;
+  --line-soft: #2a2a2f;
+  --line-dashed: #5a5a62;
+  --ink: #ececea;
+  --ink-soft: #cfcfca;
+  --ink-muted: #a3a39d;
+  --accent: #8aa4ff;
+  --accent-hover: #b0c2ff;
+  --accent-ink: #0b1020;
+  --accent-soft: #1e2547;
+  --pass-ink: #6ee7a8;
+  --pass-bg: #0f2a1e;
+  --pass-line: #1f5a3f;
+  --fail-ink: #fda29b;
+  --fail-bg: #2d1412;
+  --fail-line: #6b2420;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']):not([data-theme='dark']) {
+    color-scheme: dark;
+    --page: #111113;
+    --surface: #1a1a1d;
+    --surface-alt: #151517;
+    --surface-sunken: #26262a;
+    --line: #3a3a40;
+    --line-soft: #2a2a2f;
+    --line-dashed: #5a5a62;
+    --ink: #ececea;
+    --ink-soft: #cfcfca;
+    --ink-muted: #a3a39d;
+    --accent: #8aa4ff;
+    --accent-hover: #b0c2ff;
+    --accent-ink: #0b1020;
+    --accent-soft: #1e2547;
+    --pass-ink: #6ee7a8;
+    --pass-bg: #0f2a1e;
+    --pass-line: #1f5a3f;
+    --fail-ink: #fda29b;
+    --fail-bg: #2d1412;
+    --fail-line: #6b2420;
+  }
+}
+
+@theme inline {
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --color-page: var(--page);
+  --color-surface: var(--surface);
+  --color-surface-alt: var(--surface-alt);
+  --color-sunken: var(--surface-sunken);
+  --color-line: var(--line);
+  --color-line-soft: var(--line-soft);
+  --color-line-dashed: var(--line-dashed);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-muted: var(--ink-muted);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-pass: var(--pass-ink);
+  --color-pass-bg: var(--pass-bg);
+  --color-pass-line: var(--pass-line);
+  --color-fail: var(--fail-ink);
+  --color-fail-bg: var(--fail-bg);
+  --color-fail-line: var(--fail-line);
+}
+
+@layer base {
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--ink);
+    font-family: var(--font-sans);
+  }
+  a {
+    color: var(--accent);
+  }
+  a:hover {
+    color: var(--accent-hover);
+  }
+  code {
+    font-family: var(--font-mono);
+    font-size: 13px;
+  }
+  /* Visible keyboard focus everywhere (WCAG 2.4.7). */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  th {
+    text-align: left;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ink-muted);
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  td {
+    padding: 12px;
+    border-bottom: 1px solid var(--line-soft);
+    font-size: 14px;
+    white-space: nowrap;
+  }
+}
