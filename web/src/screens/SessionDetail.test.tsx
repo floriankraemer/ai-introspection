@@ -1,9 +1,39 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
+import { createMemoryHistory } from '@tanstack/react-router';
+import { render } from '@testing-library/react';
+import { App } from '../App.js';
+import { createMockApi } from '../api/mock.js';
 import { renderApp } from '../test-utils.js';
 
+/** The session fixture with an outcome link of the given URL. */
+function renderWithOutcomeUrl(url: string) {
+  const api = createMockApi('graded', 0);
+  const getSession: typeof api.getSession = async (id) => {
+    const s = await api.getSession(id);
+    return { ...s, outcome: { ...s.outcome, url } };
+  };
+  return render(
+    <App
+      api={{ ...api, getSession }}
+      history={createMemoryHistory({ initialEntries: ['/sessions/sess-1'] })}
+    />,
+  );
+}
+
 describe('Session detail', () => {
+  it('links an https outcome with rel noopener noreferrer, and never a javascript: URL', async () => {
+    const good = renderWithOutcomeUrl('https://github.com/o/r/pull/128');
+    const link = await screen.findByRole('link', { name: /merged/i }, { timeout: 5000 });
+    expect(link).toHaveAttribute('href', 'https://github.com/o/r/pull/128');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    good.unmount();
+    renderWithOutcomeUrl('javascript:alert(1)');
+    await screen.findByText(/merged/i, undefined, { timeout: 5000 });
+    expect(screen.queryByRole('link', { name: /merged/i })).toBeNull();
+  });
+
   it('adds and removes the session from the reference set', async () => {
     const user = userEvent.setup();
     renderApp('/sessions/sess-1');

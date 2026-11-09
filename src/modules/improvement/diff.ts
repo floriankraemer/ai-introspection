@@ -30,11 +30,20 @@ export interface DiffReport {
 
 /** Files that a shell, git or Claude Code may execute; denied unless the repository opts in. */
 const SCRIPT_EXTENSIONS = /\.(sh|bash|zsh|py|js|mjs|cjs|ts|rb|pl|ps1)$/i;
+/** Markdown or not, a file inside a skills/, agents/ or commands/ folder (global or under .claude/). */
+export const isAgentFolderPath = (path: string): boolean =>
+  path
+    .split('/')
+    .slice(0, -1)
+    .some((s) => ['skills', 'agents', 'commands'].includes(s.toLowerCase()));
+
 export function isExecutableSurface(path: string): boolean {
   const segments = path.split('/');
   const name = segments.at(-1) ?? '';
   return (
     /^settings.*\.json$/i.test(name) ||
+    // Under skills/, agents/ and commands/ only markdown is an instruction; anything else may be run.
+    (isAgentFolderPath(path) && !/\.md$/i.test(name)) ||
     segments.slice(0, -1).some((s) => s.toLowerCase() === 'hooks') ||
     SCRIPT_EXTENSIONS.test(name)
   );
@@ -255,4 +264,51 @@ export function inspectDiff(
     addedText,
     warnings: [...warnings].sort(),
   };
+}
+
+/** Frontmatter keys that only describe a skill, agent or command. Everything else can grant tools or run code. */
+const SAFE_FRONTMATTER_KEYS = new Set([
+  'name',
+  'description',
+  'argument-hint',
+  'license',
+  'version',
+  'metadata',
+  'compatibility',
+]);
+
+/** Top-level YAML keys of a markdown file's frontmatter, or null without frontmatter. Unreadable lines become `?`. */
+function frontmatterKeys(content: string): Map<string, string> | null {
+  const lines = content.replace(/^\uFEFF/, '').split(/\r?\n/);
+  if (lines[0]?.trim() !== '---') return null;
+  const keys = new Map<string, string>();
+  for (const line of lines.slice(1)) {
+    if (line.trim() === '---' || line.trim() === '...') return keys;
+    if (line.trim() === '' || /^\s/.test(line) || line.startsWith('#')) {
+      // Continuation of the previous key's value: part of that value.
+      const last = [...keys.keys()].at(-1);
+      if (last !== undefined) keys.set(last, `${keys.get(last) ?? ''}\n${line}`);
+      continue;
+    }
+    const m = /^([A-Za-z][\w-]*)[ \t]*:(?:[ \t]|$)(.*)$/.exec(line);
+    keys.set(m?.[1] ?? `?${line.slice(0, 20)}`, m?.[2] ?? '');
+  }
+  keys.set('?unterminated', '');
+  return keys;
+}
+
+/**
+ * Why the frontmatter of a skill, agent or command file can run code or widen permissions, or null.
+ * Anything not on the safe list counts (hooks, tools, mcpServers, permissionMode, model, ...), and so does
+ * dropping a `disallowedTools` restriction that `before` had.
+ */
+export function frontmatterProblem(after: string, before?: string): string | null {
+  const keys = frontmatterKeys(after);
+  const unsafe = [...(keys?.keys() ?? [])].filter((k) => !SAFE_FRONTMATTER_KEYS.has(k));
+  if (unsafe.length > 0)
+    return `its frontmatter sets ${unsafe.map((k) => k.replace(/^\?.*/, 'an unreadable key')).join(', ')}, which can grant tools or run code`;
+  const was = before === undefined ? undefined : frontmatterKeys(before)?.get('disallowedTools');
+  if (was !== undefined && keys?.get('disallowedTools') !== was)
+    return 'its frontmatter drops or changes a disallowedTools restriction';
+  return null;
 }

@@ -74,6 +74,27 @@ Run it in the stack with `docker compose exec introspect introspect improve --no
 - The improver's calls are on the same budget ledger as grading; `GET /v1/budget` reports its share in `improver`.
 - `INTROSPECT_IMPROVER=fake` (environment only) swaps in a deterministic improver for tests and demos.
 
+## Security notes
+
+- **Sign-in**: `make open` prints a one-time link; the browser keeps an HttpOnly, SameSite=Strict cookie for 30 days.
+  `introspect rotate-token` (`docker compose exec introspect introspect rotate-token`) creates a new token and signs out every browser and script that used the old one, also in a running server.
+- **Browser hardening**: the server sends a strict Content-Security-Policy (`default-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'`), `X-Frame-Options: DENY`, `nosniff` and `Referrer-Policy: no-referrer`.
+  A state-changing `/v1` request needs the bearer token, an `Origin`, or `Sec-Fetch-Site: same-origin`, and a body must be `application/json`.
+- **Mounts are trusted**: the skills and projects folders are mounted read-write, and Introspect runs `git` in them.
+  A hook in a project's `.git/hooks` runs when Introspect commits there, and git offers no generic switch to disable hooks for a mount.
+  Mount only repositories you own, and never `~/.claude`.
+  Log folders (`/sources/**`) are read-only; the API refuses to register any other folder (and never `/` or the data folder) as a log source.
+- **Network**: egress stays open, because the judge, the improver and `gh` need Anthropic and GitHub.
+  The `claude` CLI runs with telemetry, error reporting, auto-update and non-essential traffic switched off.
+- **Limits**: the container has `pids_limit` 512 and `mem_limit` 2g; set `INTROSPECT_PIDS_LIMIT` or `INTROSPECT_MEM_LIMIT` to change them.
+- **GitHub token**: for PR accept mode set `GH_TOKEN` to a fine-grained personal access token limited to the skills and project repositories (Contents and Pull requests: read and write), not a classic token.
+- **Redaction**: traces are redacted before they are stored, and again whenever the rules change (`REDACTION_VERSION`; older sessions are re-imported).
+  Tool inputs are redacted as decoded values, not as JSON text.
+  Retention removes payloads, the session title and the judge's reasons of sessions older than `retention.days`, except pinned and reference sessions; SQLite runs with `secure_delete`.
+- **Native install**: the data directory is `0700`, and the database, WAL and SHM files are `0600`.
+- **Improver proposals**: files under `skills/`, `agents/` and `commands/` must be Markdown, and their frontmatter may only hold descriptive keys (`name`, `description`, `argument-hint`, ...).
+  Keys such as `hooks`, `allowed-tools`, `tools`, `mcpServers`, `permissionMode` or `model`, and removing `disallowedTools`, are refused unless the repository sets `allowExecutable`; then they are accepted with a warning.
+
 ## Development
 
 Everything runs in Docker; the host needs only Docker with Compose.

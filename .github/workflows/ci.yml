@@ -16,8 +16,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - run: make install lint test build
+      - name: Audit production dependencies
+        run: UID=$(id -u) GID=$(id -g) docker compose -f compose.dev.yaml run --rm --build dev pnpm audit --prod
       - run: make test-pg
       - name: Runtime image builds
         run: docker compose build
@@ -25,7 +27,7 @@ jobs:
         run: make e2e
       - name: E2E traces and screenshots
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: e2e-results
           path: e2e/.work/results

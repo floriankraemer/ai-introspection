@@ -6,6 +6,17 @@ import { SAMPLE_PERCENT } from './signals.js';
 import { summarize } from './trace-text.js';
 import type { Agent, EventKind, GradeCandidate, RedactedTrace, TraceRecord } from './types.js';
 
+/** The ref as a link target when it is an http(s) URL; `javascript:` and friends never become one. */
+export function httpUrl(ref: string | null): string | null {
+  if (ref === null) return null;
+  try {
+    const { protocol } = new URL(ref);
+    return protocol === 'http:' || protocol === 'https:' ? ref : null;
+  } catch {
+    return null;
+  }
+}
+
 export type SessionResultFilter = 'failed_any' | 'all' | 'not_graded';
 export type EventFilter = 'all' | 'errors' | 'evidence';
 
@@ -226,7 +237,7 @@ export function createSessionQueries(db: Db, workspaceId: string) {
         outcome: {
           kind: s.outcome_kind,
           ref: s.outcome_ref,
-          url: s.outcome_ref?.startsWith('http') ? s.outcome_ref : null,
+          url: httpUrl(s.outcome_ref),
         },
         eventCount: counts.total,
         errorCount: counts.errors,

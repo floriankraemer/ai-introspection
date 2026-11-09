@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 # One image lineage: dev (tooling, bind-mounted source), build (compile), runtime (ships).
 
-FROM node:24-slim AS base
+# Base images are pinned by digest; bump them deliberately (docker buildx imagetools inspect node:24-slim).
+FROM node:24-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9 AS base
 RUN npm install -g pnpm@12.18.0
 WORKDIR /app
 
@@ -33,16 +34,26 @@ RUN pnpm build \
  && CI=true pnpm prune --prod
 
 # ---- runtime: non-root, read-only root fs friendly (writes only to /data and /tmp).
-FROM node:24-slim AS runtime
+FROM node:24-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9 AS runtime
 ENV NODE_ENV=production \
     HOME=/tmp \
     INTROSPECT_HOST=0.0.0.0 \
     INTROSPECT_DATA_DIR=/data
 WORKDIR /app
 # git: skills repositories are read and committed to (starter rubrics, proposal branches, merges).
-# gh: PR accept mode (`gh pr create`); it reads GH_TOKEN from the environment.
+# gh: PR accept mode (`gh pr create`); it reads GH_TOKEN from the environment. Installed from the official
+# GitHub apt repository (the Debian package lags far behind) at a pinned version; the signing key is checked
+# against a pinned checksum, so a changed key fails the build instead of being trusted.
+ARG GH_VERSION=2.103.3
+ARG GH_KEYRING_SHA256=6084d5d7bd8e288441e0e94fc6275570895da18e6751f70f057485dc2d1a811b
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git gh ca-certificates \
+ && apt-get install -y --no-install-recommends git ca-certificates curl \
+ && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+ && echo "${GH_KEYRING_SHA256}  /usr/share/keyrings/githubcli-archive-keyring.gpg" | sha256sum -c - \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends "gh=${GH_VERSION}" \
+ && apt-get purge -y --auto-remove curl \
  && rm -rf /var/lib/apt/lists/*
 # The claude CLI is the second judge transport (subscription login, local mode). Pinned: the adapter
 # refuses an untested major version. It runs with a private HOME under /data and its own login

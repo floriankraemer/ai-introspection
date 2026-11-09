@@ -3,6 +3,8 @@ import { type EditPolicy } from './policy.js';
 import {
   DiffRejectedError,
   executableWarning,
+  frontmatterProblem,
+  isAgentFolderPath,
   inspectDiff,
   isExecutableSurface,
   MAX_CHANGED_LINES,
@@ -61,6 +63,21 @@ export async function verifyChange(
     if (exec && !policy.allowExecutable)
       throw new DiffRejectedError(`"${r.path}" is executable; allowExecutable is off`);
     if (exec || isExecutableSurface(r.path)) warnings.add(executableWarning(r.path));
+  }
+  for (const r of raw) {
+    if (!isAgentFolderPath(r.path) || !/\.md$/i.test(r.path)) continue;
+    // A deleted file has no frontmatter left to check; a new one has no earlier version.
+    const shown = (rev: string): Promise<string | undefined> =>
+      gitRaw(dir, ['show', `${rev}:${r.path}`]).catch(() => undefined);
+    const after = await shown(head);
+    if (after === undefined) continue;
+    const problem = frontmatterProblem(after, await shown(base));
+    if (!problem) continue;
+    if (!policy.allowExecutable)
+      throw new DiffRejectedError(
+        `"${r.path}": ${problem}; only allowed when the repository sets allowExecutable`,
+      );
+    warnings.add(`"${r.path}": ${problem}`);
   }
   if (raw.length > MAX_FILES)
     throw new DiffRejectedError(

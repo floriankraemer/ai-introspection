@@ -29,6 +29,14 @@ export type CliRunner = (
   opts: { cwd: string; env: NodeJS.ProcessEnv; input?: string; timeoutMs: number },
 ) => Promise<CliRun>;
 
+/** The CLI sees redacted traces but is still a client of a third party: no telemetry, error reports, self-update or side traffic. */
+export const CLAUDE_PRIVACY_ENV = {
+  DISABLE_TELEMETRY: '1',
+  DISABLE_ERROR_REPORTING: '1',
+  DISABLE_AUTOUPDATER: '1',
+  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+} as const;
+
 export const spawnRunner: CliRunner = (cmd, args, { cwd, env, input, timeoutMs }) =>
   new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -164,6 +172,7 @@ export function createCliInvoker(opts: CliInvokerOptions) {
     PATH: process.env.PATH,
     HOME: opts.home,
     LANG: process.env.LANG ?? 'C.UTF-8',
+    ...CLAUDE_PRIVACY_ENV,
   });
 
   return async function invoke(

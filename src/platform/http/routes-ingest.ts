@@ -303,7 +303,7 @@ export function registerIngestRoutes(
   app.openapi(detectSources, async (c) => c.json(await ingest.sources.detect(), 200));
   app.openapi(addSource, async (c) => {
     const { agent, path } = c.req.valid('json');
-    return c.json(await ingest.sources.add(agent, path), 200);
+    return c.json(await ingest.sources.add(agent, path, { restrict: true }), 200);
   });
 
   app.openapi(startImport, async (c) => {

@@ -1,3 +1,7 @@
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { SkillRepoRow } from './skill-repos.js';
 import { resolveTarget } from './target.js';
@@ -49,5 +53,23 @@ describe('resolveTarget', () => {
     expect(await resolveTarget({ repoRoot: '/x/other', cwd: null }, [api])).toEqual({
       skip: 'no global skills repository is set',
     });
+  });
+  it('skips when the only project of that folder name has a different remote', async () => {
+    const dir = join(mkdtempSync(join(tmpdir(), 'introspect-target-')), 'api');
+    execFileSync('git', ['init', '-q', dir]);
+    execFileSync('git', ['-C', dir, 'remote', 'add', 'origin', 'git@github.com:o/other.git']);
+    const out = await resolveTarget({ repoRoot: '/home/dev/code/api', cwd: null }, [
+      global,
+      repo('x', 'project', dir),
+    ]);
+    expect('skip' in out && out.skip).toMatch(/has the remote "other"/);
+    execFileSync('git', ['-C', dir, 'remote', 'set-url', 'origin', 'git@github.com:o/api.git']);
+    expect(
+      'repo' in
+        (await resolveTarget({ repoRoot: '/home/dev/code/api', cwd: null }, [
+          global,
+          repo('x', 'project', dir),
+        ])),
+    ).toBe(true);
   });
 });

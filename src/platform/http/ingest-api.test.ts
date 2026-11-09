@@ -68,6 +68,7 @@ beforeAll(async () => {
     settings,
     queue,
     pollMode: true,
+    sourceRoots: [join(dir, 'claude'), join(dir, 'codex')],
   });
   const skillRepos = createSkillRepos(t.handle.db, LOCAL_WORKSPACE_ID, {
     mountRoots: [join(dir, 'repos')],
@@ -112,6 +113,13 @@ afterAll(async () => {
 });
 
 describe('sources and import', () => {
+  it('refuses source folders outside the log mount roots and the data folder', async () => {
+    for (const path of ['/', tmpdir(), dir, join(dir, 'data'), join(dir, 'web')]) {
+      const res = await call('POST', '/v1/sources', { agent: 'claude_code', path });
+      expect(res.status, path).toBe(422);
+    }
+  });
+
   it('rejects a source folder that does not exist with a 422 problem', async () => {
     const res = await call('POST', '/v1/sources', {
       agent: 'claude_code',

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createRedactor,
   isSensitivePath,
+  readsSensitiveFile,
   REDACTION_FAILED,
   REDACTION_VERSION,
   shannonEntropy,
@@ -83,6 +84,16 @@ describe('redaction', () => {
       '/h/kubeconfig',
       '/h/.git-credentials',
       '/h/.pgpass',
+      '/h/.htpasswd',
+      '/h/.pypirc',
+      '/h/.docker/config.json',
+      '/i/prod.tfvars',
+      '/i/terraform.tfstate',
+      '/i/terraform.tfstate.backup',
+      '/i/secrets.yaml',
+      '/i/service-account-prod.json',
+      '/i/release.keystore',
+      '/i/trust.jks',
     ])
       expect(isSensitivePath(p), p).toBe(true);
     for (const p of [
@@ -105,7 +116,9 @@ describe('redaction', () => {
       'export AUTH_TOKEN=1234',
       'private-key = abcd',
     ])
-      expect(redactor.redact(text).text, text).toMatch(/\[REDACTED:keyed-secret:[0-9a-f]{8}\]/);
+      expect(redactor.redact(text).text, text).toMatch(
+        /\[REDACTED:keyed-secret(?:-quoted)?:[0-9a-f]{8}\]/,
+      );
     expect(redactor.redact('password=hunter2').text).toBe(
       `password=${/\[REDACTED:keyed-secret:[0-9a-f]{8}\]/.exec(redactor.redact('password=hunter2').text)?.[0] ?? ''}`,
     );
@@ -126,8 +139,90 @@ describe('redaction', () => {
       expect(redactor.redact(text), text).toEqual({ text, failed: false, count: 0 });
   });
 
+  const j = (command: string): string => JSON.stringify({ command });
+  // [text, the secret that must not survive]; most are tool inputs, i.e. JSON text, as the audit found them.
+  const LEAKS: [string, string][] = [
+    ['export PASSWORD=\\"hunter2hunter2\\"', 'hunter2hunter2'],
+    [j('mysql -u root --password="Tr0ub4dor&3xx" db'), 'Tr0ub4dor'],
+    [j('export DB_PASSWORD="Tr0ub4dor&3xx"'), 'Tr0ub4dor'],
+    [j('export DB_PASSWORD="two words here"'), 'words here'],
+    [
+      j('curl -H "Authorization: Basic dXNlcjpzdXBlcnNlY3JldHBhc3M=" https://x'),
+      'dXNlcjpzdXBlcnNlY3JldHBhc3M',
+    ],
+    [j('curl -H "Authorization: Bearer abc123abc123abc123abc123" https://x'), 'abc123abc123abc123'],
+    [
+      'Authorization: token ghp_abcdefghijklmnopqrstuvwxyz0123456789',
+      'abcdefghijklmnopqrstuvwxyz0123',
+    ],
+    ['Authorization: token someopaquetoken99', 'someopaquetoken99'],
+    [
+      'Authorization: Digest username="u", realm="r", nonce="n", response="0123456789abcdef0123456789abcdef"',
+      '0123456789abcdef0123456789abcdef',
+    ],
+    [j('curl -u admin:SuperSecret123 https://x'), 'SuperSecret123'],
+    [j('curl --user admin:SuperSecret123 https://x'), 'SuperSecret123'],
+    ['mysql -pSuperSecret123 db', 'SuperSecret123'],
+    [j('psql -h x -pSuperSecret123 db'), 'SuperSecret123'],
+    ['--password SuperSecret123', 'SuperSecret123'],
+    ['--password=SuperSecret123', 'SuperSecret123'],
+    [j("tool --password 'two words'"), 'two words'],
+    [
+      'DefaultEndpointsProtocol=https;AccountName=x;AccountKey=abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ab==;',
+      'abcdefghijklmnopqrstuvwxyz0123456789ABCDEF',
+    ],
+    ['SharedAccessSignature=sv=2020&sig=abcDEF123xyz;', 'abcDEF123xyz'],
+    ['https://x.blob.core.windows.net/c?sv=2020&sig=abcDEF123%2Fxyz%3D', 'abcDEF123%2Fxyz'],
+    ['ya29.a0AfH6SMBx7abcdefghijklmnopqrstuvwxyz1234567890', 'a0AfH6SMBx7abcdefghijklmnop'],
+    ['whsec_abcdefghijklmnopqrstuvwxyz123456', 'abcdefghijklmnopqrstuvwxyz123456'],
+    ['postgres://user:pa/ss@host/db', 'pa/ss'],
+    ['postgres://user:p%40ss@host/db', 'p%40ss'],
+    ['SECRET_KEY=abc123', 'abc123'],
+    ['client_secret: abc123', 'abc123'],
+    ['cookie: session=abcdefghijklmnopqrstuvwxyz123456', 'abcdefghijklmnopqrstuvwxyz123456'],
+    ['Set-Cookie: sid=abcdefghijklmnopqrstuvwxyz123456', 'abcdefghijklmnopqrstuvwxyz123456'],
+    [j('curl -H "Cookie: sid=abcdefghijklmnop" https://x'), 'abcdefghijklmnop'],
+    ['tok​en=abcdefghijklmnopqrstuvwxyz0123', 'abcdefghijklmnopqrstuvwxyz0123'],
+    ['password: "p@ss w0rd long"', 'w0rd long'],
+    [JSON.stringify({ env: { API_TOKEN: 'abcd1234' } }), 'abcd1234'],
+    [
+      JSON.stringify({
+        private_key: '-----BEGIN PRIVATE KEY-----\nMIIEvQ\n-----END PRIVATE KEY-----\n',
+      }),
+      'MIIEvQ',
+    ],
+    ['NPM_TOKEN=abcd', 'abcd'],
+    ['AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY', 'wJalrXUtnFEMI'],
+    ['password=aGVsbG8gd29ybGQgdGhpcw==', 'aGVsbG8gd29ybGQ'],
+  ];
+
+  it.each(LEAKS)('removes the secret from %j', (text, secret) => {
+    const r = redactor.redact(text);
+    expect(r.text).not.toContain(secret);
+    expect(r.count).toBeGreaterThan(0);
+  });
+
+  it('keeps JSON valid after redacting its string leaves', () => {
+    const r = redactor.redact(j('curl -u admin:SuperSecret123 "https://x/a b"'));
+    expect(() => {
+      JSON.parse(r.text);
+    }).not.toThrow();
+  });
+
+  it('leaves look-alikes alone', () => {
+    for (const text of [
+      'mysql -p 5432 db',
+      'psql -p5432 db',
+      'http://localhost:3000/@scope/pkg',
+      'curl -u $USER:$PASS https://x',
+      'Authorization: Bearer ${TOKEN}',
+      JSON.stringify({ command: 'ls -la', max_tokens: 4096 }),
+    ])
+      expect(redactor.redact(text), text).toEqual({ text, failed: false, count: 0 });
+  });
+
   it('bumps the redaction version', () => {
-    expect(REDACTION_VERSION).toBe('2');
+    expect(REDACTION_VERSION).toBe('3');
   });
 
   it('redacts 1 MB of pathological input in under a second', () => {
@@ -181,5 +276,20 @@ describe('redaction', () => {
     const out = r.redact(`${'a'.repeat(50_000)}! ACME-123456`);
     expect(performance.now() - started).toBeLessThan(1000);
     expect(out.text).toMatch(/\[REDACTED:custom-2:/);
+  });
+
+  it('sees reads of credential files through more readers', () => {
+    for (const c of [
+      'cp .env /tmp/x',
+      'jq . service-account.json',
+      `python3 -c "print(open('.env').read())"`,
+      "node -e \"require('fs').readFileSync('.npmrc')\"",
+      'echo "$(<.env)"',
+      'base64 .env',
+      'xxd id_rsa',
+      JSON.stringify({ command: 'cat ".env"' }),
+    ])
+      expect(readsSensitiveFile(c), c).toBe(true);
+    expect(readsSensitiveFile('cat README.md')).toBe(false);
   });
 });

@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { OpenAPIHono } from '@hono/zod-openapi';
+import { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createSkillRepos } from '../../modules/improvement/index.js';
 import { createIngest } from '../../modules/ingest/index.js';
@@ -11,7 +12,7 @@ import { LOCAL_USER_ID, LOCAL_WORKSPACE_ID } from '../identity/index.js';
 import { createJobQueue } from '../jobs/queue.js';
 import { sqliteTestDb, type TestDb } from '../testkit/db.js';
 import { createApp, OPENAPI_INFO } from './app.js';
-import { loadOrCreateToken } from './auth.js';
+import { loadOrCreateToken, requireToken, rotateToken, TOKEN_COOKIE, tokenReader } from './auth.js';
 
 const PORT = 7317;
 const BASE = `http://127.0.0.1:${String(PORT)}`;
@@ -126,7 +127,7 @@ describe('local token auth', () => {
   it('exchanges the token for an HttpOnly SameSite=Strict cookie that authenticates', async () => {
     const bad = await app.request(`${BASE}/v1/auth/session`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: BASE },
       body: JSON.stringify({ token: 'wrong' }),
     });
     expect(bad.status).toBe(401);
@@ -152,6 +153,73 @@ describe('local token auth', () => {
   it('refuses a foreign Origin even with a valid token', async () => {
     const res = await get('/v1/settings', { ...bearer(), origin: 'https://evil.example' });
     expect(res.status).toBe(403);
+  });
+});
+
+describe('browser hardening', () => {
+  const post = (headers: Record<string, string>, body = '{}') =>
+    app.request(`${BASE}/v1/settings`, { method: 'PATCH', headers, body });
+  const json = { 'content-type': 'application/json' };
+
+  it('sends a strict CSP and the other security headers', async () => {
+    const res = await get('/v1/health');
+    expect(res.headers.get('content-security-policy')).toBe(
+      "default-src 'self'; script-src 'self'; img-src 'self' data:; frame-ancestors 'none'; object-src 'none'; base-uri 'none'",
+    );
+    expect(res.headers.get('x-frame-options')).toBe('DENY');
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(res.headers.get('referrer-policy')).toBe('no-referrer');
+  });
+
+  it('allows only the hash of the sign-in script inline, on /auth', async () => {
+    const res = await get('/auth');
+    expect(res.headers.get('content-security-policy')).toMatch(/script-src 'sha256-[\w+/=]+'/);
+  });
+
+  it('refuses a cookie-authenticated change without Origin or Sec-Fetch-Site', async () => {
+    const cookie = `${TOKEN_COOKIE}=${token}`;
+    expect((await post({ ...json, cookie })).status).toBe(403);
+    expect((await post({ ...json, cookie, 'sec-fetch-site': 'same-origin' })).status).toBe(200);
+    expect((await post({ ...json, cookie, origin: BASE })).status).toBe(200);
+  });
+
+  it('lets the bearer token change things without Origin', async () => {
+    expect((await post({ ...json, ...bearer() })).status).toBe(200);
+  });
+
+  it('requires a JSON content type on bodies', async () => {
+    for (const type of ['text/plain', 'application/x-www-form-urlencoded', ''])
+      expect(
+        (await post({ ...bearer(), ...(type && { 'content-type': type }), 'content-length': '2' }))
+          .status,
+      ).toBe(415);
+  });
+});
+
+describe('token rotation', () => {
+  it('signs out old cookies and bearer tokens of a running server', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'introspect-rot-'));
+    const read = tokenReader(dir);
+    const old = read();
+    const guarded = new Hono()
+      .use('*', requireToken(read, new Set()))
+      .get('/', (c) => c.text('ok'));
+    const call = (t: string) => guarded.request('/', { headers: { authorization: `Bearer ${t}` } });
+    expect((await call(old)).status).toBe(200);
+    const fresh = rotateToken(dir);
+    expect(fresh).not.toBe(old);
+    expect((await call(old)).status).toBe(401);
+    expect((await call(fresh)).status).toBe(200);
+    expect(statSync(join(dir, 'token')).mode & 0o777).toBe(0o600);
+  });
+
+  it('keeps the session cookie for 30 days', async () => {
+    const res = await app.request(`${BASE}/v1/auth/session`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: BASE },
+      body: JSON.stringify({ token }),
+    });
+    expect(res.headers.get('set-cookie')).toMatch(/Max-Age=2592000/);
   });
 });
 
@@ -237,7 +305,10 @@ describe('trends api', () => {
     expect(a.kind).toBe('trends_scan');
     const b = (await (await post('/v1/trends/scan')).json()) as { id: string };
     expect(b.id).not.toBe(a.id);
-    expect((await app.request(`${BASE}/v1/trends/scan`, { method: 'POST' })).status).toBe(401);
+    expect(
+      (await app.request(`${BASE}/v1/trends/scan`, { method: 'POST', headers: { origin: BASE } }))
+        .status,
+    ).toBe(401);
   });
 
   it('answers 409 to a re-grade of an empty reference set and 404 to an unknown session', async () => {

@@ -21,7 +21,7 @@ export function createSecretStore(dataDir: string): SecretStore {
     hasJudgeKey: () => Boolean(read().judgeApiKey),
     getJudgeKey: () => read().judgeApiKey,
     setJudgeKey(key) {
-      mkdirSync(dataDir, { recursive: true });
+      mkdirSync(dataDir, { recursive: true, mode: 0o700 });
       // Temp file + rename, so a crash never leaves a half-written secrets file.
       const tmp = `${path}.tmp`;
       writeFileSync(tmp, JSON.stringify({ ...read(), judgeApiKey: key }), { mode: 0o600 });

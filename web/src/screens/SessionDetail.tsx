@@ -26,6 +26,17 @@ import { ApiError } from '../api/client.js';
 import { GradesPanel } from './GradesPanel.js';
 
 /** Renders `code` spans: the API marks code in the one-line summary with backticks. */
+/** An outcome link opens only when it is http(s); `javascript:` and `data:` URLs stay plain text. */
+function safeHref(url: string | null): string | undefined {
+  if (url === null) return undefined;
+  try {
+    const { protocol } = new URL(url);
+    return protocol === 'http:' || protocol === 'https:' ? url : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function Inline({ text }: { text: string }) {
   return (
     <>
@@ -303,7 +314,13 @@ export function SessionDetail({ id }: { id: string }) {
             {outcome ? (
               <>
                 {' · '}
-                {s.outcome.url ? <a href={s.outcome.url}>{outcome}</a> : outcome}
+                {safeHref(s.outcome.url) ? (
+                  <a href={safeHref(s.outcome.url)} rel="noopener noreferrer">
+                    {outcome}
+                  </a>
+                ) : (
+                  outcome
+                )}
               </>
             ) : null}
           </p>

@@ -18,7 +18,7 @@ import { openDatabase } from './db/connection.js';
 import { migrateToLatest } from './db/migrate.js';
 import { runDoctor, runProgram, type DoctorReport } from './doctor/index.js';
 import { createApp } from './http/app.js';
-import { loadOrCreateToken } from './http/auth.js';
+import { tokenReader } from './http/auth.js';
 import { ensureLocalIdentity, LOCAL_USER_ID, LOCAL_WORKSPACE_ID } from './identity/index.js';
 import { createJobQueue } from './jobs/queue.js';
 import { createScheduler } from './jobs/scheduler.js';
@@ -307,7 +307,7 @@ export async function startServer(config: Config): Promise<RunningServer> {
   const app = createApp({
     webDir: WEB_DIR,
     port: config.port,
-    token: loadOrCreateToken(config.dataDir),
+    token: tokenReader(config.dataDir),
     queue,
     settings,
     ingest,

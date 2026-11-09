@@ -17,6 +17,9 @@ services:
     security_opt:
       - no-new-privileges:true
     init: true
+    # Runaway-process and memory ceilings; raise them with INTROSPECT_PIDS_LIMIT / INTROSPECT_MEM_LIMIT.
+    pids_limit: ${INTROSPECT_PIDS_LIMIT:-512}
+    mem_limit: ${INTROSPECT_MEM_LIMIT:-2g}
     restart: unless-stopped
     environment:
       # inotify is unreliable on WSL2 and Docker Desktop bind mounts; the watcher polls.
@@ -27,6 +30,8 @@ services:
       GIT_AUTHOR_EMAIL:
       GIT_COMMITTER_NAME:
       GIT_COMMITTER_EMAIL:
+      # PR accept mode only. Use a fine-grained personal access token limited to the skills and project
+      # repositories (Contents and Pull requests: read and write), never a classic token.
       GH_TOKEN:
       # Test-only judge (`fake`); leave it out of .env for real grading.
       INTROSPECT_JUDGE:
@@ -50,6 +55,9 @@ services:
       # No Claude login is mounted. The CLI judge signs in on its own (`make claude-login`) and keeps
       # that login in /data/claude-home, a private home no source reads. Your ~/.claude stays
       # untouched, so the container can never rotate or invalidate your own login.
+      # TRUSTED, WRITABLE. Anything that can write to these folders can change what Introspect reads
+      # and commits, and a hook in a project's .git/hooks runs when Introspect runs git there; git
+      # hooks cannot be switched off for a mount generically. Mount only repositories you own.
       # Global skills repository and project repositories, read-write: Introspect commits
       # rubrics and merges proposals there. `make up` creates both folders as your user first.
       # The default is a dedicated folder, never ~/.claude: that holds your Claude credentials,

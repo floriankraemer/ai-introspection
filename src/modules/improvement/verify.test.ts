@@ -62,7 +62,7 @@ describe('verifyChange', () => {
 
   it('refuses a new symlink, whatever it points to', async () => {
     mkdirSync(join(repo, 'skills'));
-    symlinkSync('../rubrics', join(repo, 'skills', 'link'));
+    symlinkSync('../rubrics', join(repo, 'skills', 'link.md'));
     git('add', '-A');
     git('commit', '-qm', 'link');
     await expect(verifyChange(repo, base, git('rev-parse', 'HEAD'), POLICY)).rejects.toThrow(
@@ -126,6 +126,53 @@ describe('verifyChange', () => {
     git('commit', '-qm', 'mv');
     await expect(verifyChange(repo, mid, git('rev-parse', 'HEAD'), POLICY)).rejects.toThrow(
       /never allowed/,
+    );
+  });
+
+  describe('executable frontmatter and non-markdown files', () => {
+    const fm = (lines: string): string => `---\n${lines}\n---\nbody\n`;
+    it.each([
+      ['hooks', 'name: a\nhooks:\n  PreToolUse: x'],
+      ['allowed-tools', 'name: a\nallowed-tools: Bash(*)'],
+      ['tools', 'tools: Bash'],
+      ['mcpServers', 'mcpServers:\n  x: {}'],
+      ['permissionMode', 'permissionMode: bypassPermissions'],
+      ['model', 'model: opus'],
+      ['an unknown key', 'name: a\nsomething-new: 1'],
+      ['a quoted key', '"hooks": x'],
+    ])('refuses frontmatter with %s unless allowExecutable, then warns', async (_n, yaml) => {
+      const head = commit({ 'agents/a.md': fm(yaml) });
+      await expect(verifyChange(repo, base, head, POLICY)).rejects.toThrow(/frontmatter/);
+      const v = await verifyChange(repo, base, head, { ...POLICY, allowExecutable: true });
+      expect(v.warnings.join()).toMatch(/frontmatter/);
+    });
+
+    it('accepts plain frontmatter and files without any', async () => {
+      const head = commit({
+        'skills/x/SKILL.md': fm('name: x\ndescription: |\n  hooks: not a key\nargument-hint: [a]'),
+        'commands/c.md': 'no frontmatter\n',
+      });
+      expect((await verifyChange(repo, base, head, POLICY)).warnings).toEqual([]);
+    });
+
+    it('refuses removing a disallowedTools restriction', async () => {
+      const withRestriction = commit({ 'agents/a.md': fm('name: a\ndisallowedTools: Bash') });
+      const head = commit({ 'agents/a.md': fm('name: a') });
+      await expect(verifyChange(repo, withRestriction, head, POLICY)).rejects.toThrow(
+        /frontmatter/,
+      );
+    });
+
+    it.each(['skills/run', 'agents/a.txt', 'commands/x.json', '.claude/skills/a/tool'])(
+      'refuses %s (not markdown) unless allowExecutable, then warns',
+      async (path) => {
+        const head = commit({ [path]: 'x\n' });
+        const policy = { allowList: ['**'], allowExecutable: false };
+        await expect(verifyChange(repo, base, head, policy)).rejects.toThrow(/execute/);
+        expect(
+          (await verifyChange(repo, base, head, { ...policy, allowExecutable: true })).warnings,
+        ).toHaveLength(1);
+      },
     );
   });
 });

@@ -129,7 +129,8 @@ const retryJob = createRoute({
 
 export interface RouteDeps
   extends IngestRouteDeps, SetupRouteDeps, GradingRouteDeps, ImprovementRouteDeps {
-  token: string;
+  /** The token, or a function returning the current one (it changes when `rotate-token` runs). */
+  token: string | (() => string);
   queue: JobQueue;
   settings: SettingsService;
 }
@@ -145,9 +146,10 @@ export function registerRoutes(app: OpenAPIHono, deps: RouteDeps): void {
   app.openapi(health, (c) => c.json({ status: 'ok' as const }, 200));
 
   app.openapi(createSession, (c) => {
-    if (!tokenMatches(token, c.req.valid('json').token))
+    const current = typeof token === 'function' ? token() : token;
+    if (!tokenMatches(current, c.req.valid('json').token))
       throw new ApiError(401, 'Unauthorized', 'Invalid token');
-    setTokenCookie(c, token);
+    setTokenCookie(c, current);
     return c.body(null, 204);
   });
   app.get('/auth', (c) =>

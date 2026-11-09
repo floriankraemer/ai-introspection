@@ -11,6 +11,7 @@ import {
   startServer,
 } from './platform/bootstrap.js';
 import { formatReport, hasFailure } from './platform/doctor/index.js';
+import { rotateToken } from './platform/http/auth.js';
 import { loadConfig } from './platform/config/index.js';
 
 async function serveCommand(): Promise<void> {
@@ -36,6 +37,13 @@ function openCommand(): void {
   const { dataDir, port } = loadConfig();
   const token = readFileSync(join(dataDir, 'token'), 'utf8').trim();
   console.log(`http://127.0.0.1:${String(port)}/auth#${token}`);
+}
+
+/** New token; every browser session and script that used the old one is signed out. */
+function rotateTokenCommand(): void {
+  const { dataDir, port } = loadConfig();
+  const token = rotateToken(dataDir);
+  console.log(`Token rotated. Sign in again: http://127.0.0.1:${String(port)}/auth#${token}`);
 }
 
 function option(name: string): string | undefined {
@@ -144,6 +152,8 @@ if (command === 'serve') {
   });
 } else if (command === 'open') {
   openCommand();
+} else if (command === 'rotate-token') {
+  rotateTokenCommand();
 } else if (command === 'doctor') {
   doctorCommand().catch((e: unknown) => {
     console.error(e instanceof Error ? e.message : e);
@@ -176,7 +186,7 @@ if (command === 'serve') {
   });
 } else {
   console.error(
-    'Usage: introspect serve | open | doctor | judge-login | import [--agent <agent> --path <folder>] | grade --session <id> | --since <7d> | --all [--policy] | improve [--now] [--since 24h] | scan',
+    'Usage: introspect serve | open | rotate-token | doctor | judge-login | import [--agent <agent> --path <folder>] | grade --session <id> | --since <7d> | --all [--policy] | improve [--now] [--since 24h] | scan',
   );
   process.exit(1);
 }
