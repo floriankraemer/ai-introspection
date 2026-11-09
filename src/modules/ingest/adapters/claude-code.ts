@@ -1,7 +1,7 @@
 import { basename } from 'node:path';
 import type { MetaItem, ParsedItem, RawEvent, SourceAdapter } from '../types.js';
 
-export const CLAUDE_CODE_ADAPTER_VERSION = '1';
+export const CLAUDE_CODE_ADAPTER_VERSION = '2';
 
 /** Bookkeeping records that carry no conversation content; skipped without a warning. */
 const IGNORED_TYPES = [
@@ -89,11 +89,10 @@ function parseMessage(d: Json, type: 'user' | 'assistant'): ParsedItem[] {
     if (usage && id) {
       meta.usage = {
         messageId: id,
-        tokensIn:
-          num(usage.input_tokens) +
-          num(usage.cache_creation_input_tokens) +
-          num(usage.cache_read_input_tokens),
+        tokensIn: num(usage.input_tokens),
         tokensOut: num(usage.output_tokens),
+        tokensCacheRead: num(usage.cache_read_input_tokens),
+        tokensCacheWrite: num(usage.cache_creation_input_tokens),
       };
     }
   }

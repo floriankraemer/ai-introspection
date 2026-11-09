@@ -43,8 +43,12 @@ services:
         read_only: true
       # Global skills repository and project repositories, read-write: Introspect commits
       # rubrics and merges proposals there. `make up` creates both folders as your user first.
+      # The default is a dedicated folder, never ~/.claude: that holds your Claude credentials,
+      # hooks and transcripts, and a read-write mount would defeat the read-only /sources mounts.
+      # Set INTROSPECT_SKILLS_REPO to your existing skills repository, or leave it and let the
+      # setup wizard create a repository in the empty default folder.
       - type: bind
-        source: ${INTROSPECT_SKILLS_REPO:-${HOME}/.claude}
+        source: ${INTROSPECT_SKILLS_REPO:-${HOME}/.introspect/skills}
         target: /repos/skills
       - type: bind
         source: ${INTROSPECT_PROJECTS_DIR:-${HOME}/.introspect/projects}

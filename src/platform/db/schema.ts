@@ -56,6 +56,10 @@ export interface Schema {
     duration_s: number | null;
     tokens_in: Generated<number>;
     tokens_out: Generated<number>;
+    tokens_cache_read: Generated<number>;
+    tokens_cache_write: Generated<number>;
+    /** JSON `{id, in, out, cacheRead, cacheWrite}` of the last Claude message counted. */
+    usage_tail: string | null;
     cost: number | null;
     model: string | null;
     status: Generated<string>;

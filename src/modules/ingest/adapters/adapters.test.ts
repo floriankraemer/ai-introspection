@@ -86,7 +86,7 @@ describe('codex adapter', () => {
       isError: false,
     });
     expect(items.find((i) => i.type === 'meta' && i.totalTokens)).toMatchObject({
-      totalTokens: { tokensIn: 500, tokensOut: 60 },
+      totalTokens: { tokensIn: 300, tokensOut: 60, tokensCacheRead: 200, tokensCacheWrite: 0 },
     });
   });
 

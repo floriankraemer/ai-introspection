@@ -281,7 +281,7 @@ All IDs are UUIDs (sessions UUIDv5, others UUIDv7); every table carries `workspa
 | `app_user`* | identity | id, workspace_id, display_name, email, role, share_sessions | One fixed row locally; roles member / rubric_owner / admin |
 | `source`* | ingest | id, user_id, agent, path, mode (watch / poll), enabled | Settings "Sources" |
 | `ingest_cursor`* | ingest | source_id, file_path, file_fingerprint, byte_offset, size, mtime, session_id | Makes ingest resumable and idempotent |
-| `session` | ingest | id, user_id, agent, native_id, title*, repo, repo_root*, branch, cwd, started_at, ended_at*, duration_s, tokens_in/out, cost, model*, status*, outcome_kind*, outcome_ref, adapter_version*, redaction_version*, flagged*, sampled*, in_reference_set*, pinned*, ingest_warnings* | `outcome_kind`: none / commit / pr_open / pr_merged; `pinned` sessions are never purged |
+| `session` | ingest | id, user_id, agent, native_id, title*, repo, repo_root*, branch, cwd, started_at, ended_at*, duration_s, tokens_in/out/cache_read/cache_write (`tokens_in` excludes cache), usage_tail, cost, model*, status*, outcome_kind*, outcome_ref, adapter_version*, redaction_version*, flagged*, sampled*, in_reference_set*, pinned*, ingest_warnings* | `outcome_kind`: none / commit / pr_open / pr_merged; `pinned` sessions are never purged |
 | `event` | ingest | id, session_id, seq, ts*, kind, name, input, output, is_error, ms, truncated*, payload_purged_at* | `input`/`output` set to NULL after 90 days unless the session is pinned. Kinds: user, assistant, tool_call (call + result), file_op, mcp, skill, system, unknown. Unique (session_id, seq) |
 | `signal` | ingest | session_id, failed_tool_calls, retries, repeated_commands, files_touched, tests_run, signal_version* | Computed at session end |
 | `rubric` | rubrics | id, name, version (blob SHA), ordinal*, commit_sha*, scale, pass_threshold, target_pass_rate*, applies_to*, body_md | Unique (workspace_id, name, version) |
@@ -399,7 +399,7 @@ flowchart LR
 | Trends | Range, weekly series, target line, merge markers | `GET /v1/trends?range=8w|90d&rubric=` | trends |
 | Trends | Change log with before → after | `GET /v1/change-events?range=` | trends |
 | Settings | Sources, redaction, retention days, judge "Runs via" (API key default or claude CLI), sampling, budget mode and limits, schedule, accept mode | `GET /v1/settings`, `PATCH /v1/settings`, `GET /v1/sources`, `POST /v1/sources` | settings, ingest |
-| Settings | Global skills repo, registered project repos (enable, accept-mode override) | `GET /v1/skill-repos`, `PUT /v1/skill-repos/global`, `PATCH /v1/skill-repos/{id}` | improvement |
+| Settings | Global skills repo, registered project repos (enable, accept-mode override) | `GET /v1/skill-repos`, `GET /v1/skill-repos/detected`, `PUT /v1/skill-repos/global`, `POST /v1/skill-repos/global/init`, `PATCH /v1/skill-repos/{id}` | improvement |
 | Settings | Last / next improver run, dead jobs, tokens today, spend this month | `GET /v1/jobs?status=dead`, `GET /v1/usage` | platform/jobs, platform/llm |
 | Settings | Team mode: server URL, share toggle, Connect with SSO | `PATCH /v1/settings` (team.*), device flow against the team server | settings, identity |
 | (team) | Shipper intake | `POST /v1/sessions` (idempotent upsert) | ingest |

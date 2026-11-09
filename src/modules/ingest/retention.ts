@@ -42,3 +42,17 @@ export async function pinSession(db: Db, workspaceId: string, sessionId: string)
     .executeTakeFirst();
   return result.numUpdatedRows > 0n;
 }
+
+const FINISHED_JOB_DAYS = 7;
+
+/** Finished jobs (succeeded or dead) are only history; a week is enough to see what happened and to retry. */
+export async function purgeFinishedJobs(db: Db, workspaceId: string, now: Date): Promise<number> {
+  const cutoff = new Date(now.getTime() - FINISHED_JOB_DAYS * DAY_MS).toISOString();
+  const result = await db
+    .deleteFrom('job')
+    .where('workspace_id', '=', workspaceId)
+    .where('status', 'in', ['succeeded', 'dead'])
+    .where('finished_at', '<', cutoff)
+    .executeTakeFirst();
+  return Number(result.numDeletedRows);
+}

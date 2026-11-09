@@ -158,6 +158,18 @@
           "toolErrors": {
             "type": "integer"
           },
+          "tokensIn": {
+            "type": "integer"
+          },
+          "tokensOut": {
+            "type": "integer"
+          },
+          "tokensCacheRead": {
+            "type": "integer"
+          },
+          "tokensCacheWrite": {
+            "type": "integer"
+          },
           "grades": {
             "type": "array",
             "items": {
@@ -200,6 +212,10 @@
           "repo",
           "startedAt",
           "toolErrors",
+          "tokensIn",
+          "tokensOut",
+          "tokensCacheRead",
+          "tokensCacheWrite",
           "grades",
           "notGradedReason"
         ]
@@ -247,6 +263,12 @@
             "type": "integer"
           },
           "tokensOut": {
+            "type": "integer"
+          },
+          "tokensCacheRead": {
+            "type": "integer"
+          },
+          "tokensCacheWrite": {
             "type": "integer"
           },
           "model": {
@@ -303,6 +325,8 @@
           "durationS",
           "tokensIn",
           "tokensOut",
+          "tokensCacheRead",
+          "tokensCacheWrite",
           "model",
           "outcome",
           "eventCount",
@@ -539,12 +563,16 @@
           },
           "hasRubrics": {
             "type": "boolean"
+          },
+          "isEmpty": {
+            "type": "boolean"
           }
         },
         "required": [
           "path",
           "isGitRepo",
-          "hasRubrics"
+          "hasRubrics",
+          "isEmpty"
         ]
       },
       "SkillRepo": {
@@ -2679,6 +2707,97 @@
         "responses": {
           "200": {
             "description": "The repository",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillRepo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Well-formed but cannot be applied",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/skill-repos/global/init": {
+      "post": {
+        "summary": "Create the global skills repository in an empty folder below a mounted root: git init (main), starter rubrics, one commit",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "path"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The new repository",
             "content": {
               "application/json": {
                 "schema": {

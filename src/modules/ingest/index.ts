@@ -1,4 +1,5 @@
-import { stat } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
+import { sep } from 'node:path';
 import type { Db } from '../../platform/db/schema.js';
 import type { JobHandler } from '../../platform/jobs/worker.js';
 import type { Schedule } from '../../platform/jobs/scheduler.js';
@@ -7,7 +8,7 @@ import type { SettingsService } from '../settings/index.js';
 import { finalizeSession } from './finalize.js';
 import { ingestFile, SESSION_IDLE_MS, type PipelineDeps } from './pipeline.js';
 import { loadOrCreateRedactionKey } from './redaction.js';
-import { purgePayloads, pinSession } from './retention.js';
+import { purgeFinishedJobs, purgePayloads, pinSession } from './retention.js';
 import { createSessionQueries } from './sessions.js';
 import { createSources, detectSources, listSessionFiles, type SourceDto } from './sources.js';
 import { createWatcher, type SourceWatcher } from './watcher.js';
@@ -31,6 +32,8 @@ export const INGEST_FILE_JOB = 'ingest_file';
 const RECONCILE_JOB = 'reconcile_sources';
 const PURGE_JOB = 'purge_payloads';
 const WATCH_DEBOUNCE_MS = 2000;
+/** A dead ingest job blocks its key (same size and mtime); after this long reconcile may try the file again. */
+const DEAD_INGEST_RETRY_MS = 3600_000;
 const PROGRESS_INTERVAL_MS = 1000;
 
 export interface IngestDeps {
@@ -92,12 +95,20 @@ export function createIngest(deps: IngestDeps) {
     path: string,
     st: { size: number; mtimeMs: number },
   ): Promise<void> {
+    // State lives in the key: the same size and mtime means the same work.
+    const idempotencyKey = `${INGEST_FILE_JOB}:${source.id}:${path}:${String(st.size)}:${String(Math.floor(st.mtimeMs))}`;
+    // The key would also keep a dead job's work from ever being retried; clear it once it is old enough.
+    await db
+      .deleteFrom('job')
+      .where('idempotency_key', '=', idempotencyKey)
+      .where('status', '=', 'dead')
+      .where('finished_at', '<', new Date(now().getTime() - DEAD_INGEST_RETRY_MS).toISOString())
+      .execute();
     await deps.queue.enqueue({
       workspaceId,
       kind: INGEST_FILE_JOB,
       payload: { sourceId: source.id, path },
-      // State lives in the key: the same size and mtime means the same work.
-      idempotencyKey: `${INGEST_FILE_JOB}:${source.id}:${path}:${String(st.size)}:${String(Math.floor(st.mtimeMs))}`,
+      idempotencyKey,
     });
   }
 
@@ -186,6 +197,7 @@ export function createIngest(deps: IngestDeps) {
       concurrency: 1,
       run: async () => {
         await purgePayloads(db, workspaceId, (await deps.settings.get())['retention.days'], now());
+        await purgeFinishedJobs(db, workspaceId, now());
       },
     },
   };
@@ -198,11 +210,26 @@ export function createIngest(deps: IngestDeps) {
   let watcher: SourceWatcher | undefined;
   const timers = new Map<string, NodeJS.Timeout>();
 
-  async function onFileEvent(path: string): Promise<void> {
+  /** True when the file lies in an enabled source and exists; the ingest job is queued (once per size and mtime). */
+  async function onFileEvent(path: string): Promise<boolean> {
     const source = (await sources.enabledRows()).find((s) => path.startsWith(`${s.path}/`));
-    if (!source) return;
+    if (!source) return false;
     const st = await stat(path).catch(() => null);
-    if (st) await enqueueIngest(source, path, st);
+    if (!st) return false;
+    await enqueueIngest(source, path, st);
+    return true;
+  }
+
+  /** The source file of a session, only while it still lies inside a registered source (the DB row alone is not trusted). */
+  async function rawFile(sessionId: string): Promise<string | null> {
+    const path = await sessions.rawPath(sessionId);
+    const real = path ? await realpath(path).catch(() => null) : null;
+    if (!real) return null;
+    for (const source of await sources.list()) {
+      const root = await realpath(source.path).catch(() => null);
+      if (root && real.startsWith(root + sep)) return real;
+    }
+    return null;
   }
 
   return {
@@ -216,6 +243,8 @@ export function createIngest(deps: IngestDeps) {
       detect: detectSources,
     },
     sessions,
+    rawFile,
+    handleFileEvent: onFileEvent,
     handlers,
     schedules,
     pinSession: (id: string) => pinSession(db, workspaceId, id),

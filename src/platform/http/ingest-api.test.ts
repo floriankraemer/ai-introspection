@@ -1,6 +1,15 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment -- vitest asymmetric matchers are typed any */
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { OpenAPIHono } from '@hono/zod-openapi';
@@ -70,7 +79,10 @@ beforeAll(async () => {
     settings,
     ingest,
     trends: createTrends(ingest),
-    skillRepos: createSkillRepos(t.handle.db, LOCAL_WORKSPACE_ID),
+    skillRepos: createSkillRepos(t.handle.db, LOCAL_WORKSPACE_ID, {
+      mountRoots: [join(dir, 'repos')],
+      candidates: [join(dir, 'repos', 'skills')],
+    }),
     doctor: () => Promise.resolve({ checks: [] }),
   });
 });
@@ -142,6 +154,10 @@ describe('sessions', () => {
       repo: expect.any(String),
       startedAt: expect.any(String),
       toolErrors: expect.any(Number),
+      tokensIn: expect.any(Number),
+      tokensOut: expect.any(Number),
+      tokensCacheRead: expect.any(Number),
+      tokensCacheWrite: expect.any(Number),
       grades: [],
       notGradedReason: expect.any(String),
     });
@@ -175,10 +191,31 @@ describe('sessions', () => {
     const raw = await call('GET', `/v1/sessions/${id}/raw`);
     expect(raw.status).toBe(200);
     expect(await raw.text()).toBe(readFileSync(sources.claudeFile, 'utf8'));
+    expect(raw.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(raw.headers.get('content-disposition')).toBe('inline');
+    expect(raw.headers.get('content-type')).toContain('text/plain');
     const events = JSON.stringify(
       await json(await call('GET', `/v1/sessions/${id}/events?limit=500`)),
     );
     for (const secret of PLANTED) expect(events).not.toContain(secret);
+  });
+
+  it('refuses a raw file that is no longer inside a registered source', async () => {
+    const id = (await firstSession())?.id ?? '';
+    const outside = join(dir, 'outside.jsonl');
+    writeFileSync(outside, 'private');
+    await t.handle.db
+      .updateTable('ingest_cursor')
+      .set({ file_path: outside })
+      .where('session_id', '=', id)
+      .execute();
+    expect((await call('GET', `/v1/sessions/${id}/raw`)).status).toBe(404);
+    await t.handle.db
+      .updateTable('ingest_cursor')
+      .set({ file_path: sources.claudeFile })
+      .where('session_id', '=', id)
+      .execute();
+    expect((await call('GET', `/v1/sessions/${id}/raw`)).status).toBe(200);
   });
 
   it('summarizes the trends header', async () => {
@@ -292,5 +329,56 @@ describe('skill repos', () => {
         })
       ).status,
     ).toBe(404);
+  });
+});
+
+describe('initialising the global skills repository', () => {
+  let root: string;
+  beforeAll(() => {
+    root = join(dir, 'repos');
+    mkdirSync(root);
+  });
+  const init = (path: string) => call('POST', '/v1/skill-repos/global/init', { path });
+
+  it('reports a missing or empty mount as empty, not as a repository', async () => {
+    expect(await json(await call('GET', '/v1/skill-repos/detected'))).toEqual([]);
+    mkdirSync(join(root, 'skills'));
+    expect(await json(await call('GET', '/v1/skill-repos/detected'))).toEqual([
+      { path: join(root, 'skills'), isGitRepo: false, hasRubrics: false, isEmpty: true },
+    ]);
+  });
+
+  it('refuses paths outside the mounted roots, relative paths and folders with content', async () => {
+    expect((await init(join(dir, 'elsewhere'))).status).toBe(422);
+    expect((await init(`${root}/../escape`)).status).toBe(422);
+    expect((await init('relative')).status).toBe(422);
+    symlinkSync(tmpdir(), join(root, 'link'));
+    expect((await init(join(root, 'link', 'x'))).status).toBe(422);
+    const busy = join(root, 'busy');
+    mkdirSync(busy);
+    writeFileSync(join(busy, '.hidden'), 'mine');
+    expect((await init(busy)).status).toBe(409);
+    expect(readdirSync(busy)).toEqual(['.hidden']);
+  });
+
+  it('creates a git repository on main with the starter rubrics in one commit, and registers it', async () => {
+    const target = join(root, 'skills');
+    const res = await init(target);
+    expect(res.status).toBe(200);
+    expect(await json(res)).toMatchObject({ kind: 'global', path: target, hasRubrics: true });
+    expect(git(target, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('main');
+    expect(git(target, 'rev-list', '--count', 'HEAD')).toBe('1');
+    expect(git(target, 'status', '--porcelain')).toBe('');
+    expect(existsSync(join(target, 'rubrics', 'efficiency.md'))).toBe(true);
+    expect((await init(target)).status).toBe(409);
+    expect(await json(await call('GET', '/v1/skill-repos/detected'))).toEqual([
+      { path: target, isGitRepo: true, hasRubrics: true, isEmpty: false },
+    ]);
+  });
+
+  it('creates a missing folder under the root', async () => {
+    const target = join(root, 'new', 'deep');
+    expect((await init(target)).status).toBe(200);
+    expect(existsSync(join(target, '.git'))).toBe(true);
   });
 });

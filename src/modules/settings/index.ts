@@ -1,17 +1,15 @@
 import { z } from 'zod';
 import { fromJson, toJson } from '../../platform/db/json.js';
+import { unsafePatternReason } from '../../platform/regex/index.js';
 import type { Db } from '../../platform/db/schema.js';
 import type { SecretStore } from './secrets.js';
 
 export { createSecretStore, type SecretStore } from './secrets.js';
 
-const isRegex = (p: string): boolean => {
-  try {
-    new RegExp(p);
-    return true;
-  } catch {
-    return false;
-  }
+/** Rejects invalid patterns and those that can backtrack catastrophically; the message tells the user why. */
+const checkPattern = (p: string, ctx: z.RefinementCtx): void => {
+  const reason = unsafePatternReason(p);
+  if (reason) ctx.addIssue({ code: 'custom', message: reason });
 };
 
 // Runtime settings edited in the UI: flat dotted keys, one row per key in `setting` (overview section 7).
@@ -20,7 +18,7 @@ const keys = {
   'setup.completed': z.boolean(),
   'redaction.enabled': z.boolean(),
   'redaction.custom_patterns': z
-    .array(z.string().min(1).max(500).refine(isRegex, 'Not a valid regular expression'))
+    .array(z.string().min(1).max(500).superRefine(checkPattern))
     .max(50),
   'retention.days': z.number().int().min(7),
   'judge.transport': z.enum(['api', 'cli']),

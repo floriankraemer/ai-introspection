@@ -1,11 +1,11 @@
 import { existsSync } from 'node:fs';
 import { readdir, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { newId } from '../../platform/db/ids.js';
 import { asBool } from '../../platform/db/json.js';
 import type { Db } from '../../platform/db/schema.js';
-import { InvalidInputError } from '../../platform/errors.js';
+import { ConflictError, InvalidInputError } from '../../platform/errors.js';
 import { adapterFor } from './adapters/index.js';
 import { AGENTS, type Agent } from './types.js';
 
@@ -75,6 +75,12 @@ export async function detectSources(): Promise<DetectedSource[]> {
   return found;
 }
 
+/** Rows from before paths were normalised may end in a slash; the watcher compares with `${path}/`. */
+const trimSlash = (path: string): string => (path.length > 1 ? path.replace(/\/+$/, '') : path);
+
+const overlaps = (a: string, b: string): boolean =>
+  a === b || a.startsWith(`${b}${sep}`) || b.startsWith(`${a}${sep}`);
+
 export function createSources(db: Db, workspaceId: string, userId: string, pollMode: boolean) {
   const toDto = (row: {
     id: string;
@@ -105,17 +111,29 @@ export function createSources(db: Db, workspaceId: string, userId: string, pollM
       return rows.map(toDto);
     },
 
-    /** Idempotent per (agent, path). */
-    async add(agent: Agent, path: string): Promise<SourceDto> {
+    /**
+     * Idempotent per (agent, real path): trailing slashes and symlinks name the same folder.
+     * A folder inside or around another source of the same agent would ingest its files twice.
+     */
+    async add(agent: Agent, given: string): Promise<SourceDto> {
       if (!AGENTS.includes(agent)) throw new InvalidInputError(`Unknown agent "${agent}"`);
-      if (!path.startsWith('/')) throw new InvalidInputError('The path must be absolute');
-      if (
-        !(await stat(path).then(
-          (s) => s.isDirectory(),
-          () => false,
-        ))
-      ) {
-        throw new InvalidInputError(`"${path}" is not a folder this server can read`);
+      if (!given.startsWith('/')) throw new InvalidInputError('The path must be absolute');
+      const path = await realpath(given).catch(() => null);
+      if (!path || !(await stat(path)).isDirectory()) {
+        throw new InvalidInputError(`"${given}" is not a folder this server can read`);
+      }
+      for (const other of await db
+        .selectFrom('source')
+        .select('path')
+        .where('workspace_id', '=', workspaceId)
+        .where('agent', '=', agent)
+        .execute()) {
+        const real = (await realpath(other.path).catch(() => null)) ?? trimSlash(other.path);
+        if (real !== path && overlaps(real, path)) {
+          throw new ConflictError(
+            `"${path}" overlaps the registered source "${other.path}"; its session files would be imported twice`,
+          );
+        }
       }
       await db
         .insertInto('source')
@@ -134,7 +152,7 @@ export function createSources(db: Db, workspaceId: string, userId: string, pollM
         .select(['id', 'agent', 'path', 'enabled'])
         .where('workspace_id', '=', workspaceId)
         .where('agent', '=', agent)
-        .where('path', '=', path)
+        .where('path', 'in', [path, `${path}/`])
         .executeTakeFirstOrThrow();
       return toDto(row);
     },
@@ -149,7 +167,7 @@ export function createSources(db: Db, workspaceId: string, userId: string, pollM
       return rows.map((r) => ({
         id: r.id,
         agent: r.agent as Agent,
-        path: r.path,
+        path: trimSlash(r.path),
         createdAt: r.created_at,
       }));
     },

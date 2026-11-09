@@ -50,10 +50,10 @@ export function jobsSuite(name: string, make: TestDbFactory): void {
     });
 
     it('never hands the same job to two claimers racing on separate connections', async () => {
-      const other = createJobQueue(t.open());
-      const total = 24;
+      const others = [createJobQueue(t.open()), createJobQueue(t.open()), createJobQueue(t.open())];
+      const total = 40;
       for (let i = 0; i < total; i++) await enqueue();
-      const claimers = [queue, other, queue, other];
+      const claimers = [queue, ...others, queue, ...others, queue];
       const claimed = (
         await Promise.all(
           claimers.map(async (q, i) => {
@@ -68,6 +68,10 @@ export function jobsSuite(name: string, make: TestDbFactory): void {
       ).flat();
       expect(claimed).toHaveLength(total);
       expect(new Set(claimed).size).toBe(total);
+      // A claim that also updated a second row would leave a running job nobody holds.
+      const all = await queue.list({ limit: 100 });
+      expect(all.filter((j) => j.status === 'running')).toHaveLength(total);
+      expect(all.every((j) => j.attempts === 1)).toBe(true);
     });
 
     it('returns a job with an expired lease to the queue and runs it again', async () => {

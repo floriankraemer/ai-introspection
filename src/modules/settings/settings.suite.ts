@@ -44,6 +44,13 @@ export function settingsSuite(name: string, make: TestDbFactory): void {
       expect((await settings.get())['retention.days']).toBe(90);
     });
 
+    it('rejects custom redaction patterns that can backtrack catastrophically', async () => {
+      await expect(settings.update({ 'redaction.custom_patterns': ['(a+)+$'] })).rejects.toThrow();
+      await expect(settings.update({ 'redaction.custom_patterns': ['('] })).rejects.toThrow();
+      await settings.update({ 'redaction.custom_patterns': ['ACME-\\d{6}'] });
+      expect((await settings.get())['redaction.custom_patterns']).toEqual(['ACME-\\d{6}']);
+    });
+
     it('keeps the judge key write-only, in a 0600 file', async () => {
       settings.setJudgeKey('sk-ant-test-key-that-must-not-leak');
       const s = await settings.get();

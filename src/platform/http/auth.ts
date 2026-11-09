@@ -1,6 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
-import { mkdirSync } from 'node:fs';
+import { chmodSync, linkSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getCookie, setCookie } from 'hono/cookie';
 import type { MiddlewareHandler } from 'hono';
@@ -10,25 +9,42 @@ const TOKEN_FILE = 'token';
 export const TOKEN_COOKIE = 'introspect_token';
 const TOKEN_HEX_LENGTH = 64; // 256 bits
 
-/** Reads `<dataDir>/token`, creating it (mode 0600) on first start. */
+const READ_ATTEMPTS = 20;
+const READ_PAUSE_MS = 25;
+const pause = (ms: number): void => {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+};
+
+/**
+ * Reads `<dataDir>/token`, creating it (mode 0600) on first start. The token is written to a private
+ * temp file and hard-linked into place: the link fails if the file exists and never shows a partial
+ * token, so concurrent first starts all end up with the winner's complete token.
+ */
 export function loadOrCreateToken(dataDir: string): string {
   const path = join(dataDir, TOKEN_FILE);
   mkdirSync(dataDir, { recursive: true });
+  const temp = `${path}.${String(process.pid)}.${randomBytes(4).toString('hex')}.tmp`;
   try {
-    // 'wx' makes concurrent first starts agree: the loser reads the winner's file.
-    writeFileSync(path, randomBytes(TOKEN_HEX_LENGTH / 2).toString('hex'), {
+    writeFileSync(temp, randomBytes(TOKEN_HEX_LENGTH / 2).toString('hex'), {
       flag: 'wx',
       mode: 0o600,
     });
+    linkSync(temp, path);
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+  } finally {
+    rmSync(temp, { force: true });
   }
   chmodSync(path, 0o600);
-  const token = readFileSync(path, 'utf8').trim();
-  if (token.length < TOKEN_HEX_LENGTH) {
-    throw new Error(`${path} does not hold a valid token; delete it to generate a new one`);
+  // A file left half-written by an older version may be completed by its writer any moment.
+  for (let attempt = 1; ; attempt += 1) {
+    const token = readFileSync(path, 'utf8').trim();
+    if (token.length >= TOKEN_HEX_LENGTH) return token;
+    if (attempt === READ_ATTEMPTS) {
+      throw new Error(`${path} does not hold a valid token; delete it to generate a new one`);
+    }
+    pause(READ_PAUSE_MS);
   }
-  return token;
 }
 
 function digest(value: string): Buffer {

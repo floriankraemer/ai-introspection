@@ -16,6 +16,14 @@ export interface RawEvent {
   isError?: boolean | undefined;
 }
 
+/** `tokensIn` is fresh input only; cache reads and writes are counted apart. */
+export interface TokenCounts {
+  tokensIn: number;
+  tokensOut: number;
+  tokensCacheRead: number;
+  tokensCacheWrite: number;
+}
+
 export type ParsedItem =
   | {
       type: 'meta';
@@ -25,9 +33,9 @@ export type ParsedItem =
       ts?: string | undefined;
       title?: string | undefined;
       /** Per-message usage; the pipeline keeps the latest value per message id, so repeated lines count once. */
-      usage?: { messageId: string; tokensIn: number; tokensOut: number } | undefined;
+      usage?: ({ messageId: string } & TokenCounts) | undefined;
       /** Running totals reported by the agent itself. */
-      totalTokens?: { tokensIn: number; tokensOut: number } | undefined;
+      totalTokens?: TokenCounts | undefined;
       outcome?: { kind: 'pr_open'; ref: string } | undefined;
     }
   | { type: 'event'; event: RawEvent }

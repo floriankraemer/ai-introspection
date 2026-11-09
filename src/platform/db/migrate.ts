@@ -3,6 +3,7 @@ import { sql } from 'kysely';
 import type { DbHandle } from './connection.js';
 import * as initial from './migrations/0001_initial.js';
 import * as ingest from './migrations/0002_ingest.js';
+import * as tokenSplit from './migrations/0003_token_split.js';
 
 /** Migrations are bundled (not read from a folder) so tsx, tsc output and tests all find them. */
 export async function migrateToLatest({ db, dialect }: DbHandle): Promise<void> {
@@ -16,6 +17,7 @@ export async function migrateToLatest({ db, dialect }: DbHandle): Promise<void> 
   const migrations: Record<string, Migration> = {
     '0001_initial': { up: (k) => initial.up(k, dialect) },
     '0002_ingest': { up: (k) => ingest.up(k, dialect) },
+    '0003_token_split': { up: (k) => tokenSplit.up(k) },
   };
   const provider: MigrationProvider = { getMigrations: () => Promise.resolve(migrations) };
   const { error } = await new Migrator({

@@ -9,8 +9,14 @@ import type { SettingsService } from '../settings/index.js';
 import { adapterFor } from './adapters/index.js';
 import { finalizeSession } from './finalize.js';
 import { readLines } from './lines.js';
-import { createRedactor, isSensitivePath, REDACTION_VERSION, type Redactor } from './redaction.js';
-import type { Agent, ParsedItem, RawEvent } from './types.js';
+import {
+  createRedactor,
+  isSensitivePath,
+  readsSensitiveFile,
+  REDACTION_VERSION,
+  type Redactor,
+} from './redaction.js';
+import type { Agent, ParsedItem, RawEvent, TokenCounts } from './types.js';
 
 const BATCH_LINES = 1000;
 const BATCH_CHARS = 4 * 1024 * 1024;
@@ -25,6 +31,38 @@ const FINGERPRINT_BYTES = 1024;
 /** No new bytes for this long: the session has ended (ADR-0005). */
 export const SESSION_IDLE_MS = 10 * 60_000;
 const FILE_READ_TOOLS = new Set(['read', 'view']);
+const FILE_WRITE_TOOLS = new Set(['write', 'edit', 'multiedit', 'notebookedit', 'apply_patch']);
+const SHELL_TOOLS = new Set(['bash', 'shell']);
+/** Input fields of a write tool that carry file contents. */
+const CONTENT_FIELDS = ['content', 'new_string', 'old_string', 'new_source', 'edits', 'patch'];
+
+const NO_TOKENS: TokenCounts = {
+  tokensIn: 0,
+  tokensOut: 0,
+  tokensCacheRead: 0,
+  tokensCacheWrite: 0,
+};
+const tokenCountsOf = (t: TokenCounts): TokenCounts => ({
+  tokensIn: t.tokensIn,
+  tokensOut: t.tokensOut,
+  tokensCacheRead: t.tokensCacheRead,
+  tokensCacheWrite: t.tokensCacheWrite,
+});
+const plusTokens = (a: TokenCounts, b: TokenCounts, sign = 1): TokenCounts => ({
+  tokensIn: a.tokensIn + sign * b.tokensIn,
+  tokensOut: a.tokensOut + sign * b.tokensOut,
+  tokensCacheRead: a.tokensCacheRead + sign * b.tokensCacheRead,
+  tokensCacheWrite: a.tokensCacheWrite + sign * b.tokensCacheWrite,
+});
+/** Counted usage of the last Claude message, kept so a message whose lines straddle two runs counts once. */
+function parseUsageTail(stored: string | null | undefined): ({ id: string } & TokenCounts) | null {
+  if (!stored) return null;
+  try {
+    return JSON.parse(stored) as { id: string } & TokenCounts;
+  } catch {
+    return null;
+  }
+}
 
 export interface PipelineDeps {
   db: Db;
@@ -100,14 +138,45 @@ function trimToBoundary(s: string): string {
   return cut > 0 ? s.slice(0, cut) : s;
 }
 
-function readsSensitiveFile(name: string | null, input: string | null): boolean {
-  if (!name || !FILE_READ_TOOLS.has(name) || !input) return false;
+function inputPaths(input: string): string[] {
   try {
-    const parsed = JSON.parse(input) as { file_path?: unknown; path?: unknown };
-    const path = parsed.file_path ?? parsed.path;
-    return typeof path === 'string' && isSensitivePath(path);
+    const parsed = JSON.parse(input) as {
+      file_path?: unknown;
+      path?: unknown;
+      notebook_path?: unknown;
+      files?: unknown;
+    };
+    const files: unknown[] = Array.isArray(parsed.files) ? (parsed.files as unknown[]) : [];
+    return [parsed.file_path, parsed.path, parsed.notebook_path, ...files].filter(
+      (p): p is string => typeof p === 'string',
+    );
   } catch {
-    return false;
+    return [];
+  }
+}
+
+/** Output of this call is redacted whole: a read of a credential file, or a shell command that cats one. */
+function resultIsSensitive(name: string | null, input: string | null): boolean {
+  if (!name || !input) return false;
+  if (FILE_READ_TOOLS.has(name)) return inputPaths(input).some(isSensitivePath);
+  return SHELL_TOOLS.has(name) && readsSensitiveFile(input);
+}
+
+/** Replaces the content fields of a write to a credential file; the path stays visible. */
+function redactWrite(
+  name: string | undefined,
+  input: string,
+  redactWhole: Redactor['redactWhole'],
+): string {
+  if (!name || !FILE_WRITE_TOOLS.has(name) || !inputPaths(input).some(isSensitivePath))
+    return input;
+  try {
+    const parsed = JSON.parse(input) as Record<string, unknown>;
+    for (const field of CONTENT_FIELDS)
+      if (field in parsed) parsed[field] = redactWhole(JSON.stringify(parsed[field]));
+    return JSON.stringify(parsed);
+  } catch {
+    return redactWhole(input);
   }
 }
 
@@ -136,7 +205,9 @@ export async function ingestFile(
   source: { id: string; agent: Agent },
   path: string,
 ): Promise<IngestFileResult> {
-  return withLock(`${source.id}:${path}`, () => run(deps, source, path));
+  // One run per session, not per file: two sources holding the same session must not interleave.
+  const sid = deriveSessionId(source.agent, adapterFor(source.agent).nativeIdFromPath(path));
+  return withLock(sid, () => run(deps, source, path));
 }
 
 async function run(
@@ -150,6 +221,25 @@ async function run(
   if (!st?.isFile()) return { status: 'missing', events: 0, reset: false };
 
   const adapter = adapterFor(source.agent);
+  const nativeId = adapter.nativeIdFromPath(path);
+  const sid = deriveSessionId(source.agent, nativeId);
+  // The same session can reach us through two sources (a copy, a second mount). The first one
+  // to ingest it owns it; a second would append every event again.
+  const owner = await db
+    .selectFrom('ingest_cursor')
+    .innerJoin('source', 'source.id', 'ingest_cursor.source_id')
+    .select('ingest_cursor.file_path')
+    .where('ingest_cursor.workspace_id', '=', workspaceId)
+    .where('ingest_cursor.session_id', '=', sid)
+    .where('source.enabled', '=', true)
+    .where((eb) =>
+      eb.or([
+        eb('ingest_cursor.source_id', '!=', source.id),
+        eb('ingest_cursor.file_path', '!=', path),
+      ]),
+    )
+    .executeTakeFirst();
+  if (owner) return { status: 'unchanged', sessionId: sid, events: 0, reset: false };
   const cursor = await db
     .selectFrom('ingest_cursor')
     .selectAll()
@@ -169,8 +259,6 @@ async function run(
       start = 0;
     }
   }
-  const nativeId = adapter.nativeIdFromPath(path);
-  const sid = deriveSessionId(source.agent, nativeId);
   const fp = await currentFingerprint(path, st.size);
 
   if (!reset && cursor && st.size === start) {
@@ -230,15 +318,22 @@ async function run(
     model: existing?.model ?? null,
     startedAt: existing?.started_at ?? null,
     endedAt: existing?.ended_at ?? null,
-    tokensIn: existing?.tokens_in ?? 0,
-    tokensOut: existing?.tokens_out ?? 0,
+    tokens: {
+      tokensIn: existing?.tokens_in ?? 0,
+      tokensOut: existing?.tokens_out ?? 0,
+      tokensCacheRead: existing?.tokens_cache_read ?? 0,
+      tokensCacheWrite: existing?.tokens_cache_write ?? 0,
+    },
     outcomeKind: existing?.outcome_kind ?? ('none' as const),
     outcomeRef: existing?.outcome_ref ?? null,
     touched: existing !== undefined,
   };
-  let usageDelta = { tokensIn: 0, tokensOut: 0 };
-  let absoluteTokens: { tokensIn: number; tokensOut: number } | undefined;
-  const usageByMessage = new Map<string, { tokensIn: number; tokensOut: number }>();
+  let usageDelta = NO_TOKENS;
+  let absoluteTokens: TokenCounts | undefined;
+  const usageByMessage = new Map<string, TokenCounts>();
+  const tail = parseUsageTail(existing?.usage_tail);
+  if (tail) usageByMessage.set(tail.id, tokenCountsOf(tail));
+  let lastUsageId = tail?.id ?? null;
 
   let batch: EventRow[] = [];
   const batchCalls = new Map<string, EventRow>();
@@ -267,6 +362,15 @@ async function run(
     return { value, truncated };
   };
 
+  /** Metadata that can carry a secret (paths, branch names, names) goes through the same rules as text. */
+  const plain = (text: string | null | undefined): string | null => {
+    if (text === null || text === undefined) return null;
+    if (!redactionOn) return text;
+    const r = redactor.redact(text);
+    if (r.failed) warnings.redaction_failed += 1;
+    return r.text;
+  };
+
   const track = (ts: string | undefined): void => {
     if (!ts) return;
     if (s.startedAt === null || ts < s.startedAt) s.startedAt = ts;
@@ -274,7 +378,11 @@ async function run(
   };
 
   const addEvent = (e: RawEvent): void => {
-    const input = field(e.input);
+    const input = field(
+      redactionOn && e.input
+        ? redactWrite(e.name, e.input, (t) => redactor.redactWhole(t))
+        : e.input,
+    );
     const output = field(e.output);
     const row: EventRow = {
       id: newId(),
@@ -283,7 +391,7 @@ async function run(
       seq: nextSeq++,
       ts: e.ts ?? null,
       kind: e.kind,
-      name: e.name ?? null,
+      name: plain(e.name),
       input: input.value,
       output: output.value,
       is_error: e.isError ?? false,
@@ -308,7 +416,7 @@ async function run(
     input: string | null,
     text: string,
   ): { value: string | null; truncated: boolean } =>
-    readsSensitiveFile(name, input) && redactionOn
+    resultIsSensitive(name, input) && redactionOn
       ? { value: redactor.redactWhole(text), truncated: false }
       : field(text);
 
@@ -331,12 +439,11 @@ async function run(
           s.outcomeRef = item.outcome.ref;
         }
         if (item.usage) {
-          const prev = usageByMessage.get(item.usage.messageId) ?? { tokensIn: 0, tokensOut: 0 };
-          usageDelta = {
-            tokensIn: usageDelta.tokensIn + item.usage.tokensIn - prev.tokensIn,
-            tokensOut: usageDelta.tokensOut + item.usage.tokensOut - prev.tokensOut,
-          };
-          usageByMessage.set(item.usage.messageId, item.usage);
+          const counted = usageByMessage.get(item.usage.messageId) ?? NO_TOKENS;
+          const latest = tokenCountsOf(item.usage);
+          usageDelta = plusTokens(usageDelta, plusTokens(latest, counted, -1));
+          usageByMessage.set(item.usage.messageId, latest);
+          lastUsageId = item.usage.messageId;
         }
         if (item.totalTokens) absoluteTokens = item.totalTokens;
         break;
@@ -374,14 +481,11 @@ async function run(
     batchCalls.clear();
     batchChars = 0;
     batchLines = 0;
-    if (absoluteTokens) {
-      s.tokensIn = absoluteTokens.tokensIn;
-      s.tokensOut = absoluteTokens.tokensOut;
-    } else {
-      s.tokensIn += usageDelta.tokensIn;
-      s.tokensOut += usageDelta.tokensOut;
-    }
-    usageDelta = { tokensIn: 0, tokensOut: 0 };
+    s.tokens = absoluteTokens ?? plusTokens(s.tokens, usageDelta);
+    usageDelta = NO_TOKENS;
+    const lastUsage = lastUsageId ? usageByMessage.get(lastUsageId) : undefined;
+    const usageTail =
+      lastUsageId && lastUsage ? JSON.stringify({ id: lastUsageId, ...lastUsage }) : null;
     const title = s.title ?? s.fallbackTitle;
     const repoRoot = s.touched ? await findRepoRoot(s.cwd ?? undefined) : null;
     const startedAt = s.startedAt ?? new Date(st.mtimeMs).toISOString();
@@ -389,21 +493,24 @@ async function run(
       if (s.touched) {
         const values = {
           title: title ? titleOf(title) : null,
-          repo: s.cwd ? basename(repoRoot ?? s.cwd) : null,
-          repo_root: repoRoot,
-          branch: s.branch,
-          cwd: s.cwd,
+          repo: s.cwd ? plain(basename(repoRoot ?? s.cwd)) : null,
+          repo_root: plain(repoRoot),
+          branch: plain(s.branch),
+          cwd: plain(s.cwd),
           started_at: startedAt,
           ended_at: s.endedAt,
           duration_s: s.endedAt
             ? Math.max(0, Math.round((Date.parse(s.endedAt) - Date.parse(startedAt)) / 1000))
             : null,
-          tokens_in: s.tokensIn,
-          tokens_out: s.tokensOut,
+          tokens_in: s.tokens.tokensIn,
+          tokens_out: s.tokens.tokensOut,
+          tokens_cache_read: s.tokens.tokensCacheRead,
+          tokens_cache_write: s.tokens.tokensCacheWrite,
+          usage_tail: usageTail,
           model: s.model,
           status: 'active',
           outcome_kind: s.outcomeKind,
-          outcome_ref: s.outcomeRef,
+          outcome_ref: plain(s.outcomeRef),
           adapter_version: adapter.version,
           redaction_version: redactionOn ? REDACTION_VERSION : 'off',
           ingest_warnings: Object.values(warnings).some((n) => n > 0) ? toJson(warnings) : null,

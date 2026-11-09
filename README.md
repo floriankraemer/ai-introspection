@@ -10,7 +10,10 @@ make up      # builds and starts Introspect; creates the mounted folders as your
 make open    # prints the sign-in link; open it in your browser
 ```
 
-Optional: `cp .env.example .env` first to set your git identity (`GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`), the skills repository (`INTROSPECT_SKILLS_REPO`, default `~/.claude`, mounted at `/repos/skills`) and the folder with your project repositories (`INTROSPECT_PROJECTS_DIR`, mounted at `/repos/projects`).
+Optional: `cp .env.example .env` first to set your git identity (`GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`), the skills repository (`INTROSPECT_SKILLS_REPO`, mounted read-write at `/repos/skills`) and the folder with your project repositories (`INTROSPECT_PROJECTS_DIR`, mounted at `/repos/projects`).
+Skills repository: point `INTROSPECT_SKILLS_REPO` at your existing skills repository, or leave it unset.
+The default `~/.introspect/skills` starts empty, and step 3 of the setup wizard can create a git repository there with the starter rubrics.
+Never point it at `~/.claude`: that folder holds your Claude credentials and transcripts, and the mount is read-write.
 If something does not work, `make doctor` checks the setup and prints one fix per problem (see ADR-0011).
 
 ## Development

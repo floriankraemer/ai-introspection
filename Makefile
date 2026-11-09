@@ -11,7 +11,7 @@ RUN := $(COMPOSE) run --rm --build dev
 # Host folders mounted into the user stack. Same defaults as compose.yaml; the shell environment
 # wins over .env, as it does for Compose.
 env_file_value = $(shell sed -n 's/^$(1)=//p' .env 2>/dev/null | tail -n 1)
-SKILLS_REPO := $(or $(INTROSPECT_SKILLS_REPO),$(call env_file_value,INTROSPECT_SKILLS_REPO),$(HOME)/.claude)
+SKILLS_REPO := $(or $(INTROSPECT_SKILLS_REPO),$(call env_file_value,INTROSPECT_SKILLS_REPO),$(HOME)/.introspect/skills)
 PROJECTS_DIR := $(or $(INTROSPECT_PROJECTS_DIR),$(call env_file_value,INTROSPECT_PROJECTS_DIR),$(HOME)/.introspect/projects)
 
 # Docker would create these bind-mount points as root if they were missing.

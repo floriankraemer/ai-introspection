@@ -1,5 +1,5 @@
 import { createRoute, z, type OpenAPIHono } from '@hono/zod-openapi';
-import { detectSkillRepos, type SkillRepos } from '../../modules/improvement/index.js';
+import { type SkillRepos } from '../../modules/improvement/index.js';
 import { copyStarterRubrics } from '../../modules/rubrics/index.js';
 import type { SettingsService } from '../../modules/settings/index.js';
 import { ConflictError } from '../errors.js';
@@ -53,7 +53,12 @@ const getDoctor = createRoute({
 });
 
 const detectedRepoSchema = z
-  .object({ path: z.string(), isGitRepo: z.boolean(), hasRubrics: z.boolean() })
+  .object({
+    path: z.string(),
+    isGitRepo: z.boolean(),
+    hasRubrics: z.boolean(),
+    isEmpty: z.boolean(),
+  })
   .openapi('DetectedSkillRepo');
 
 const detectSkillRepoRoute = createRoute({
@@ -126,6 +131,21 @@ const putGlobal = createRoute({
   responses: { 200: json(skillRepoSchema, 'The repository'), ...problemResponses },
 });
 
+const initGlobal = createRoute({
+  method: 'post',
+  path: '/v1/skill-repos/global/init',
+  summary:
+    'Create the global skills repository in an empty folder below a mounted root: git init (main), starter rubrics, one commit',
+  security,
+  request: {
+    body: {
+      content: { 'application/json': { schema: z.object({ path: z.string().min(1) }) } },
+      required: true,
+    },
+  },
+  responses: { 200: json(skillRepoSchema, 'The new repository'), ...problemResponses },
+});
+
 const starterRubrics = createRoute({
   method: 'post',
   path: '/v1/skill-repos/global/starter-rubrics',
@@ -168,10 +188,13 @@ export function registerSetupRoutes(
   );
 
   app.openapi(getDoctor, async (c) => c.json(await doctor(), 200));
-  app.openapi(detectSkillRepoRoute, async (c) => c.json(await detectSkillRepos(), 200));
+  app.openapi(detectSkillRepoRoute, async (c) => c.json(await skillRepos.detect(), 200));
   app.openapi(listSkillRepos, async (c) => c.json(await skillRepos.list(), 200));
   app.openapi(putGlobal, async (c) =>
     c.json(await skillRepos.putGlobal(c.req.valid('json').path), 200),
+  );
+  app.openapi(initGlobal, async (c) =>
+    c.json(await skillRepos.initGlobal(c.req.valid('json').path), 200),
   );
   app.openapi(starterRubrics, async (c) => {
     const repo = await skillRepos.getGlobal();

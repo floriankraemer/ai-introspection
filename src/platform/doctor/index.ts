@@ -137,7 +137,7 @@ export async function checkSkillsRepo({ repos }: DoctorInput): Promise<DoctorChe
       'skills-repo',
       label,
       'Not set',
-      'Finish step 3 of the setup wizard, or set INTROSPECT_SKILLS_REPO in .env (mounted at /repos/skills).',
+      'Finish step 3 of the setup wizard (it can create a repository in the empty default folder), or set INTROSPECT_SKILLS_REPO in .env to your skills repository (mounted at /repos/skills).',
     );
   }
   if (!can(repo.path, constants.R_OK)) {

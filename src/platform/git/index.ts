@@ -23,6 +23,11 @@ export async function git(cwd: string, args: readonly string[]): Promise<string>
   }
 }
 
+/** Creates a repository with `main` as its first branch, whatever the user's `init.defaultBranch` says. */
+export async function initRepo(path: string): Promise<void> {
+  await git(path, ['init', '--initial-branch=main']);
+}
+
 /** True when `path` is the top level of a git work tree (a subfolder of a repo does not count). */
 export async function isGitRepoRoot(path: string): Promise<boolean> {
   try {

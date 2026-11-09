@@ -1,7 +1,7 @@
 import { basename } from 'node:path';
 import type { ParsedItem, RawEvent, SourceAdapter } from '../types.js';
 
-export const CODEX_ADAPTER_VERSION = '1';
+export const CODEX_ADAPTER_VERSION = '2';
 
 type Json = Record<string, unknown>;
 const isObject = (v: unknown): v is Json =>
@@ -112,8 +112,11 @@ function parseRecord(d: Json): ParsedItem[] {
             {
               type: 'meta',
               totalTokens: {
-                tokensIn: num(total.input_tokens),
+                // Codex reports cached tokens as part of input_tokens.
+                tokensIn: Math.max(0, num(total.input_tokens) - num(total.cached_input_tokens)),
                 tokensOut: num(total.output_tokens),
+                tokensCacheRead: num(total.cached_input_tokens),
+                tokensCacheWrite: 0,
               },
             },
           ]

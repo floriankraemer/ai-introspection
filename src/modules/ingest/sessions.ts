@@ -23,6 +23,11 @@ export interface SessionSummary {
   repo: string | null;
   startedAt: string;
   toolErrors: number;
+  /** `tokensIn` is fresh input only; cache reads and writes are separate. */
+  tokensIn: number;
+  tokensOut: number;
+  tokensCacheRead: number;
+  tokensCacheWrite: number;
   /** Filled by the grading module's join once grading exists. */
   grades: { rubric: string; passed: boolean | null; score: number | null }[];
   notGradedReason: string | null;
@@ -38,6 +43,8 @@ export interface SessionDetail {
   durationS: number;
   tokensIn: number;
   tokensOut: number;
+  tokensCacheRead: number;
+  tokensCacheWrite: number;
   model: string | null;
   outcome: {
     kind: 'none' | 'commit' | 'pr_open' | 'pr_merged';
@@ -106,6 +113,10 @@ export function createSessionQueries(db: Db, workspaceId: string) {
           'session.status',
           'session.flagged',
           'session.sampled',
+          'session.tokens_in',
+          'session.tokens_out',
+          'session.tokens_cache_read',
+          'session.tokens_cache_write',
           'signal.failed_tool_calls',
         ])
         .where('session.workspace_id', '=', workspaceId);
@@ -143,6 +154,10 @@ export function createSessionQueries(db: Db, workspaceId: string) {
           repo: r.repo,
           startedAt: r.started_at ?? r.created_at,
           toolErrors: r.failed_tool_calls ?? 0,
+          tokensIn: r.tokens_in,
+          tokensOut: r.tokens_out,
+          tokensCacheRead: r.tokens_cache_read,
+          tokensCacheWrite: r.tokens_cache_write,
           grades: [],
           notGradedReason: notGradedReason(r),
         })),
@@ -177,6 +192,8 @@ export function createSessionQueries(db: Db, workspaceId: string) {
         durationS: s.duration_s ?? 0,
         tokensIn: s.tokens_in,
         tokensOut: s.tokens_out,
+        tokensCacheRead: s.tokens_cache_read,
+        tokensCacheWrite: s.tokens_cache_write,
         model: s.model,
         outcome: {
           kind: s.outcome_kind,

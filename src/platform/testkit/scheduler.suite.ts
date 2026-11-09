@@ -32,8 +32,17 @@ export function schedulerSuite(name: string, make: TestDbFactory): void {
       });
     const jobs = () => queue.list({ limit: 50 });
 
+    it('does not fire a past period on the first start of a schedule without state', async () => {
+      await schedulerAt(new Date('2026-11-09T09:00:00Z')).tick();
+      await schedulerAt(new Date('2026-11-09T09:01:00Z')).tick();
+      expect(await jobs()).toHaveLength(0);
+      await schedulerAt(new Date('2026-11-10T06:00:30Z')).tick();
+      expect(await jobs()).toHaveLength(1);
+    });
+
     it('catches up on start with exactly one job after several missed nights', async () => {
       // The laptop slept through three 06:00 runs; only the latest period is enqueued.
+      await schedulerAt(new Date('2026-11-05T09:00:00Z')).tick(); // first start: state only
       await schedulerAt(new Date('2026-11-09T09:00:00Z')).tick();
       const all = await jobs();
       expect(all).toHaveLength(1);
@@ -41,6 +50,7 @@ export function schedulerSuite(name: string, make: TestDbFactory): void {
     });
 
     it('does not fire twice for the same period', async () => {
+      await schedulerAt(new Date('2026-11-08T09:00:00Z')).tick();
       const s = schedulerAt(new Date('2026-11-09T09:00:00Z'));
       await s.tick();
       await s.tick();
@@ -49,6 +59,7 @@ export function schedulerSuite(name: string, make: TestDbFactory): void {
     });
 
     it('fires again when the next period is due', async () => {
+      await schedulerAt(new Date('2026-11-08T09:00:00Z')).tick();
       await schedulerAt(new Date('2026-11-09T09:00:00Z')).tick();
       await schedulerAt(new Date('2026-11-10T06:00:30Z')).tick();
       expect(await jobs()).toHaveLength(2);
@@ -62,6 +73,7 @@ export function schedulerSuite(name: string, make: TestDbFactory): void {
 
     it('enqueues once when several replicas tick at the same moment', async () => {
       const now = new Date('2026-11-09T09:00:00Z');
+      await schedulerAt(new Date('2026-11-08T09:00:00Z')).tick(); // first start: state only
       // better-sqlite3 blocks its thread while waiting for a lock, so two SQLite connections in one
       // process would deadlock; SQLite has one scheduler process anyway (ADR-0005).
       const connection = () => (t.dialect === 'postgres' ? t.open() : t.handle);

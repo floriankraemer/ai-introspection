@@ -22,7 +22,7 @@ export interface SchedulerOptions {
 }
 
 export interface Scheduler {
-  /** Runs immediately (catch-up after sleep or downtime), then every `intervalMs`. */
+  /** Runs immediately (catch-up after sleep or downtime, once a schedule has state), then every `intervalMs`. */
   start(): void;
   stop(): void;
   tick(): Promise<void>;
@@ -43,7 +43,7 @@ export function createScheduler(opts: SchedulerOptions): Scheduler {
   let timer: NodeJS.Timeout | undefined;
   let stopped = false;
 
-  async function fire(schedule: Schedule, period: string): Promise<void> {
+  async function fire(schedule: Schedule, period: string, at: Date): Promise<void> {
     await handle.db.transaction().execute(async (tx) => {
       if (handle.dialect === 'postgres') {
         // Transaction-scoped, so the lock cannot leak with a pooled connection; other replicas skip this tick.
@@ -58,7 +58,21 @@ export function createScheduler(opts: SchedulerOptions): Scheduler {
         .where('workspace_id', '=', workspaceId)
         .where('name', '=', schedule.name)
         .executeTakeFirst();
-      if (state && state.last_fired_period >= period) return;
+      if (!state) {
+        // First start of this schedule: the period that is already past is not ours to run.
+        // Remember "now"; only a period that comes due after it fires, also after downtime.
+        await tx
+          .insertInto('schedule_state')
+          .values({
+            workspace_id: workspaceId,
+            name: schedule.name,
+            last_fired_period: at.toISOString(),
+          })
+          .onConflict((oc) => oc.columns(['workspace_id', 'name']).doNothing())
+          .execute();
+        return;
+      }
+      if (state.last_fired_period >= period) return;
       // The key makes a lost schedule_state row harmless: the period is enqueued once.
       await queue.enqueue(
         {
@@ -86,7 +100,7 @@ export function createScheduler(opts: SchedulerOptions): Scheduler {
       if (!pattern) continue;
       // Only the latest due period fires: several missed nights collapse into one job (ADR-0005).
       const [latest] = new Cron(pattern, { paused: true }).previousRuns(1, at);
-      if (latest) await fire(schedule, latest.toISOString());
+      if (latest) await fire(schedule, latest.toISOString(), at);
     }
   }
 

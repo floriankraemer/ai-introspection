@@ -1,8 +1,11 @@
 import {
   appendFileSync,
+  copyFileSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   rmSync,
+  symlinkSync,
   truncateSync,
   utimesSync,
   writeFileSync,
@@ -10,6 +13,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { ConflictError } from '../../platform/errors.js';
 import { fromJson } from '../../platform/db/json.js';
 import { LOCAL_USER_ID, LOCAL_WORKSPACE_ID } from '../../platform/identity/index.js';
 import { createJobQueue } from '../../platform/jobs/queue.js';
@@ -22,6 +26,7 @@ import {
   claudeSessionLines,
   CODEX_SESSION_ID,
   PLANTED,
+  SECRETS,
   writeFixtureSources,
 } from '../../platform/testkit/agent-fixtures.js';
 
@@ -96,6 +101,8 @@ export function ingestSuite(name: string, make: TestDbFactory): void {
         model: 'claude-opus-5-5',
         tokensIn: CLAUDE_TOKENS.in,
         tokensOut: CLAUDE_TOKENS.out,
+        tokensCacheRead: CLAUDE_TOKENS.cacheRead,
+        tokensCacheWrite: CLAUDE_TOKENS.cacheWrite,
         outcome: {
           kind: 'pr_open',
           ref: 'https://github.com/example/demo/pull/7',
@@ -123,8 +130,10 @@ export function ingestSuite(name: string, make: TestDbFactory): void {
       const codex = await ingest.sessions.get(await sessionIdOf('codex'));
       expect(codex).toMatchObject({
         model: 'gpt-5-codex',
-        tokensIn: 500,
+        tokensIn: 300,
         tokensOut: 60,
+        tokensCacheRead: 200,
+        tokensCacheWrite: 0,
         repo: 'codex-demo',
       });
     });
@@ -152,7 +161,7 @@ export function ingestSuite(name: string, make: TestDbFactory): void {
       expect(Boolean(session.flagged)).toBe(true);
       expect(session.status).toBe('ended');
       expect(fromJson(session.ingest_warnings)).toMatchObject({ unknown: 1 });
-      expect(session.redaction_version).toBe('1');
+      expect(session.redaction_version).toBe('2');
     });
 
     it('stores no planted secret in any column of any table', async () => {
@@ -378,6 +387,250 @@ export function ingestSuite(name: string, make: TestDbFactory): void {
       await ingest.stopWatching();
       expect(await queued()).toBe(1);
     }, 20_000);
+
+    describe('incremental token accounting', () => {
+      const SID = '55555555-1111-4222-8333-444455556666';
+      const assistant = (id: string, usage: Record<string, number>, text = 'x') =>
+        JSON.stringify({
+          type: 'assistant',
+          cwd: '/work/live',
+          sessionId: SID,
+          timestamp: '2026-10-01T10:00:00.000Z',
+          message: { model: 'm', id, role: 'assistant', content: [{ type: 'text', text }], usage },
+        });
+      const usage = (i: number, o: number, cr: number, cw: number) => ({
+        input_tokens: i,
+        output_tokens: o,
+        cache_read_input_tokens: cr,
+        cache_creation_input_tokens: cw,
+      });
+
+      it('counts a message once when its lines straddle two ingest runs, and splits cache from input', async () => {
+        const dirp = join(dir, 'tok', 'projects', '-work-live');
+        mkdirSync(dirp, { recursive: true });
+        const file = join(dirp, `${SID}.jsonl`);
+        writeFileSync(file, `${assistant('msg_x', usage(10, 5, 100, 5))}\n`);
+        await ingest.sources.add('claude_code', join(dir, 'tok', 'projects'));
+        await importAll();
+        appendFileSync(
+          file,
+          `${assistant('msg_x', usage(10, 30, 100, 5))}\n${assistant('msg_y', usage(2, 8, 50, 0))}\n`,
+        );
+        await importAll();
+        await importAll();
+        const row = await t.handle.db
+          .selectFrom('session')
+          .select(['id'])
+          .where('native_id', '=', SID)
+          .executeTakeFirstOrThrow();
+        expect(await ingest.sessions.get(row.id)).toMatchObject({
+          tokensIn: 12,
+          tokensOut: 38,
+          tokensCacheRead: 150,
+          tokensCacheWrite: 5,
+        });
+      });
+    });
+
+    describe('redaction of sensitive files and metadata', () => {
+      const SID = '66666666-1111-4222-8333-444455556666';
+      const VALUE = 'zz-harmless-looking-value-42';
+      const rec = (type: string, content: unknown[], extra: Record<string, unknown> = {}) =>
+        JSON.stringify({
+          type,
+          cwd: `/work/${SECRETS.github}/app`,
+          gitBranch: `feat/${SECRETS.aws}`,
+          sessionId: SID,
+          timestamp: '2026-10-01T10:00:00.000Z',
+          message: { role: type, id: `m${String(Math.random())}`, content },
+          ...extra,
+        });
+      const call = (id: string, name: string, input: unknown) =>
+        rec('assistant', [{ type: 'tool_use', id, name, input }]);
+      const result = (id: string, text: string) =>
+        rec('user', [{ type: 'tool_result', tool_use_id: id, content: text }]);
+
+      it('redacts writes to credential files, bash output that reads them and session metadata', async () => {
+        const root = join(dir, 'sens', 'projects');
+        mkdirSync(join(root, '-work-app'), { recursive: true });
+        writeFileSync(
+          join(root, '-work-app', `${SID}.jsonl`),
+          `${[
+            call('t1', 'Write', { file_path: '/w/.env', content: `A=${VALUE}` }),
+            call('t2', 'Edit', {
+              file_path: '/h/.npmrc',
+              old_string: VALUE,
+              new_string: `x=${VALUE}`,
+            }),
+            call('t3', 'MultiEdit', {
+              file_path: '/h/.aws/credentials',
+              edits: [{ old_string: 'a', new_string: VALUE }],
+            }),
+            call('t4', 'Write', { file_path: '/w/src/a.ts', content: 'export const a = 1;' }),
+            call('t5', 'Bash', { command: 'cat /home/u/.claude/.credentials.json' }),
+            result('t5', `{"accessToken":"${VALUE}"}`),
+            call('t6', 'Bash', { command: 'ls -la' }),
+            result('t6', `total 1 ${VALUE}`),
+            call(`t7`, 'mcp__x__tool', {}),
+          ].join('\n')}\n`,
+        );
+        await ingest.sources.add('claude_code', root);
+        await importAll();
+        const id = (
+          await t.handle.db
+            .selectFrom('session')
+            .select('id')
+            .where('native_id', '=', SID)
+            .executeTakeFirstOrThrow()
+        ).id;
+        const events =
+          (await ingest.sessions.events(id, { filter: 'all', limit: 100 }))?.items ?? [];
+        const byCall = (n: number) => events.filter((e) => e.kind !== 'assistant')[n];
+        for (const n of [0, 1, 2]) {
+          expect(byCall(n)?.input, `write ${String(n)}`).not.toContain(VALUE);
+          expect(byCall(n)?.input).toContain('[REDACTED:sensitive-file:');
+        }
+        expect(byCall(0)?.input).toContain('/w/.env');
+        expect(byCall(3)?.input).toContain('export const a = 1;');
+        expect(byCall(4)?.output).toMatch(/^\[REDACTED:sensitive-file:/);
+        expect(byCall(5)?.output).toContain(VALUE);
+        const row = await t.handle.db
+          .selectFrom('session')
+          .select(['cwd', 'branch', 'repo'])
+          .where('id', '=', id)
+          .executeTakeFirstOrThrow();
+        expect(JSON.stringify(row)).not.toContain(SECRETS.github);
+        expect(JSON.stringify(row)).not.toContain(SECRETS.aws);
+        expect(row.cwd).toContain('[REDACTED:github-token:');
+      });
+
+      it('redacts event and skill names', async () => {
+        const root = join(dir, 'names', 'projects');
+        mkdirSync(join(root, '-work-app'), { recursive: true });
+        writeFileSync(
+          join(root, '-work-app', `${SID}.jsonl`),
+          `${[
+            call('s1', 'Skill', { skill: `deploy-${SECRETS.github}` }),
+            call('s2', `mcp__srv-${SECRETS.github}-run`, {}),
+          ].join('\n')}\n`,
+        );
+        await ingest.sources.add('claude_code', root);
+        await importAll();
+        const names = await t.handle.db.selectFrom('event').select('name').execute();
+        expect(JSON.stringify(names)).not.toContain(SECRETS.github);
+        expect(JSON.stringify(names)).toContain('[REDACTED:github-token:');
+      });
+    });
+
+    describe('sources', () => {
+      it('stores the real path without trailing slash and treats spellings as one source', async () => {
+        const real = join(dir, 'spell', 'projects');
+        mkdirSync(real, { recursive: true });
+        symlinkSync(real, join(dir, 'link'));
+        const a = await ingest.sources.add('claude_code', `${real}/`);
+        const b = await ingest.sources.add('claude_code', join(dir, 'link'));
+        expect(a.path).toBe(realpathSync(real));
+        expect(b.id).toBe(a.id);
+      });
+
+      it('rejects a source nested in, or around, another source of the same agent with a conflict', async () => {
+        await expect(
+          ingest.sources.add('claude_code', join(sources.claude, '-work-demo')),
+        ).rejects.toBeInstanceOf(ConflictError);
+        await expect(ingest.sources.add('claude_code', dir)).rejects.toBeInstanceOf(ConflictError);
+      });
+
+      it('ingests a session file once when a copy of it sits under a second source', async () => {
+        await importAll();
+        const before = { sessions: await count('session'), events: await count('event') };
+        const second = join(dir, 'copy', 'projects');
+        mkdirSync(join(second, '-work-demo'), { recursive: true });
+        copyFileSync(sources.claudeFile, join(second, '-work-demo', `${CLAUDE_SESSION_ID}.jsonl`));
+        await ingest.sources.add('claude_code', second);
+        await importAll();
+        await importAll();
+        expect({ sessions: await count('session'), events: await count('event') }).toEqual(before);
+      });
+
+      it('matches watcher events of a source stored with a trailing slash', async () => {
+        const watched = join(dir, 'slash');
+        mkdirSync(join(watched, '-p'), { recursive: true });
+        const file = join(watched, '-p', '99999999-2222-4222-8333-444455556666.jsonl');
+        writeFileSync(file, `${claudeSessionLines()[2] ?? ''}\n`);
+        const added = await ingest.sources.add('claude_code', watched);
+        await t.handle.db
+          .updateTable('source')
+          .set({ path: `${added.path}/` })
+          .where('id', '=', added.id)
+          .execute();
+        expect(await ingest.handleFileEvent(file)).toBe(true);
+      });
+    });
+
+    describe('job housekeeping', () => {
+      const jobsWith = async (status: string): Promise<number> =>
+        Number(
+          (
+            await t.handle.db
+              .selectFrom('job')
+              .select((eb) => eb.fn.countAll().as('n'))
+              .where('kind', '=', 'ingest_file')
+              .where('status', '=', status as 'dead')
+              .executeTakeFirstOrThrow()
+          ).n,
+        );
+
+      it('re-enqueues an unchanged file whose ingest job died more than an hour ago', async () => {
+        const root = join(dir, 'dead');
+        mkdirSync(join(root, '-p'), { recursive: true });
+        const file = join(root, '-p', '99999999-3333-4222-8333-444455556666.jsonl');
+        writeFileSync(file, `${claudeSessionLines()[2] ?? ''}\n`);
+        const soon = new Date(Date.now() + 60_000); // newer than the source, so reconcile finds it
+        utimesSync(file, soon, soon);
+        await ingest.sources.add('claude_code', root);
+        expect(await ingest.reconcile()).toBe(1);
+        const kill = (finishedAt: string) =>
+          t.handle.db
+            .updateTable('job')
+            .set({ status: 'dead', finished_at: finishedAt })
+            .where('kind', '=', 'ingest_file')
+            .execute();
+        await kill(new Date().toISOString());
+        await ingest.reconcile();
+        expect(await jobsWith('dead')).toBe(1); // died just now: leave it for the retry action
+        await kill(new Date(Date.now() - 2 * 3600_000).toISOString());
+        await ingest.reconcile();
+        expect(await jobsWith('dead')).toBe(0);
+        expect(await jobsWith('queued')).toBe(1);
+      });
+
+      it('prunes finished jobs older than seven days with the daily purge', async () => {
+        const insert = (id: string, status: 'succeeded' | 'dead' | 'queued', daysAgo: number) =>
+          t.handle.db
+            .insertInto('job')
+            .values({
+              id,
+              workspace_id: LOCAL_WORKSPACE_ID,
+              kind: 'x',
+              payload: '{}',
+              status,
+              run_after: new Date().toISOString(),
+              created_at: new Date().toISOString(),
+              finished_at: new Date(Date.now() - daysAgo * 86_400_000).toISOString(),
+            })
+            .execute();
+        await insert('018f0000-0000-7000-8000-00000000000a', 'succeeded', 8);
+        await insert('018f0000-0000-7000-8000-00000000000b', 'dead', 8);
+        await insert('018f0000-0000-7000-8000-00000000000c', 'succeeded', 1);
+        await ingest.handlers.purge_payloads?.run({} as never);
+        const left = await t.handle.db
+          .selectFrom('job')
+          .select('id')
+          .where('kind', '=', 'x')
+          .execute();
+        expect(left.map((r) => r.id)).toEqual(['018f0000-0000-7000-8000-00000000000c']);
+      });
+    });
 
     it('registers a source once and rejects missing folders', async () => {
       const again = await ingest.sources.add('claude_code', sources.claude);

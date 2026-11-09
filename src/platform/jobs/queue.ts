@@ -115,8 +115,10 @@ export function createJobQueue({ db, dialect }: DbHandle): JobQueue {
 
     async claim(workerId, kinds, now = new Date()) {
       if (kinds.length === 0) return null;
-      // One statement picks and locks the row: SKIP LOCKED on Postgres, a single write statement on SQLite.
-      const pick = (qc: Pick<Db, 'selectFrom'>) => {
+      // One statement picks, locks and updates the row. On Postgres the pick is a MATERIALIZED CTE:
+      // a plain `id IN (subselect ... LIMIT 1 FOR UPDATE SKIP LOCKED)` may be planned as a join that
+      // re-evaluates the subselect per row and so locks and updates more than one job.
+      const picked = (qc: Pick<Db, 'selectFrom'>) => {
         const q = qc
           .selectFrom('job')
           .select('id')
@@ -130,6 +132,10 @@ export function createJobQueue({ db, dialect }: DbHandle): JobQueue {
         return dialect === 'postgres' ? q.forUpdate().skipLocked() : q;
       };
       const row = await db
+        .with(
+          (cte) => cte('picked').materialized(),
+          (qc) => picked(qc),
+        )
         .updateTable('job')
         .set((eb) => ({
           status: 'running',
@@ -137,7 +143,7 @@ export function createJobQueue({ db, dialect }: DbHandle): JobQueue {
           locked_by: workerId,
           lease_until: iso(new Date(now.getTime() + LEASE_MS)),
         }))
-        .where('id', 'in', pick(db))
+        .where('id', 'in', (eb) => eb.selectFrom('picked').select('id'))
         .returningAll()
         .executeTakeFirst();
       return row ? toJob(row) : null;

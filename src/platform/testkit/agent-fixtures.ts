@@ -188,9 +188,9 @@ export function claudeSessionLines(): string[] {
 
 /**
  * Expected totals of `claudeSessionLines`. msg_1 spans two log lines and counts once with its latest usage:
- * in 115 + 9 tool messages x 115 + 52, out 30 + 9 x 20 + 8.
+ * in 10 + 9 x 10 + 2, cache read 100 + 9 x 100 + 50, cache write 5 + 9 x 5, out 30 + 9 x 20 + 8.
  */
-export const CLAUDE_TOKENS = { in: 1202, out: 218 };
+export const CLAUDE_TOKENS = { in: 102, out: 218, cacheRead: 1050, cacheWrite: 50 };
 
 const codexLine = (seconds: number, type: string, payload: unknown) =>
   JSON.stringify({ timestamp: ts(seconds), type, payload });
@@ -245,7 +245,9 @@ export function codexSessionLines(): string[] {
     }),
     codexLine(10, 'event_msg', {
       type: 'token_count',
-      info: { total_token_usage: { input_tokens: 500, output_tokens: 60 } },
+      info: {
+        total_token_usage: { input_tokens: 500, cached_input_tokens: 200, output_tokens: 60 },
+      },
     }),
     codexLine(11, 'event_msg', { type: 'task_complete' }),
     codexLine(12, 'response_item', {

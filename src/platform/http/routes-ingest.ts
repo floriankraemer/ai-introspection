@@ -41,6 +41,10 @@ const sessionSummarySchema = z
     repo: z.string().nullable(),
     startedAt: z.iso.datetime(),
     toolErrors: z.number().int(),
+    tokensIn: z.number().int(),
+    tokensOut: z.number().int(),
+    tokensCacheRead: z.number().int(),
+    tokensCacheWrite: z.number().int(),
     grades: z.array(
       z.object({
         rubric: z.string(),
@@ -63,6 +67,8 @@ const sessionDetailSchema = z
     durationS: z.number().int(),
     tokensIn: z.number().int(),
     tokensOut: z.number().int(),
+    tokensCacheRead: z.number().int(),
+    tokensCacheWrite: z.number().int(),
     model: z.string().nullable(),
     outcome: z.object({
       kind: z.enum(['none', 'commit', 'pr_open', 'pr_merged']),
@@ -264,7 +270,8 @@ export function registerIngestRoutes(
   });
 
   app.openapi(rawSession, async (c) => {
-    const path = await ingest.sessions.rawPath(c.req.valid('param').id);
+    // The server only binds to loopback (local mode), so there is no other mode to refuse.
+    const path = await ingest.rawFile(c.req.valid('param').id);
     if (
       !path ||
       !(await stat(path).then(
@@ -276,7 +283,12 @@ export function registerIngestRoutes(
     }
     const body = Readable.toWeb(createReadStream(path)) as ReadableStream;
     return new Response(body, {
-      headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' },
+      headers: {
+        'content-type': 'text/plain; charset=utf-8',
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+        'content-disposition': 'inline',
+      },
     }) as never;
   });
 
