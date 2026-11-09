@@ -22,7 +22,8 @@ This removes the database, the sign-in token, the API key and the container's Cl
 
 | Command | What it does |
 |---|---|
-| `make dev` | Starts the server (port 7317) and the web build server (port 5173) with live reload. |
+| `make dev` | Starts the server (port 7317) and the web build server (port 5173) with live reload. Stops the `make up` app first, because both use port 7317. |
+| `make dev-open` | Prints the sign-in link for the development server on port 5173. |
 | `make install` | Installs the dependencies in the development container. |
 | `make lint` | Runs the linters, the formatter check, the type check and the dependency rules. |
 | `make test` | Runs the unit tests. |

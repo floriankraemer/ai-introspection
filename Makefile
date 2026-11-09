@@ -92,7 +92,7 @@ scan: ## Look for changes in the skills repos now (trends markers)
 
 ##@ Develop
 
-.PHONY: mount-points install dev shell gen-api format
+.PHONY: mount-points install dev dev-open shell gen-api format
 # Docker would create these bind-mount points as root if they were missing.
 mount-points:
 	@mkdir -p node_modules web/node_modules
@@ -102,9 +102,13 @@ install: mount-points ## Install dependencies (pnpm, in the dev container)
 
 # The dev server takes port 7317 from the user stack, so that stack is stopped first.
 dev: mount-points ## Start server (7317) and Vite (5173) with live reload
+	mkdir -p $(HOME)/.claude/projects $(HOME)/.codex/sessions "$(SKILLS_REPO)" "$(PROJECTS_DIR)"
 	@docker compose stop introspect 2>/dev/null || true
 	@docker rm -f introspect-dev >/dev/null 2>&1 || true
-	$(COMPOSE) run --rm --build --service-ports --name introspect-dev dev pnpm dev
+	$(COMPOSE) run --rm --build --service-ports --name introspect-dev server pnpm dev
+
+dev-open: ## Print the sign-in link for the dev server (Vite, port 5173)
+	@docker exec introspect-dev pnpm -s exec tsx src/cli.ts open | sed 's|http://127.0.0.1:7317|http://localhost:5173|'
 
 shell: mount-points ## Open a shell in the dev container
 	$(RUN) bash

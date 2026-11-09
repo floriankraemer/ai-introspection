@@ -11,7 +11,8 @@ services:
     environment:
       CI:
       CHOKIDAR_USEPOLLING: '1'
-      DATABASE_URL: postgres://introspect:introspect@postgres:5432/introspect
+      # Postgres for `make test-pg` only. The dev server ignores it and keeps SQLite in /data.
+      INTROSPECT_TEST_DATABASE_URL: postgres://introspect:introspect@postgres:5432/introspect
     ports:
       - '127.0.0.1:5173:5173'
       - '127.0.0.1:7317:7317'
@@ -20,6 +21,31 @@ services:
       - node_modules:/app/node_modules
       - web_node_modules:/app/web/node_modules
       - pnpm_store:/pnpm/store
+
+  # `make dev`: the dev server, with the same agent logs and repositories as the user stack
+  # (compose.yaml) so it shows real data. Lint and tests run in `dev`, which has none of these mounts.
+  server:
+    extends: dev
+    environment:
+      INTROSPECT_DATA_DIR: /data
+    volumes:
+      # The dev server's database, separate from the user stack's.
+      - dev_data:/data
+      # Same agent logs and repositories as the user stack (compose.yaml), so `make dev` shows real data.
+      - type: bind
+        source: ${HOME}/.claude/projects
+        target: /sources/claude/projects
+        read_only: true
+      - type: bind
+        source: ${HOME}/.codex/sessions
+        target: /sources/codex/sessions
+        read_only: true
+      - type: bind
+        source: ${INTROSPECT_SKILLS_REPO:-${HOME}/.introspect/skills}
+        target: /repos/skills
+      - type: bind
+        source: ${INTROSPECT_PROJECTS_DIR:-${HOME}/.introspect/projects}
+        target: /repos/projects
 
   postgres:
     container_name: introspect-dev-postgres
@@ -37,6 +63,7 @@ services:
       - /var/lib/postgresql/data
 
 volumes:
+  dev_data:
   node_modules:
   web_node_modules:
   pnpm_store:

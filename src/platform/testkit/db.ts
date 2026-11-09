@@ -42,8 +42,8 @@ export const sqliteTestDb: TestDbFactory = async () => {
 
 /** A private schema per test keeps parallel test files from seeing each other's rows. */
 export const postgresTestDb: TestDbFactory = async () => {
-  const base = process.env.DATABASE_URL;
-  if (!base) throw new Error('DATABASE_URL is not set; run via `make test-pg`');
+  const base = process.env.INTROSPECT_TEST_DATABASE_URL;
+  if (!base) throw new Error('INTROSPECT_TEST_DATABASE_URL is not set; run via `make test-pg`');
   const schema = `t_${randomUUID().replaceAll('-', '')}`;
   const admin = new pg.Client({ connectionString: base });
   await admin.connect();

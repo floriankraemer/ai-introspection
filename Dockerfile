@@ -13,8 +13,8 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 # The container runs as the host UID/GID. Named volumes inherit the mount-point
 # permissions of the first mount, so these directories must be writable by any uid.
-RUN mkdir -p /app/node_modules /app/web/node_modules /pnpm/store \
- && chmod 1777 /app/node_modules /app/web/node_modules /pnpm /pnpm/store
+RUN mkdir -p /app/node_modules /app/web/node_modules /pnpm/store /data \
+ && chmod 1777 /app/node_modules /app/web/node_modules /pnpm /pnpm/store /data
 ENV HOME=/tmp/home \
     PNPM_HOME=/pnpm \
     npm_config_store_dir=/pnpm/store \

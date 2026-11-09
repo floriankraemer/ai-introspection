@@ -1,5 +1,5 @@
 import { useNavigate } from '@tanstack/react-router';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useApi } from '../api/context.js';
 import { Card } from '../components/ui.js';
 
@@ -7,14 +7,16 @@ import { Card } from '../components/ui.js';
 export function AuthExchange() {
   const api = useApi();
   const navigate = useNavigate();
+  // Read once at first render: StrictMode runs the effect twice, and the first run clears the hash.
+  // A second run without the token would navigate before the cookie is set and land on sign-in.
+  const [token] = useState(() => window.location.hash.slice(1));
   useEffect(() => {
-    const token = window.location.hash.slice(1);
     // Drop the token from the address bar and history before anything else.
     window.history.replaceState(null, '', window.location.pathname);
     void (token ? api.exchangeToken(token) : Promise.resolve())
       .catch(() => undefined)
       .then(() => navigate({ to: '/', replace: true }));
-  }, [api, navigate]);
+  }, [api, navigate, token]);
   return (
     <p role="status" className="p-8 text-sm text-muted">
       Signing in…

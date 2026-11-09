@@ -16,7 +16,7 @@
     "web/dist"
   ],
   "scripts": {
-    "dev": "pnpm --parallel -r run \"/^dev:/\"",
+    "dev": "pnpm --parallel -r --include-workspace-root run \"/^dev:/\"",
     "dev:server": "tsx watch src/cli.ts serve",
     "build": "tsc -p tsconfig.build.json && cp -r src/modules/rubrics/starter dist/modules/rubrics/ && pnpm --filter web build",
     "test": "vitest run --exclude \"**/*.pg.test.ts\" --exclude \"**/*.nfr.test.ts\" && pnpm --filter web test",
