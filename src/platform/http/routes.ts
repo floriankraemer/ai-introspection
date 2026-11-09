@@ -5,39 +5,11 @@ import {
   type SettingsService,
 } from '../../modules/settings/index.js';
 import type { JobQueue } from '../jobs/queue.js';
-import type { Job } from '../jobs/queue.js';
 import { ApiError, problemResponses } from './problem.js';
+import { registerIngestRoutes, type IngestRouteDeps } from './routes-ingest.js';
+import { registerSetupRoutes, type SetupRouteDeps } from './routes-setup.js';
+import { DEFAULT_PAGE, jobSchema, MAX_PAGE, security, toJobDto } from './schemas.js';
 import { AUTH_PAGE, setTokenCookie, tokenMatches } from './auth.js';
-
-const MAX_PAGE = 200;
-const DEFAULT_PAGE = 50;
-const security = [{ bearerAuth: [] }];
-
-const jobSchema = z
-  .object({
-    id: z.uuid(),
-    kind: z.string(),
-    status: z.enum(['queued', 'running', 'succeeded', 'failed', 'dead', 'deferred']),
-    attempts: z.number().int(),
-    max_attempts: z.number().int(),
-    run_after: z.iso.datetime(),
-    last_error: z.string().nullable(),
-    created_at: z.iso.datetime(),
-    finished_at: z.iso.datetime().nullable(),
-  })
-  .openapi('Job');
-
-const toJobDto = (j: Job): z.infer<typeof jobSchema> => ({
-  id: j.id,
-  kind: j.kind,
-  status: j.status,
-  attempts: j.attempts,
-  max_attempts: j.maxAttempts,
-  run_after: j.runAfter,
-  last_error: j.lastError,
-  created_at: j.createdAt,
-  finished_at: j.finishedAt,
-});
 
 const health = createRoute({
   method: 'get',
@@ -84,7 +56,7 @@ const getSettings = createRoute({
 const patchSettings = createRoute({
   method: 'patch',
   path: '/v1/settings',
-  summary: 'Update runtime settings (partial, per group)',
+  summary: 'Update runtime settings (partial; flat dotted keys)',
   security,
   request: {
     body: { content: { 'application/json': { schema: settingsPatchSchema } }, required: true },
@@ -115,7 +87,7 @@ const listJobs = createRoute({
       description: 'A page of jobs',
       content: {
         'application/json': {
-          schema: z.object({ items: z.array(jobSchema), next_cursor: z.uuid().nullable() }),
+          schema: z.object({ items: z.array(jobSchema), nextCursor: z.uuid().nullable() }),
         },
       },
     },
@@ -152,14 +124,15 @@ const retryJob = createRoute({
   },
 });
 
-export interface RouteDeps {
+export interface RouteDeps extends IngestRouteDeps, SetupRouteDeps {
   token: string;
   queue: JobQueue;
   settings: SettingsService;
 }
 
 /** Thin handlers: parse with zod, call one service, map the result (ADR-0009 rule 5). */
-export function registerRoutes(app: OpenAPIHono, { token, queue, settings }: RouteDeps): void {
+export function registerRoutes(app: OpenAPIHono, deps: RouteDeps): void {
+  const { token, queue, settings } = deps;
   app.openAPIRegistry.registerComponent('securitySchemes', 'bearerAuth', {
     type: 'http',
     scheme: 'bearer',
@@ -191,7 +164,7 @@ export function registerRoutes(app: OpenAPIHono, { token, queue, settings }: Rou
     return c.json(
       {
         items: page.map(toJobDto),
-        next_cursor: jobs.length > limit ? (page.at(-1)?.id ?? null) : null,
+        nextCursor: jobs.length > limit ? (page.at(-1)?.id ?? null) : null,
       },
       200,
     );
@@ -209,4 +182,7 @@ export function registerRoutes(app: OpenAPIHono, { token, queue, settings }: Rou
     if (!job) throw new ApiError(404, 'Not found', 'No such job');
     return c.json(toJobDto(job), 202);
   });
+
+  registerIngestRoutes(app, deps);
+  registerSetupRoutes(app, deps);
 }

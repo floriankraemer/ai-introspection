@@ -45,4 +45,16 @@ export const problemResponses = {
     description: 'Missing or invalid token',
     content: { 'application/problem+json': { schema: problemSchema } },
   },
+  404: {
+    description: 'Not found',
+    content: { 'application/problem+json': { schema: problemSchema } },
+  },
+  409: {
+    description: 'Conflicts with the current state',
+    content: { 'application/problem+json': { schema: problemSchema } },
+  },
+  422: {
+    description: 'Well-formed but cannot be applied',
+    content: { 'application/problem+json': { schema: problemSchema } },
+  },
 } as const;

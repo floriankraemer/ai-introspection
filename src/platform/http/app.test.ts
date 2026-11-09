@@ -3,8 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { OpenAPIHono } from '@hono/zod-openapi';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createSettings } from '../../modules/settings/index.js';
-import { LOCAL_WORKSPACE_ID } from '../identity/index.js';
+import { createSkillRepos } from '../../modules/improvement/index.js';
+import { createIngest } from '../../modules/ingest/index.js';
+import { createSecretStore, createSettings } from '../../modules/settings/index.js';
+import { createTrends } from '../../modules/trends/index.js';
+import { LOCAL_USER_ID, LOCAL_WORKSPACE_ID } from '../identity/index.js';
 import { createJobQueue } from '../jobs/queue.js';
 import { sqliteTestDb, type TestDb } from '../testkit/db.js';
 import { createApp, OPENAPI_INFO } from './app.js';
@@ -22,13 +25,28 @@ beforeAll(async () => {
   const dir = mkdtempSync(join(tmpdir(), 'introspect-app-'));
   writeFileSync(join(dir, 'index.html'), '<!doctype html><title>spa</title>');
   t = await sqliteTestDb();
-  token = loadOrCreateToken(join(dir, 'data'));
+  const dataDir = join(dir, 'data');
+  token = loadOrCreateToken(dataDir);
+  const queue = createJobQueue(t.handle);
+  const settings = createSettings(t.handle.db, LOCAL_WORKSPACE_ID, createSecretStore(dataDir));
+  const ingest = createIngest({
+    db: t.handle.db,
+    workspaceId: LOCAL_WORKSPACE_ID,
+    userId: LOCAL_USER_ID,
+    dataDir,
+    settings,
+    queue,
+    pollMode: false,
+  });
   app = createApp({
     webDir: dir,
     port: PORT,
     token,
-    queue: createJobQueue(t.handle),
-    settings: createSettings(t.handle.db, LOCAL_WORKSPACE_ID),
+    queue,
+    settings,
+    ingest,
+    trends: createTrends(ingest),
+    skillRepos: createSkillRepos(t.handle.db, LOCAL_WORKSPACE_ID),
   });
 });
 afterAll(async () => {
@@ -77,7 +95,7 @@ describe('local token auth', () => {
   it('accepts the bearer token', async () => {
     const res = await get('/v1/settings', bearer());
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ retention: { payload_days: 90 } });
+    expect(await res.json()).toMatchObject({ 'retention.days': 90, 'judge.api_key_set': false });
   });
 
   it('exchanges the token for an HttpOnly SameSite=Strict cookie that authenticates', async () => {
@@ -117,26 +135,26 @@ describe('api behaviour', () => {
     const res = await app.request(`${BASE}/v1/settings`, {
       method: 'PATCH',
       headers: { ...bearer(), 'content-type': 'application/json' },
-      body: JSON.stringify({ retention: { payload_days: 1 } }),
+      body: JSON.stringify({ 'retention.days': 1 }),
     });
     expect(res.status).toBe(400);
     expect(res.headers.get('content-type')).toContain('application/problem+json');
     const body = (await res.json()) as { errors: { path: string }[] };
-    expect(body.errors[0]?.path).toContain('payload_days');
+    expect(body.errors[0]?.path).toContain('retention.days');
   });
 
   it('updates settings', async () => {
     const res = await app.request(`${BASE}/v1/settings`, {
       method: 'PATCH',
       headers: { ...bearer(), 'content-type': 'application/json' },
-      body: JSON.stringify({ improver: { schedule: 'weekly' } }),
+      body: JSON.stringify({ 'schedule.improver': 'weekly' }),
     });
-    expect(await res.json()).toMatchObject({ improver: { schedule: 'weekly' } });
+    expect(await res.json()).toMatchObject({ 'schedule.improver': 'weekly' });
   });
 
   it('lists jobs and answers 404 problem+json for a missing job', async () => {
     const list = await get('/v1/jobs?limit=5', bearer());
-    expect(await list.json()).toEqual({ items: [], next_cursor: null });
+    expect(await list.json()).toEqual({ items: [], nextCursor: null });
     const missing = await get('/v1/jobs/018f0000-0000-7000-8000-000000000000', bearer());
     expect(missing.status).toBe(404);
     expect(missing.headers.get('content-type')).toContain('application/problem+json');

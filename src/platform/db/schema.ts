@@ -84,6 +84,8 @@ export interface Schema {
     ms: number | null;
     truncated: Bool;
     payload_purged_at: Ts | null;
+    /** Tool-use id that pairs a result with its call, also across ingest chunks. */
+    call_id: string | null;
   };
   signal: {
     session_id: string;
@@ -218,6 +220,7 @@ export interface Schema {
     last_error: string | null;
     created_at: Ts;
     finished_at: Ts | null;
+    progress: Json | null;
   };
   schedule_state: { workspace_id: string; name: string; last_fired_period: Ts };
   setting: { workspace_id: string; key: string; value: Json; updated_at: Ts };

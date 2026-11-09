@@ -10,6 +10,8 @@ const envSchema = z.object({
   INTROSPECT_PORT: z.coerce.number().int().min(1).max(65535).default(7317),
   INTROSPECT_HOST: z.string().min(1).default('127.0.0.1'),
   DATABASE_URL: z.string().min(1).optional(),
+  INTROSPECT_WATCH_POLL: z.enum(['0', '1']).optional(),
+  CHOKIDAR_USEPOLLING: z.enum(['0', '1', 'true', 'false']).optional(),
 });
 
 export interface Config {
@@ -19,6 +21,8 @@ export interface Config {
   host: string;
   /** `postgres://…` or `postgresql://…` for Postgres; anything else is a SQLite file path. */
   databaseUrl: string;
+  /** Poll for file changes instead of using inotify (containers, network mounts). */
+  watchPoll: boolean;
 }
 
 /** Inside a container the process must bind 0.0.0.0; the published port stays on 127.0.0.1 (compose.yaml). */
@@ -33,6 +37,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error(`Invalid configuration: ${z.prettifyError(parsed.error)}`);
   }
   const { INTROSPECT_DATA_DIR, INTROSPECT_PORT, INTROSPECT_HOST, DATABASE_URL } = parsed.data;
+  const { INTROSPECT_WATCH_POLL, CHOKIDAR_USEPOLLING } = parsed.data;
   const dataDir = INTROSPECT_DATA_DIR ?? join(homedir(), '.introspect');
 
   const loopback = LOOPBACK_HOSTS.includes(INTROSPECT_HOST);
@@ -47,5 +52,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port: INTROSPECT_PORT,
     host: INTROSPECT_HOST,
     databaseUrl: DATABASE_URL ?? join(dataDir, 'introspect.db'),
+    watchPoll:
+      INTROSPECT_WATCH_POLL === '1' ||
+      CHOKIDAR_USEPOLLING === '1' ||
+      CHOKIDAR_USEPOLLING === 'true' ||
+      (INTROSPECT_WATCH_POLL === undefined && inContainer()),
   };
 }

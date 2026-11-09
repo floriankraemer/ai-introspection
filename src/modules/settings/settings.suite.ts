@@ -1,46 +1,55 @@
+import { mkdtempSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createSettings, type SettingsService } from './index.js';
+import { createSecretStore, createSettings, type SettingsService } from './index.js';
 import { LOCAL_WORKSPACE_ID } from '../../platform/identity/index.js';
 import type { TestDb, TestDbFactory } from '../../platform/testkit/db.js';
 
 export function settingsSuite(name: string, make: TestDbFactory): void {
   describe(`settings repository (${name})`, () => {
     let t: TestDb;
+    let dataDir: string;
     let settings: SettingsService;
     beforeEach(async () => {
       t = await make();
-      settings = createSettings(t.handle.db, LOCAL_WORKSPACE_ID);
+      dataDir = mkdtempSync(join(tmpdir(), 'introspect-settings-'));
+      settings = createSettings(t.handle.db, LOCAL_WORKSPACE_ID, createSecretStore(dataDir));
     });
     afterEach(async () => {
       await t.destroy();
     });
 
-    it('returns the ADR defaults on an empty store', async () => {
+    it('returns the defaults on an empty store', async () => {
       const s = await settings.get();
-      expect(s.retention.payload_days).toBe(90);
-      expect(s.budget).toEqual({
-        mode: 'tokens',
-        tokens_per_day: 1_000_000,
-        monthly_dollar_ceiling: null,
-      });
+      expect(s['retention.days']).toBe(90);
+      expect(s['setup.completed']).toBe(false);
+      expect(s['redaction.enabled']).toBe(true);
+      expect(s['budget.tokens_per_day']).toBe(1_000_000);
+      expect(s['judge.api_key_set']).toBe(false);
     });
 
-    it('persists a partial patch and keeps the rest of the group', async () => {
-      await settings.update({ budget: { monthly_dollar_ceiling: 25 } });
-      await settings.update({ retention: { payload_days: 30 } });
-      const fresh = createSettings(t.handle.db, LOCAL_WORKSPACE_ID);
+    it('persists a partial patch and keeps the other keys', async () => {
+      await settings.update({ 'budget.usd_per_month': 25 });
+      await settings.update({ 'retention.days': 30 });
+      const fresh = createSettings(t.handle.db, LOCAL_WORKSPACE_ID, createSecretStore(dataDir));
       const s = await fresh.get();
-      expect(s.budget).toEqual({
-        mode: 'tokens',
-        tokens_per_day: 1_000_000,
-        monthly_dollar_ceiling: 25,
-      });
-      expect(s.retention.payload_days).toBe(30);
+      expect(s['budget.usd_per_month']).toBe(25);
+      expect(s['retention.days']).toBe(30);
+      expect(s['budget.mode']).toBe('tokens_day');
     });
 
     it('rejects values outside the documented range and stores nothing', async () => {
-      await expect(settings.update({ retention: { payload_days: 3 } })).rejects.toThrow();
-      expect((await settings.get()).retention.payload_days).toBe(90);
+      await expect(settings.update({ 'retention.days': 3 })).rejects.toThrow();
+      expect((await settings.get())['retention.days']).toBe(90);
+    });
+
+    it('keeps the judge key write-only, in a 0600 file', async () => {
+      settings.setJudgeKey('sk-ant-test-key-that-must-not-leak');
+      const s = await settings.get();
+      expect(s['judge.api_key_set']).toBe(true);
+      expect(JSON.stringify(s)).not.toContain('must-not-leak');
+      expect(statSync(join(dataDir, 'secrets')).mode & 0o777).toBe(0o600);
     });
   });
 }

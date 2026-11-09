@@ -39,6 +39,10 @@ ENV NODE_ENV=production \
     INTROSPECT_HOST=0.0.0.0 \
     INTROSPECT_DATA_DIR=/data
 WORKDIR /app
+# git: skills repositories are read and committed to (starter rubrics, later proposals).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 # /data is world-writable (sticky) so the container works with any host UID:GID.
 RUN mkdir /data && chmod 1777 /data
 COPY --from=build /app/package.json ./

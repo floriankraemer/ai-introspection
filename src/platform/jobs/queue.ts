@@ -25,6 +25,7 @@ export interface Job {
   lastError: string | null;
   createdAt: string;
   finishedAt: string | null;
+  progress: { done: number; total: number } | null;
 }
 
 export interface EnqueueInput {
@@ -55,6 +56,7 @@ function toJob(row: Selectable<Schema['job']>): Job {
     lastError: row.last_error,
     createdAt: row.created_at,
     finishedAt: row.finished_at,
+    progress: row.progress === null ? null : (fromJson(row.progress) as Job['progress']),
   };
 }
 
@@ -78,6 +80,8 @@ export interface JobQueue {
   reapExpired(now?: Date): Promise<number>;
   /** The "retry" action for dead jobs in Settings. */
   retryDead(jobId: string, now?: Date): Promise<boolean>;
+  /** Long jobs (imports) report how far they are; shown by the SPA. */
+  setProgress(jobId: string, progress: { done: number; total: number }): Promise<void>;
   get(jobId: string): Promise<Job | null>;
   /** Newest first; `cursor` is the last id of the previous page. */
   list(opts: { status?: JobStatus; cursor?: string; limit: number }): Promise<Job[]>;
@@ -232,6 +236,14 @@ export function createJobQueue({ db, dialect }: DbHandle): JobQueue {
         .where('status', '=', 'dead')
         .executeTakeFirst();
       return r.numUpdatedRows > 0n;
+    },
+
+    async setProgress(jobId, progress) {
+      await db
+        .updateTable('job')
+        .set({ progress: toJson(progress) })
+        .where('id', '=', jobId)
+        .execute();
     },
 
     async get(jobId) {

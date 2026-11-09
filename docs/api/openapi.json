@@ -73,27 +73,45 @@
               "deferred"
             ]
           },
-          "attempts": {
-            "type": "integer"
+          "progress": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "done": {
+                "type": "integer"
+              },
+              "total": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "done",
+              "total"
+            ]
           },
-          "max_attempts": {
-            "type": "integer"
-          },
-          "run_after": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "last_error": {
+          "error": {
             "type": [
               "string",
               "null"
             ]
           },
-          "created_at": {
+          "attempts": {
+            "type": "integer"
+          },
+          "maxAttempts": {
+            "type": "integer"
+          },
+          "runAfter": {
             "type": "string",
             "format": "date-time"
           },
-          "finished_at": {
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finishedAt": {
             "type": [
               "string",
               "null"
@@ -105,12 +123,407 @@
           "id",
           "kind",
           "status",
+          "progress",
+          "error",
           "attempts",
-          "max_attempts",
-          "run_after",
-          "last_error",
-          "created_at",
-          "finished_at"
+          "maxAttempts",
+          "runAfter",
+          "createdAt",
+          "finishedAt"
+        ]
+      },
+      "SessionSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string"
+          },
+          "agent": {
+            "$ref": "#/components/schemas/Agent"
+          },
+          "repo": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "toolErrors": {
+            "type": "integer"
+          },
+          "grades": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "rubric": {
+                  "type": "string"
+                },
+                "passed": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "score": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "rubric",
+                "passed",
+                "score"
+              ]
+            }
+          },
+          "notGradedReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "agent",
+          "repo",
+          "startedAt",
+          "toolErrors",
+          "grades",
+          "notGradedReason"
+        ]
+      },
+      "Agent": {
+        "type": "string",
+        "enum": [
+          "claude_code",
+          "codex"
+        ]
+      },
+      "SessionDetail": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string"
+          },
+          "agent": {
+            "$ref": "#/components/schemas/Agent"
+          },
+          "repo": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "durationS": {
+            "type": "integer"
+          },
+          "tokensIn": {
+            "type": "integer"
+          },
+          "tokensOut": {
+            "type": "integer"
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outcome": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "commit",
+                  "pr_open",
+                  "pr_merged"
+                ]
+              },
+              "ref": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "url": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "ref",
+              "url"
+            ]
+          },
+          "eventCount": {
+            "type": "integer"
+          },
+          "errorCount": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "agent",
+          "repo",
+          "branch",
+          "startedAt",
+          "durationS",
+          "tokensIn",
+          "tokensOut",
+          "model",
+          "outcome",
+          "eventCount",
+          "errorCount"
+        ]
+      },
+      "TraceEvent": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "seq": {
+            "type": "integer"
+          },
+          "offsetS": {
+            "type": "integer"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant",
+              "tool_call",
+              "file_op",
+              "mcp",
+              "skill",
+              "system",
+              "unknown"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "text": {
+            "type": "string"
+          },
+          "isError": {
+            "type": "boolean"
+          },
+          "input": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "output": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "payloadPurged": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "seq",
+          "offsetS",
+          "kind",
+          "name",
+          "text",
+          "isError",
+          "input",
+          "output",
+          "truncated",
+          "payloadPurged"
+        ]
+      },
+      "Source": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "agent": {
+            "$ref": "#/components/schemas/Agent"
+          },
+          "path": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "watching",
+              "polling",
+              "disabled",
+              "missing"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "agent",
+          "path",
+          "enabled",
+          "status"
+        ]
+      },
+      "DetectedSource": {
+        "type": "object",
+        "properties": {
+          "agent": {
+            "$ref": "#/components/schemas/Agent"
+          },
+          "path": {
+            "type": "string"
+          },
+          "sessionCount": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "agent",
+          "path",
+          "sessionCount"
+        ]
+      },
+      "TrendSummary": {
+        "type": "object",
+        "properties": {
+          "days": {
+            "type": "integer"
+          },
+          "sessionsCollected": {
+            "type": "integer"
+          },
+          "sessionsGraded": {
+            "type": "integer"
+          },
+          "rubrics": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "passRate": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "target": {
+                  "type": "number"
+                },
+                "gradedCount": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "name",
+                "passRate",
+                "target",
+                "gradedCount"
+              ]
+            }
+          }
+        },
+        "required": [
+          "days",
+          "sessionsCollected",
+          "sessionsGraded",
+          "rubrics"
+        ]
+      },
+      "SkillRepo": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "global",
+              "project"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "hasRubrics": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "acceptMode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "merge",
+              "pr",
+              null
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "path",
+          "hasRubrics",
+          "enabled",
+          "acceptMode"
         ]
       }
     },
@@ -189,6 +602,36 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Well-formed but cannot be applied",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
           }
         }
       }
@@ -209,82 +652,101 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "retention": {
-                      "type": "object",
-                      "properties": {
-                        "payload_days": {
-                          "type": "integer",
-                          "minimum": 7
-                        }
+                    "setup.completed": {
+                      "type": "boolean"
+                    },
+                    "redaction.enabled": {
+                      "type": "boolean"
+                    },
+                    "redaction.custom_patterns": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
                       },
-                      "required": [
-                        "payload_days"
+                      "maxItems": 50
+                    },
+                    "retention.days": {
+                      "type": "integer",
+                      "minimum": 7
+                    },
+                    "judge.transport": {
+                      "type": "string",
+                      "enum": [
+                        "api",
+                        "cli"
                       ]
                     },
-                    "sampling": {
-                      "type": "object",
-                      "properties": {
-                        "rate": {
-                          "type": "number",
-                          "minimum": 0,
-                          "maximum": 1
-                        }
-                      },
-                      "required": [
-                        "rate"
+                    "judge.sampling": {
+                      "type": "string",
+                      "enum": [
+                        "flagged_sample",
+                        "every"
                       ]
                     },
-                    "budget": {
-                      "type": "object",
-                      "properties": {
-                        "mode": {
-                          "type": "string",
-                          "enum": [
-                            "tokens",
-                            "tokens_and_dollars",
-                            "dollars"
-                          ]
-                        },
-                        "tokens_per_day": {
-                          "type": "integer",
-                          "minimum": 0
-                        },
-                        "monthly_dollar_ceiling": {
-                          "type": [
-                            "number",
-                            "null"
-                          ],
-                          "minimum": 0
-                        }
-                      },
-                      "required": [
-                        "mode",
-                        "tokens_per_day",
-                        "monthly_dollar_ceiling"
+                    "budget.mode": {
+                      "type": "string",
+                      "enum": [
+                        "tokens_day",
+                        "tokens_day_and_usd_month",
+                        "usd_month"
                       ]
                     },
-                    "improver": {
-                      "type": "object",
-                      "properties": {
-                        "schedule": {
-                          "type": "string",
-                          "enum": [
-                            "daily",
-                            "weekly",
-                            "manual"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "schedule"
+                    "budget.tokens_per_day": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "minimum": 0
+                    },
+                    "budget.usd_per_month": {
+                      "type": [
+                        "number",
+                        "null"
+                      ],
+                      "minimum": 0
+                    },
+                    "schedule.grade": {
+                      "type": "string",
+                      "enum": [
+                        "session_end",
+                        "pr_merge"
                       ]
+                    },
+                    "schedule.improver": {
+                      "type": "string",
+                      "enum": [
+                        "daily",
+                        "weekly",
+                        "manual"
+                      ]
+                    },
+                    "proposals.accept_mode": {
+                      "type": "string",
+                      "enum": [
+                        "merge",
+                        "pr"
+                      ]
+                    },
+                    "judge.api_key_set": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
-                    "retention",
-                    "sampling",
-                    "budget",
-                    "improver"
+                    "setup.completed",
+                    "redaction.enabled",
+                    "redaction.custom_patterns",
+                    "retention.days",
+                    "judge.transport",
+                    "judge.sampling",
+                    "budget.mode",
+                    "budget.tokens_per_day",
+                    "budget.usd_per_month",
+                    "schedule.grade",
+                    "schedule.improver",
+                    "proposals.accept_mode",
+                    "judge.api_key_set"
                   ]
                 }
               }
@@ -303,7 +765,7 @@
         }
       },
       "patch": {
-        "summary": "Update runtime settings (partial, per group)",
+        "summary": "Update runtime settings (partial; flat dotted keys)",
         "security": [
           {
             "bearerAuth": []
@@ -316,65 +778,82 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "retention": {
-                    "type": "object",
-                    "properties": {
-                      "payload_days": {
-                        "type": "integer",
-                        "minimum": 7
-                      }
-                    },
-                    "additionalProperties": false
+                  "setup.completed": {
+                    "type": "boolean"
                   },
-                  "sampling": {
-                    "type": "object",
-                    "properties": {
-                      "rate": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 1
-                      }
-                    },
-                    "additionalProperties": false
+                  "redaction.enabled": {
+                    "type": "boolean"
                   },
-                  "budget": {
-                    "type": "object",
-                    "properties": {
-                      "mode": {
-                        "type": "string",
-                        "enum": [
-                          "tokens",
-                          "tokens_and_dollars",
-                          "dollars"
-                        ]
-                      },
-                      "tokens_per_day": {
-                        "type": "integer",
-                        "minimum": 0
-                      },
-                      "monthly_dollar_ceiling": {
-                        "type": [
-                          "number",
-                          "null"
-                        ],
-                        "minimum": 0
-                      }
+                  "redaction.custom_patterns": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
                     },
-                    "additionalProperties": false
+                    "maxItems": 50
                   },
-                  "improver": {
-                    "type": "object",
-                    "properties": {
-                      "schedule": {
-                        "type": "string",
-                        "enum": [
-                          "daily",
-                          "weekly",
-                          "manual"
-                        ]
-                      }
-                    },
-                    "additionalProperties": false
+                  "retention.days": {
+                    "type": "integer",
+                    "minimum": 7
+                  },
+                  "judge.transport": {
+                    "type": "string",
+                    "enum": [
+                      "api",
+                      "cli"
+                    ]
+                  },
+                  "judge.sampling": {
+                    "type": "string",
+                    "enum": [
+                      "flagged_sample",
+                      "every"
+                    ]
+                  },
+                  "budget.mode": {
+                    "type": "string",
+                    "enum": [
+                      "tokens_day",
+                      "tokens_day_and_usd_month",
+                      "usd_month"
+                    ]
+                  },
+                  "budget.tokens_per_day": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 0
+                  },
+                  "budget.usd_per_month": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "minimum": 0
+                  },
+                  "schedule.grade": {
+                    "type": "string",
+                    "enum": [
+                      "session_end",
+                      "pr_merge"
+                    ]
+                  },
+                  "schedule.improver": {
+                    "type": "string",
+                    "enum": [
+                      "daily",
+                      "weekly",
+                      "manual"
+                    ]
+                  },
+                  "proposals.accept_mode": {
+                    "type": "string",
+                    "enum": [
+                      "merge",
+                      "pr"
+                    ]
                   }
                 },
                 "additionalProperties": false
@@ -390,82 +869,101 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "retention": {
-                      "type": "object",
-                      "properties": {
-                        "payload_days": {
-                          "type": "integer",
-                          "minimum": 7
-                        }
+                    "setup.completed": {
+                      "type": "boolean"
+                    },
+                    "redaction.enabled": {
+                      "type": "boolean"
+                    },
+                    "redaction.custom_patterns": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
                       },
-                      "required": [
-                        "payload_days"
+                      "maxItems": 50
+                    },
+                    "retention.days": {
+                      "type": "integer",
+                      "minimum": 7
+                    },
+                    "judge.transport": {
+                      "type": "string",
+                      "enum": [
+                        "api",
+                        "cli"
                       ]
                     },
-                    "sampling": {
-                      "type": "object",
-                      "properties": {
-                        "rate": {
-                          "type": "number",
-                          "minimum": 0,
-                          "maximum": 1
-                        }
-                      },
-                      "required": [
-                        "rate"
+                    "judge.sampling": {
+                      "type": "string",
+                      "enum": [
+                        "flagged_sample",
+                        "every"
                       ]
                     },
-                    "budget": {
-                      "type": "object",
-                      "properties": {
-                        "mode": {
-                          "type": "string",
-                          "enum": [
-                            "tokens",
-                            "tokens_and_dollars",
-                            "dollars"
-                          ]
-                        },
-                        "tokens_per_day": {
-                          "type": "integer",
-                          "minimum": 0
-                        },
-                        "monthly_dollar_ceiling": {
-                          "type": [
-                            "number",
-                            "null"
-                          ],
-                          "minimum": 0
-                        }
-                      },
-                      "required": [
-                        "mode",
-                        "tokens_per_day",
-                        "monthly_dollar_ceiling"
+                    "budget.mode": {
+                      "type": "string",
+                      "enum": [
+                        "tokens_day",
+                        "tokens_day_and_usd_month",
+                        "usd_month"
                       ]
                     },
-                    "improver": {
-                      "type": "object",
-                      "properties": {
-                        "schedule": {
-                          "type": "string",
-                          "enum": [
-                            "daily",
-                            "weekly",
-                            "manual"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "schedule"
+                    "budget.tokens_per_day": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "minimum": 0
+                    },
+                    "budget.usd_per_month": {
+                      "type": [
+                        "number",
+                        "null"
+                      ],
+                      "minimum": 0
+                    },
+                    "schedule.grade": {
+                      "type": "string",
+                      "enum": [
+                        "session_end",
+                        "pr_merge"
                       ]
+                    },
+                    "schedule.improver": {
+                      "type": "string",
+                      "enum": [
+                        "daily",
+                        "weekly",
+                        "manual"
+                      ]
+                    },
+                    "proposals.accept_mode": {
+                      "type": "string",
+                      "enum": [
+                        "merge",
+                        "pr"
+                      ]
+                    },
+                    "judge.api_key_set": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
-                    "retention",
-                    "sampling",
-                    "budget",
-                    "improver"
+                    "setup.completed",
+                    "redaction.enabled",
+                    "redaction.custom_patterns",
+                    "retention.days",
+                    "judge.transport",
+                    "judge.sampling",
+                    "budget.mode",
+                    "budget.tokens_per_day",
+                    "budget.usd_per_month",
+                    "schedule.grade",
+                    "schedule.improver",
+                    "proposals.accept_mode",
+                    "judge.api_key_set"
                   ]
                 }
               }
@@ -483,6 +981,36 @@
           },
           "401": {
             "description": "Missing or invalid token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Well-formed but cannot be applied",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -554,7 +1082,7 @@
                         "$ref": "#/components/schemas/Job"
                       }
                     },
-                    "next_cursor": {
+                    "nextCursor": {
                       "type": [
                         "string",
                         "null"
@@ -564,7 +1092,7 @@
                   },
                   "required": [
                     "items",
-                    "next_cursor"
+                    "nextCursor"
                   ]
                 }
               }
@@ -582,6 +1110,36 @@
           },
           "401": {
             "description": "Missing or invalid token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Well-formed but cannot be applied",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -642,6 +1200,36 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Well-formed but cannot be applied",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
           }
         }
       }
@@ -688,6 +1276,1431 @@
           },
           "401": {
             "description": "Missing or invalid token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Well-formed but cannot be applied",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions": {
+      "get": {
+        "summary": "Sessions, newest first",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "required": false,
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Agent"
+            },
+            "required": false,
+            "name": "agent",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "failed_any",
+                "all",
+                "not_graded"
+              ]
+            },
+            "required": false,
+            "name": "result",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 300
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of sessions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SessionSummary"
+                      }
+                    },
+                    "nextCursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "nextCursor"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Well-formed but cannot be applied",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}": {
+      "get": {
+        "summary": "One session",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Well-formed but cannot be applied",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}/events": {
+      "get": {
+        "summary": "Trace events of a session, in order",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "errors",
+                "evidence"
+              ],
+              "default": "all"
+            },
+            "required": false,
+            "name": "filter",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 200
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/TraceEvent"
+                      }
+                    },
+                    "nextCursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "total": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "nextCursor",
+                    "total"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Well-formed but cannot be applied",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}/raw": {
+      "get": {
+        "summary": "The unredacted source log of a session (local mode only)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The JSONL file",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Well-formed but cannot be applied",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sources": {
+      "get": {
+        "summary": "Registered log sources",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The sources",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Source"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Well-formed but cannot be applied",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Register a log folder (idempotent per agent and path)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "agent": {
+                    "$ref": "#/components/schemas/Agent"
+                  },
+                  "path": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "agent",
+                  "path"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The source",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Source"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Well-formed but cannot be applied",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sources/detected": {
+      "get": {
+        "summary": "Agent log folders found on this machine or at the container mount points",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Detected folders",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DetectedSource"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Well-formed but cannot be applied",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/imports": {
+      "post": {
+        "summary": "Import the history of all enabled sources",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "The import job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Well-formed but cannot be applied",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/trends/summary": {
+      "get": {
+        "summary": "Counts and pass rates for the Sessions header",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 365,
+              "default": 7
+            },
+            "required": false,
+            "name": "days",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrendSummary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Well-formed but cannot be applied",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/settings/judge-key": {
+      "put": {
+        "summary": "Store the judge API key (write-only; `judge.api_key_set` reports that it exists)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "apiKey": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 500
+                  }
+                },
+                "required": [
+                  "apiKey"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Stored"
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Well-formed but cannot be applied",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/judge/test": {
+      "post": {
+        "summary": "Check that the judge is reachable",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "transport": {
+                    "type": "string",
+                    "enum": [
+                      "api",
+                      "cli"
+                    ]
+                  },
+                  "apiKey": {
+                    "type": "string",
+                    "maxLength": 500
+                  }
+                },
+                "required": [
+                  "transport"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "detail"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Well-formed but cannot be applied",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/skill-repos": {
+      "get": {
+        "summary": "Registered skills repositories",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The repositories",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SkillRepo"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Well-formed but cannot be applied",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/skill-repos/global": {
+      "put": {
+        "summary": "Set the global skills repository; the path must be the root of a git repository",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "path"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The repository",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillRepo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Well-formed but cannot be applied",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/skill-repos/global/starter-rubrics": {
+      "post": {
+        "summary": "Copy the starter rubrics that the global repository lacks into rubrics/ and commit them",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Names of the rubrics that were added",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "copied": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "copied"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Well-formed but cannot be applied",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/skill-repos/{id}": {
+      "patch": {
+        "summary": "Enable or disable a skills repository",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "enabled"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The repository",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillRepo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Well-formed but cannot be applied",
             "content": {
               "application/problem+json": {
                 "schema": {

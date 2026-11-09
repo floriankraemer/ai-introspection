@@ -3,13 +3,19 @@ import { loadConfig } from './index.js';
 
 describe('loadConfig', () => {
   it('applies defaults and derives the SQLite path from the data dir', () => {
-    const c = loadConfig({ INTROSPECT_DATA_DIR: '/data' });
+    const c = loadConfig({ INTROSPECT_DATA_DIR: '/data', INTROSPECT_WATCH_POLL: '0' });
     expect(c).toEqual({
       dataDir: '/data',
       port: 7317,
       host: '127.0.0.1',
       databaseUrl: '/data/introspect.db',
+      watchPoll: false,
     });
+  });
+
+  it('polls for file changes when asked to, or when Docker sets CHOKIDAR_USEPOLLING', () => {
+    expect(loadConfig({ INTROSPECT_WATCH_POLL: '1' }).watchPoll).toBe(true);
+    expect(loadConfig({ CHOKIDAR_USEPOLLING: '1' }).watchPoll).toBe(true);
   });
 
   it('prefers DATABASE_URL', () => {
