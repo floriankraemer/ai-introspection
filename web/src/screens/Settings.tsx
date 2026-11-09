@@ -746,9 +746,11 @@ function TrendsCard({ settings, save }: { settings: SettingsData; save: (p: Patc
         }}
       />
       <p className="m-0 text-xs leading-normal text-muted">
-        A change counts as improved or worse only when a two-sided z-test at 90 % says the gap is
-        not chance. With 10 sessions per side, only gaps of about 35 points are significant. Small
-        improvements need many more sessions, so raise the minimum or the window to see them.
+        Each rubric is tested separately (Fisher’s exact test for small samples) at 90 % confidence;
+        both sides need at least this many graded sessions. A change counts as improved or worse
+        only when the gap is unlikely to be chance. With 10 sessions per side, only gaps of 40 to 50
+        points are significant. Small improvements need many more sessions, so raise the minimum or
+        the window to see them.
       </p>
     </section>
   );

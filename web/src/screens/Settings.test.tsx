@@ -35,13 +35,13 @@ describe('Settings', () => {
     });
   });
 
-  it('autosaves the trends window and explains the z-test', async () => {
+  it('autosaves the trends window and explains the per-rubric test', async () => {
     const user = userEvent.setup();
     renderApp('/settings');
     const days = await screen.findByLabelText('Compare windows of (days)');
     expect(days).toHaveValue(7);
     expect(screen.getByLabelText('Minimum graded sessions per side')).toHaveValue(10);
-    expect(screen.getByText(/z-test at 90 %/)).toBeVisible();
+    expect(screen.getByText(/Fisher’s exact test for small samples/)).toBeVisible();
     await user.clear(days);
     await user.type(days, '99');
     await user.tab();

@@ -313,7 +313,10 @@ function DataTable({
   );
 }
 
-const VERDICT: Record<ChangeVerdict, { tone: ChipTone; text: (c: TrendChange) => string }> = {
+const VERDICT: Record<
+  ChangeVerdict,
+  { tone: ChipTone; text: (c: { after: { graded: number } }) => string }
+> = {
   improved: { tone: 'pass', text: () => 'Improved' },
   worse: { tone: 'fail', text: () => 'Worse' },
   no_change: { tone: 'na', text: () => 'No change' },
@@ -332,8 +335,9 @@ function ChangeLog() {
         <div className="flex flex-col gap-0.5">
           <h2 className="m-0 text-base font-semibold">Did the fix help?</h2>
           <p className="m-0 text-[13px] text-muted">
-            Pass rate for the rubric a change targets, over the{' '}
-            {String(changes.data?.[0]?.before.window ?? 7)} days before and after it landed.
+            Pass rate for the rubric(s) a change targets, over the{' '}
+            {String(changes.data?.[0]?.before.window ?? 7)} days before and after it landed. Each
+            rubric is tested separately (Fisher’s exact test for small samples) at 90 % confidence.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -454,47 +458,81 @@ function ReferenceCard() {
   );
 }
 
+const pText = (p: number | null) =>
+  p === null ? '' : p < 0.01 ? 'p < 0.01' : `p = ${p.toFixed(2)}`;
+
+type RubricResult = TrendChange['perRubric'][number];
+
+const rateText = (r: Pick<RubricResult, 'before' | 'after'>) =>
+  `${r.before.passRate === null ? 'no data before' : pct(r.before.passRate)} → ${pct(r.after.passRate)}`;
+
 function ChangeRow({ c }: { c: TrendChange }) {
   const reset = c.kind === 'rubric_changed';
   const v = VERDICT[c.verdict];
+  const multi = !reset && c.perRubric.length > 1;
+  const p = multi ? null : (c.perRubric[0]?.pValue ?? null);
   return (
-    <tr>
-      <td className="px-3">{formatDayLocal(c.at)}</td>
-      <td className="min-w-44 px-3 whitespace-normal">{c.title}</td>
-      <td className="px-3 whitespace-normal">
-        {c.proposalId ? (
-          <Link to="/proposals">Proposal</Link>
-        ) : reset ? (
-          'Rubric change'
-        ) : (
-          'Manual edit'
-        )}
-      </td>
-      <td className="px-3 whitespace-normal">{c.rubrics.map(rubricLabel).join(', ') || 'All'}</td>
-      <td className="px-3">
-        {reset ? (
-          <span className="text-muted">baseline reset</span>
-        ) : (
-          <div className="flex flex-col">
-            <span className="font-semibold">
-              {c.before.passRate === null ? 'no data before' : pct(c.before.passRate)} →{' '}
-              {pct(c.after.passRate)}
-            </span>
-            <span className="text-xs text-muted">
-              {String(c.before.graded)} → {String(c.after.graded)} graded
-            </span>
-          </div>
-        )}
-      </td>
-      <td className="px-3 whitespace-normal">
-        {reset ? (
-          <span className="text-muted">–</span>
-        ) : (
-          <Chip tone={v.tone} className="xl:whitespace-nowrap">
-            {v.text(c)}
-          </Chip>
-        )}
-      </td>
-    </tr>
+    <>
+      <tr>
+        <td className="px-3">{formatDayLocal(c.at)}</td>
+        <td className="min-w-44 px-3 whitespace-normal">{c.title}</td>
+        <td className="px-3 whitespace-normal">
+          {c.proposalId ? (
+            <Link to="/proposals">Proposal</Link>
+          ) : reset ? (
+            'Rubric change'
+          ) : (
+            'Manual edit'
+          )}
+        </td>
+        <td className="px-3 whitespace-normal">{c.rubrics.map(rubricLabel).join(', ') || 'All'}</td>
+        <td className="px-3">
+          {reset ? (
+            <span className="text-muted">baseline reset</span>
+          ) : (
+            <div className="flex flex-col">
+              <span className="font-semibold">{rateText(c)}</span>
+              <span className="text-xs text-muted">
+                {String(c.before.graded)} → {String(c.after.graded)} graded
+                {p === null ? '' : ` · ${pText(p)}`}
+              </span>
+            </div>
+          )}
+        </td>
+        <td className="px-3 whitespace-normal">
+          {reset ? (
+            <span className="text-muted">–</span>
+          ) : (
+            <Chip tone={v.tone} className="xl:whitespace-nowrap">
+              {v.text(c)}
+            </Chip>
+          )}
+        </td>
+      </tr>
+      {multi
+        ? c.perRubric.map((r) => (
+            <tr key={r.rubric} data-subrow>
+              <td colSpan={3} />
+              <td className="px-3 pl-6 text-[13px] whitespace-normal text-muted">
+                {rubricLabel(r.rubric)}
+              </td>
+              <td className="px-3">
+                <div className="flex flex-col">
+                  <span className="text-[13px]">{rateText(r)}</span>
+                  <span className="text-xs text-muted">
+                    {String(r.before.graded)} → {String(r.after.graded)} graded
+                    {r.pValue === null ? '' : ` · ${pText(r.pValue)}`}
+                  </span>
+                </div>
+              </td>
+              <td className="px-3 whitespace-normal">
+                <Chip tone={VERDICT[r.verdict].tone} className="xl:whitespace-nowrap">
+                  {VERDICT[r.verdict].text(r)}
+                </Chip>
+              </td>
+            </tr>
+          ))
+        : null}
+    </>
   );
 }

@@ -35,7 +35,7 @@ describe('Trends', () => {
     expect(tooEarly).toHaveTextContent('64% → 66%');
     expect(reset).toHaveTextContent('baseline reset');
     expect(reset).not.toHaveTextContent('null');
-    expect(improved).toHaveTextContent('58% → 72%');
+    expect(improved).toHaveTextContent('43% → 83%');
     expect(improved).toHaveTextContent('14 → 18 graded');
     expect(within(improved).getByText('Improved')).toBeVisible();
     expect(within(improved).getByRole('link', { name: 'Proposal' })).toHaveAttribute(
@@ -78,6 +78,20 @@ describe('Trends', () => {
     expect(
       screen.getByRole('button', { name: /^Baseline reset: Silent workaround/ }),
     ).toBeVisible();
+  });
+
+  it('lists each rubric of a multi-rubric change with its own verdict and p-value', async () => {
+    renderApp('/trends');
+    const log = await screen.findByRole('region', { name: 'Change log' });
+    const rows = await within(log).findAllByRole('row');
+    const sub = rows.filter((r) => r.hasAttribute('data-subrow'));
+    expect(sub).toHaveLength(2);
+    expect(sub[0]).toHaveTextContent('43% → 83%');
+    expect(sub[0]).toHaveTextContent('14 → 18 graded · p = 0.03');
+    expect(sub[0]).toHaveTextContent('Improved');
+    expect(sub[1]).toHaveTextContent('p = 1.00');
+    expect(sub[1]).toHaveTextContent('No change');
+    expect(within(log).getAllByText(/p = /)).toHaveLength(2);
   });
 
   it('explains empty states and names the next step', async () => {

@@ -76,7 +76,7 @@ export function createRubrics(deps: RubricStoreDeps) {
   /** Reads `<repo>/rubrics/*.md`, records every new version in the table, returns the current ones. */
   async function sync(): Promise<{ rubrics: Rubric[]; problems: RubricProblem[] }> {
     const key = await cacheKey();
-    if (cached && cached.key === key && Date.now() - cached.at < cacheMs) return cached.value;
+    if (cached?.key === key && Date.now() - cached.at < cacheMs) return cached.value;
     const value = read();
     cached = { at: Date.now(), key, value };
     value.catch(() => {

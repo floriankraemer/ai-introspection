@@ -123,15 +123,20 @@ function changesOf(thisWeek: number): TrendChange[] {
     rubrics: m.rubrics,
   });
   const [f1, r1, f2] = [of(fix1), of(reset), of(fix2)];
-  const withPer = (c: Omit<TrendChange, 'perRubric'>): TrendChange => ({
+  const withPer = (
+    c: Omit<TrendChange, 'perRubric'>,
+    perRubric?: TrendChange['perRubric'],
+  ): TrendChange => ({
     ...c,
-    perRubric: c.rubrics.map((rubric) => ({
-      rubric,
-      before: { passRate: c.before.passRate, graded: c.before.graded },
-      after: { passRate: c.after.passRate, graded: c.after.graded },
-      verdict: c.verdict,
-      pValue: null,
-    })),
+    perRubric:
+      perRubric ??
+      c.rubrics.map((rubric) => ({
+        rubric,
+        before: { passRate: c.before.passRate, graded: c.before.graded },
+        after: { passRate: c.after.passRate, graded: c.after.graded },
+        verdict: c.verdict,
+        pValue: null,
+      })),
   });
   return [
     withPer({
@@ -148,13 +153,32 @@ function changesOf(thisWeek: number): TrendChange[] {
       after: { passRate: 0.77, graded: 17, window: 7 },
       verdict: 'too_early',
     }),
-    withPer({
-      ...f1,
-      id: 'ch-1',
-      before: { passRate: 0.58, graded: 14, window: 7 },
-      after: { passRate: 0.72, graded: 18, window: 7 },
-      verdict: 'improved',
-    }),
+    withPer(
+      {
+        ...f1,
+        rubrics: ['efficiency', 'verbosity'],
+        id: 'ch-1',
+        before: { passRate: 0.43, graded: 14, window: 7 },
+        after: { passRate: 0.83, graded: 18, window: 7 },
+        verdict: 'improved',
+      },
+      [
+        {
+          rubric: 'efficiency',
+          before: { passRate: 0.43, graded: 14 },
+          after: { passRate: 0.83, graded: 18 },
+          verdict: 'improved',
+          pValue: 0.03,
+        },
+        {
+          rubric: 'verbosity',
+          before: { passRate: 0.86, graded: 14 },
+          after: { passRate: 0.89, graded: 18 },
+          verdict: 'no_change',
+          pValue: 1,
+        },
+      ],
+    ),
   ];
 }
 
