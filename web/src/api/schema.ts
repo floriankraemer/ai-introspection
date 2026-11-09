@@ -574,6 +574,7 @@ export interface paths {
           agent?: components['schemas']['Agent'];
           result?: 'failed_any' | 'all' | 'not_graded';
           cursor?: string;
+          since?: string;
           limit?: number;
         };
         header?: never;
@@ -1228,11 +1229,11 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Counts and pass rates for the Sessions header */
+    /** Counts and pass rates for the Sessions header (days=0 means all time) */
     get: {
       parameters: {
         query?: {
-          days?: number;
+          days?: number | null;
         };
         header?: never;
         path?: never;
@@ -3229,6 +3230,87 @@ export interface paths {
       requestBody?: never;
       responses: {
         /** @description The grading job */
+        202: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/json': components['schemas']['Job'];
+          };
+        };
+        /** @description Invalid request */
+        400: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Missing or invalid token */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Not found */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Conflicts with the current state */
+        409: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Well-formed but cannot be applied */
+        422: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/trends/scan': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Look for manual edits, rubric versions and judge changes now, without waiting for the schedule */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description The scan job */
         202: {
           headers: {
             [name: string]: unknown;
