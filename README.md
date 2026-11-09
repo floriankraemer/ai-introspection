@@ -2,6 +2,8 @@
 
 Local-first tool that grades your coding-agent sessions and proposes fixes to your skills and rubrics.
 
+Full documentation: [User manual](docs/manual/README.md) (setup, daily use, troubleshooting).
+
 ## Quick start
 
 ```sh
@@ -103,5 +105,7 @@ Everything runs in Docker; the host needs only Docker with Compose.
 - `make test` runs the unit tests; `make test-pg` runs the Postgres tests.
 - `make lint`, `make build`, `make shell`, `make down` do what they say.
 - `make doctor` runs `introspect doctor` in the running stack; the same report is at `GET /v1/doctor`.
+- `make e2e` runs the Playwright end-to-end suite in Docker; `make e2e-update` refreshes its screenshot baselines.
+- `make manual-screenshots` regenerates the manual's screenshots (see [docs/manual/CONTRIBUTING.md](docs/manual/CONTRIBUTING.md)).
 
 Architecture: [docs/architecture/architecture-overview.md](docs/architecture/architecture-overview.md).
