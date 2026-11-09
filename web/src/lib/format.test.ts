@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TraceEvent } from '../api/types.js';
-import { collapseRuns, formatOffset, formatWhen } from './format.js';
+import { collapseRuns, formatOffset, formatTokens, formatWhen } from './format.js';
 
 const ev = (seq: number, isError: boolean, name = 'bash'): TraceEvent => ({
   id: `e${String(seq)}`,
@@ -47,5 +47,11 @@ describe('formatting', () => {
     expect(formatWhen('2026-11-09T10:00:00Z', now)).toBe('2 h ago');
     expect(formatWhen('2026-11-08T08:00:00Z', now)).toBe('Yesterday');
     expect(formatWhen('2026-11-06T08:00:00Z', now)).toBe('3 days ago');
+  });
+});
+
+describe('formatTokens', () => {
+  it('abbreviates thousands and millions', () => {
+    expect([950, 62_000, 4_180_000].map(formatTokens)).toEqual(['950', '62k', '4.2M']);
   });
 });

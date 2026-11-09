@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useApi } from '../api/context.js';
 import { useJob, usePatchSettings, useStartImport } from '../api/queries.js';
 import type { DetectedSource, JudgeTransport, SkillRepo } from '../api/types.js';
+import { FailingChecks } from '../components/HealthCheck.js';
 import { JudgeTest } from '../components/JudgeTest.js';
 import { Button, Card, ErrorState, Field, FIELD, Loading } from '../components/ui.js';
 import { AGENT_LABEL } from '../lib/format.js';
@@ -255,6 +256,7 @@ function DoneStep() {
           />
         </>
       )}
+      <FailingChecks />
       <p className="m-0 text-sm text-muted">
         Everything is set up. You can open Sessions now; the import keeps running in the background.
       </p>
@@ -281,7 +283,7 @@ export function Setup() {
     apiKey: '',
     tokens: String(DEFAULT_BUDGET),
   });
-  const [path, setPath] = useState('');
+  const [edited, setPath] = useState<string | null>(null);
   const [repo, setRepo] = useState<SkillRepo | null>(null);
   const [copied, setCopied] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -292,6 +294,12 @@ export function Setup() {
   }, [step]);
 
   const detected = useQuery({ queryKey: ['sources-detected'], queryFn: () => api.detectSources() });
+  // Prefill with the first skills repo the server found, until the user types their own.
+  const repos = useQuery({
+    queryKey: ['skill-repos-detected'],
+    queryFn: () => api.detectSkillRepos(),
+  });
+  const path = edited ?? repos.data?.[0]?.path ?? '';
   const copy = useMutation({
     mutationFn: () => api.copyStarterRubrics(),
     onSuccess: (r) => {

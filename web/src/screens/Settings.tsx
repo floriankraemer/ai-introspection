@@ -4,6 +4,7 @@ import { useState, type ReactNode } from 'react';
 import { useApi } from '../api/context.js';
 import { usePatchSettings, useSettings, useSkillRepos, useSources } from '../api/queries.js';
 import type { Agent, Settings as SettingsData, SourceStatus } from '../api/types.js';
+import { HealthCheck } from '../components/HealthCheck.js';
 import { JudgeTest } from '../components/JudgeTest.js';
 import {
   BTN,
@@ -100,6 +101,65 @@ function NumberSetting({
         onBlur={() => {
           if (!invalid && parsed !== value) onCommit(parsed);
         }}
+      />
+    </Field>
+  );
+}
+
+/** One regular expression per line; applied at ingest on top of the built-in secret patterns. */
+function PatternsSetting({
+  value,
+  onCommit,
+}: {
+  value: string[];
+  onCommit: (v: string[]) => void;
+}) {
+  const [text, setText] = useState(value.join('\n'));
+  const [error, setError] = useState<string | null>(null);
+  const commit = () => {
+    const lines = text
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean);
+    const bad = lines.find((l) => {
+      try {
+        new RegExp(l, 'u');
+        return false;
+      } catch {
+        return true;
+      }
+    });
+    if (bad !== undefined) {
+      setError(`Not a valid regular expression: ${bad}`);
+      return;
+    }
+    setError(null);
+    if (lines.join('\n') !== value.join('\n')) onCommit(lines);
+  };
+  return (
+    <Field
+      label="Extra redaction patterns"
+      hint={
+        error ? (
+          <span role="alert" className="text-fail">
+            {error}
+          </span>
+        ) : (
+          'One regular expression per line (up to 50). Matches are replaced before anything is stored.'
+        )
+      }
+    >
+      <textarea
+        rows={3}
+        spellCheck={false}
+        placeholder="acme_[a-z0-9]{32}"
+        className={`${FIELD} h-auto py-2 font-mono`}
+        value={text}
+        aria-invalid={error !== null}
+        onChange={(e) => {
+          setText(e.target.value);
+        }}
+        onBlur={commit}
       />
     </Field>
   );
@@ -214,6 +274,12 @@ function SourcesCard({ settings, save }: { settings: SettingsData; save: (p: Pat
         />
         Redact secrets at ingest (tokens, keys, .env values)
       </label>
+      <PatternsSetting
+        value={settings['redaction.custom_patterns']}
+        onCommit={(v) => {
+          save({ 'redaction.custom_patterns': v });
+        }}
+      />
       <NumberSetting
         label="Keep event payloads for (days)"
         hint="Minimum 7. Sessions, signals and grades are kept; pinned sessions are never purged."
@@ -476,6 +542,7 @@ export function Settings() {
           ''
         )}
       </p>
+      <HealthCheck />
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         <SourcesCard settings={q.data} save={save} />
         <JudgeCard settings={q.data} save={save} />

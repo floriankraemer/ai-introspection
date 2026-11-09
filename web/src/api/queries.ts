@@ -26,6 +26,12 @@ export function usePatchSettings() {
   });
 }
 
+/** Health checks are cheap but must be re-run on demand, so they are never served stale. */
+export function useDoctor() {
+  const api = useApi();
+  return useQuery({ queryKey: ['doctor'], queryFn: () => api.getDoctor(), staleTime: 0 });
+}
+
 export function useSources() {
   const api = useApi();
   return useQuery({ queryKey: ['sources'], queryFn: () => api.listSources() });

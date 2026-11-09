@@ -22,15 +22,24 @@ export function AuthExchange() {
   );
 }
 
+const OPEN_CMD = 'make open';
+
 export function AuthRequired() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-page p-4 text-ink">
-      <Card className="flex max-w-md flex-col gap-3 p-6">
+      <Card className="flex w-full max-w-lg flex-col gap-3 p-6">
         <h1 className="m-0 text-[22px] font-bold">Open Introspect with its link</h1>
         <p className="m-0 text-sm leading-normal text-ink-soft">
-          This page needs the local access token. Run <code>introspect open</code> in a terminal; it
-          opens this page with the token attached. With Docker, run{' '}
-          <code>docker compose exec introspect node dist/cli.js open</code>.
+          This browser is not signed in yet. Run this in a terminal in the project folder, then open
+          the link it prints:
+        </p>
+        <pre className="m-0 rounded-lg border border-line bg-sunken p-3 font-mono text-[13px] break-all whitespace-pre-wrap">
+          {OPEN_CMD}
+        </pre>
+        <p className="m-0 text-sm leading-normal text-muted">
+          Not using Make? Run <code>docker compose exec introspect introspect open</code>, or{' '}
+          <code>introspect open</code> outside Docker. The link signs this browser in and is only
+          valid for you.
         </p>
       </Card>
     </div>

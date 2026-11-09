@@ -13,7 +13,7 @@ const NAV = [
 function ThemeSelect() {
   const [pref, setPref] = useState<ThemePref>(getThemePref);
   return (
-    <label className="mt-auto flex flex-col gap-1 px-3 pt-6 text-xs text-muted">
+    <label className="ml-auto flex flex-col gap-1 px-3 text-xs lg:mt-auto lg:ml-0 lg:pt-6 text-muted">
       Theme
       <select
         className="h-10 rounded-lg border border-line bg-surface px-2 text-sm text-ink"
@@ -44,9 +44,9 @@ export function Shell() {
       </a>
       <nav
         aria-label="Main"
-        className="box-border flex flex-[1_1_220px] flex-col gap-1 border-r border-line bg-surface px-4 py-6"
+        className="box-border flex flex-[1_1_100%] flex-row flex-wrap items-center gap-1 border-b border-line bg-surface px-4 py-3 lg:flex-[1_1_220px] lg:flex-col lg:items-stretch lg:border-r lg:border-b-0 lg:py-6"
       >
-        <div className="px-3 pb-5 text-base font-bold">Introspect · local</div>
+        <div className="w-full px-3 pb-2 text-base font-bold lg:pb-5">Introspect · local</div>
         {NAV.map((item) => {
           const active = item.match(path);
           return (
@@ -65,7 +65,7 @@ export function Shell() {
       <main
         id="main"
         tabIndex={-1}
-        className="box-border flex min-w-0 flex-[999_1_560px] flex-col p-8 outline-none"
+        className="box-border flex min-w-0 flex-[999_1_560px] flex-col p-4 sm:p-8 outline-none"
       >
         <Outlet />
       </main>

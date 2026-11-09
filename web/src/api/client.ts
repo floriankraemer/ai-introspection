@@ -48,6 +48,7 @@ export const realApi: Api = {
   detectSources: () => request('GET', '/sources/detected'),
   addSource: (body) => request('POST', '/sources', body),
   listSkillRepos: () => request('GET', '/skill-repos'),
+  detectSkillRepos: () => request('GET', '/skill-repos/detected'),
   putGlobalSkillRepo: (path) => request('PUT', '/skill-repos/global', { path }),
   copyStarterRubrics: () => request('POST', '/skill-repos/global/starter-rubrics'),
   patchSkillRepo: (rid, body) => request('PATCH', `/skill-repos/${id(rid)}`, body),
@@ -57,5 +58,6 @@ export const realApi: Api = {
   listSessions: (q) => request('GET', `/sessions${qs({ ...q })}`),
   getSession: (sid) => request('GET', `/sessions/${id(sid)}`),
   listEvents: (sid, q) => request('GET', `/sessions/${id(sid)}/events${qs({ ...q })}`),
+  getDoctor: () => request('GET', '/doctor'),
   exchangeToken: (token) => request('POST', '/auth/session', { token }),
 };

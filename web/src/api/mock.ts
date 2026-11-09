@@ -2,6 +2,7 @@ import { ApiError } from './client.js';
 import type {
   Api,
   DetectedSource,
+  DoctorCheck,
   Job,
   SessionDetail,
   SessionGrade,
@@ -25,6 +26,14 @@ const RUBRICS = [
   { name: 'Verbosity', target: 0.7 },
   { name: 'Silent workaround', target: 0.8 },
 ];
+
+const JOB_META = {
+  attempts: 1,
+  maxAttempts: 3,
+  runAfter: '2026-01-01T00:00:00.000Z',
+  createdAt: '2026-01-01T00:00:00.000Z',
+  finishedAt: null,
+};
 
 const H = 3_600_000;
 const SESSIONS: {
@@ -200,9 +209,35 @@ const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150): Api {
   const wait = () => delay(latencyMs);
   const fresh = scenario === 'fresh';
+  const doctor: DoctorCheck[] = [
+    { id: 'database', label: 'Database', status: 'ok', detail: 'SQLite, writable.', fix: null },
+    fresh
+      ? {
+          id: 'sources',
+          label: 'Agent logs',
+          status: 'fail',
+          detail: 'No agent log folder is readable at /sources/claude/projects.',
+          fix: 'Start with `make up`, which mounts ~/.claude/projects read-only.',
+        }
+      : {
+          id: 'sources',
+          label: 'Agent logs',
+          status: 'ok',
+          detail: '2 folders readable.',
+          fix: null,
+        },
+    {
+      id: 'git',
+      label: 'git',
+      status: fresh ? 'warn' : 'ok',
+      detail: fresh ? 'git is installed but no user.name is set.' : 'git 2.43 found.',
+      fix: fresh ? 'Run `git config --global user.name "Your Name"`.' : null,
+    },
+  ];
   let settings: Settings = {
     'setup.completed': !fresh,
     'redaction.enabled': true,
+    'redaction.custom_patterns': [],
     'retention.days': 90,
     'judge.transport': 'api',
     'judge.api_key_set': !fresh,
@@ -342,11 +377,15 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
       repos = [repo, ...repos.filter((r) => r.kind === 'project')];
       return repo;
     },
+    async detectSkillRepos() {
+      await wait();
+      return [];
+    },
     async copyStarterRubrics() {
       await wait();
       repos = repos.map((r) => (r.kind === 'global' ? { ...r, hasRubrics: true } : r));
       return {
-        copied: RUBRICS.map((r) => `rubrics/${r.name.toLowerCase().replace(/ /g, '-')}.md`),
+        copied: RUBRICS.map((r) => r.name.toLowerCase().replace(/ /g, '-')),
       };
     },
     async patchSkillRepo(id, body) {
@@ -364,6 +403,7 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
         status: 'queued',
         progress: { done: 0, total: 243 },
         error: null,
+        ...JOB_META,
       };
       jobs.set(job.id, job);
       return job;
@@ -445,6 +485,10 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
     },
     async exchangeToken() {
       await wait();
+    },
+    async getDoctor() {
+      await wait();
+      return { checks: doctor };
     },
   };
 }
