@@ -21,3 +21,11 @@ jobs:
       - run: make test-pg
       - name: Runtime image builds
         run: docker compose build
+      - name: End-to-end tests
+        run: make e2e
+      - name: E2E traces and screenshots
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: e2e-results
+          path: e2e/.work/results

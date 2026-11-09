@@ -1,0 +1,80 @@
+# End-to-end stack: the runtime image with fake judge and improver, seeded session folders and a
+# Playwright runner. Use through `make e2e` (e2e/run.sh); it creates e2e/.work first, as your user.
+name: introspect-pw
+services:
+  app:
+    image: introspect-pw:app
+    build:
+      context: .
+      target: runtime
+    user: '${UID:-1000}:${GID:-1000}'
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    init: true
+    environment:
+      CHOKIDAR_USEPOLLING: '1'
+      INTROSPECT_JUDGE: fake
+      INTROSPECT_IMPROVER: fake
+      TZ: UTC
+      GIT_AUTHOR_NAME: Introspect E2E
+      GIT_AUTHOR_EMAIL: e2e@example.invalid
+      GIT_COMMITTER_NAME: Introspect E2E
+      GIT_COMMITTER_EMAIL: e2e@example.invalid
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:7317/v1/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))
+      interval: 1s
+      timeout: 3s
+      retries: 60
+    volumes:
+      # Throwaway: `down -v` deletes it.
+      - data:/data
+      - type: bind
+        source: ./e2e/.work/sources/claude/projects
+        target: /sources/claude/projects
+        read_only: true
+      - type: bind
+        source: ./e2e/.work/sources/codex/sessions
+        target: /sources/codex/sessions
+        read_only: true
+      # Empty: the setup wizard creates the repository.
+      - type: bind
+        source: ./e2e/.work/repos/skills
+        target: /repos/skills
+      - type: bind
+        source: ./e2e/.work/repos/projects
+        target: /repos/projects
+
+  playwright:
+    image: introspect-pw:playwright
+    build:
+      context: ./e2e
+    # Shares the app's network: the API only answers to Host 127.0.0.1:7317 (ADR-0008).
+    network_mode: 'service:app'
+    depends_on:
+      app:
+        condition: service_healthy
+    user: '${UID:-1000}:${GID:-1000}'
+    init: true
+    ipc: host
+    working_dir: /opt/e2e
+    environment:
+      TZ: UTC
+      NPM_CONFIG_UPDATE_NOTIFIER: 'false'
+    volumes:
+      # The sign-in token, read-only.
+      - data:/data:ro
+      - ./e2e/.work:/work
+      - ./e2e/__screenshots:/opt/e2e/__screenshots
+      # Fixture builders of the ingest tests; the seed script reuses them.
+      - ./src/platform/testkit/agent-fixtures.ts:/opt/e2e/vendor/agent-fixtures.ts:ro
+
+volumes:
+  data:
