@@ -39,7 +39,10 @@ export async function finalizeSession(
     signal_version: SIGNAL_VERSION,
     computed_at: now.toISOString(),
   };
-  await db.transaction().execute(async (tx) => {
+  // Already inside a transaction when a forced re-ingest finishes the session.
+  const transact = <T>(fn: (tx: Db) => Promise<T>): Promise<T> =>
+    db.isTransaction ? fn(db) : db.transaction().execute(fn);
+  await transact(async (tx) => {
     await tx
       .insertInto('signal')
       .values({ session_id: sessionId, workspace_id: workspaceId, ...values })

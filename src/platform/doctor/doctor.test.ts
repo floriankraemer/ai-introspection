@@ -21,6 +21,18 @@ import {
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'introspect-doctor-'));
 const missingProgram = () => Promise.reject(Object.assign(new Error('nope'), { code: 'ENOENT' }));
 
+const judge = (over: Partial<DoctorInput['judge']> = {}): DoctorInput['judge'] => ({
+  transport: 'api',
+  keySet: true,
+  fake: false,
+  cli: {
+    credentialsPath: '/run/claude/credentials.json',
+    loginPresent: true,
+    isolationProblem: null,
+  },
+  ...over,
+});
+
 function input(over: Partial<DoctorInput> = {}): DoctorInput {
   return {
     dataDir: tmp(),
@@ -28,7 +40,8 @@ function input(over: Partial<DoctorInput> = {}): DoctorInput {
     db: {},
     sources: [],
     repos: [],
-    judge: { transport: 'api', keySet: true },
+    rubricProblems: [],
+    judge: judge(),
     env: {},
     uid: process.getuid?.(),
     run: missingProgram,
@@ -146,16 +159,29 @@ describe('gh check', () => {
 describe('judge check', () => {
   it('needs a key for the api transport', async () => {
     expect((await checkJudge(input())).status).toBe('ok');
-    expect((await checkJudge(input({ judge: { transport: 'api', keySet: false } }))).status).toBe(
-      'warn',
-    );
+    expect((await checkJudge(input({ judge: judge({ keySet: false }) }))).status).toBe('warn');
   });
-  it('needs the claude binary for the cli transport', async () => {
-    const cli = { transport: 'cli' as const, keySet: false };
+  it('needs the claude binary, a login and an isolated home for the cli transport', async () => {
+    const cli = judge({ transport: 'cli', keySet: false });
+    const found = () => Promise.resolve('2.1.0');
     expect((await checkJudge(input({ judge: cli }))).status).toBe('warn');
-    expect(
-      (await checkJudge(input({ judge: cli, run: () => Promise.resolve('1.0') }))).status,
-    ).toBe('ok');
+    expect((await checkJudge(input({ judge: cli, run: found }))).status).toBe('ok');
+    const noLogin = judge({
+      transport: 'cli',
+      cli: { credentialsPath: '/x', loginPresent: false, isolationProblem: null },
+    });
+    expect(await checkJudge(input({ judge: noLogin, run: found }))).toMatchObject({
+      status: 'warn',
+      detail: 'No Claude login at /x',
+    });
+    const overlapping = judge({
+      transport: 'cli',
+      cli: { credentialsPath: '/x', loginPresent: true, isolationProblem: '/a overlaps /b' },
+    });
+    expect((await checkJudge(input({ judge: overlapping, run: found }))).status).toBe('fail');
+  });
+  it('warns when the fake judge is active', async () => {
+    expect((await checkJudge(input({ judge: judge({ fake: true }) }))).status).toBe('warn');
   });
 });
 

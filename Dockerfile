@@ -43,6 +43,10 @@ WORKDIR /app
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git ca-certificates \
  && rm -rf /var/lib/apt/lists/*
+# The claude CLI is the second judge transport (subscription login, local mode). Pinned: the adapter
+# refuses an untested major version. It runs with a private HOME under /data and a read-only copy
+# of the login file only; see compose.yaml.
+RUN npm install -g @anthropic-ai/claude-code@2.1.319
 # /data is world-writable (sticky) so the container works with any host UID:GID.
 RUN mkdir /data && chmod 1777 /data \
  && printf '#!/bin/sh\nexec node /app/dist/cli.js "$@"\n' > /usr/local/bin/introspect \

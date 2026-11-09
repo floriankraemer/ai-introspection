@@ -75,7 +75,7 @@ export interface JobQueue {
   /** Retry with backoff, or `dead` after the last attempt. */
   fail(jobId: string, workerId: string, error: string, now?: Date): Promise<JobStatus>;
   /** Wait for a budget or time window without consuming an attempt. */
-  defer(jobId: string, workerId: string, runAfter: Date): Promise<void>;
+  defer(jobId: string, workerId: string, runAfter: Date, reason?: string): Promise<void>;
   /** Returns jobs whose worker vanished to `queued` (or `dead` when out of attempts). */
   reapExpired(now?: Date): Promise<number>;
   /** The "retry" action for dead jobs in Settings. */
@@ -195,7 +195,7 @@ export function createJobQueue({ db, dialect }: DbHandle): JobQueue {
       });
     },
 
-    async defer(jobId, workerId, runAfter) {
+    async defer(jobId, workerId, runAfter, reason) {
       await db
         .updateTable('job')
         .set((eb) => ({
@@ -204,6 +204,8 @@ export function createJobQueue({ db, dialect }: DbHandle): JobQueue {
           run_after: iso(runAfter),
           lease_until: null,
           locked_by: null,
+          // Why it waits (for example the budget); shown as the job's error.
+          ...(reason !== undefined && { last_error: reason }),
         }))
         .where('id', '=', jobId)
         .where('locked_by', '=', workerId)

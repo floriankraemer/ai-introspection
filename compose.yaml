@@ -28,6 +28,11 @@ services:
       GIT_COMMITTER_NAME:
       GIT_COMMITTER_EMAIL:
       GH_TOKEN:
+      # Test-only judge (`fake`); leave it out of .env for real grading.
+      INTROSPECT_JUDGE:
+      # The CLI judge copies this one file into its private HOME (/data/claude-home). It never sees
+      # ~/.claude itself, so the judge's own sessions cannot land in /sources and be ingested.
+      INTROSPECT_CLAUDE_CREDENTIALS: /run/claude/credentials.json
     volumes:
       - data:/data
       # Agent logs, read-only. Compose has no optional bind mounts: a missing folder is created
@@ -40,6 +45,13 @@ services:
       - type: bind
         source: ${HOME}/.codex/sessions
         target: /sources/codex/sessions
+        read_only: true
+      # Your Claude login for the CLI judge: one file, read-only. `make up` creates an empty file
+      # when you have none (the doctor then reports "no login"). After a new `claude login` on the
+      # host, run `docker compose restart` so the container sees the new file.
+      - type: bind
+        source: ${INTROSPECT_CLAUDE_CREDENTIALS:-${HOME}/.claude/.credentials.json}
+        target: /run/claude/credentials.json
         read_only: true
       # Global skills repository and project repositories, read-write: Introspect commits
       # rubrics and merges proposals there. `make up` creates both folders as your user first.

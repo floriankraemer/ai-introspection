@@ -16,6 +16,22 @@ The default `~/.introspect/skills` starts empty, and step 3 of the setup wizard 
 Never point it at `~/.claude`: that folder holds your Claude credentials and transcripts, and the mount is read-write.
 If something does not work, `make doctor` checks the setup and prints one fix per problem (see ADR-0011).
 
+## Grading
+
+Introspect grades ended sessions against the rubrics in `rubrics/` of your skills repository: sessions the signals flagged, plus a 20 % sample (Settings: sampling `every` grades all).
+Grading starts by itself shortly after a session ends; `introspect grade --since 7d` (or `--session <id>`, `--all`) grades on demand and ignores the sampling rule (add `--policy` to keep it).
+Run it in the stack with `docker compose exec introspect introspect grade --since 7d`.
+
+Two ways to run the judge (Settings, "Runs via"):
+
+- **Anthropic API**: paste a key in Settings. It is stored in `<data>/secrets` (mode 0600), never in the database. Default model `claude-sonnet-5-5`.
+- **Local claude CLI**: uses your subscription. Run `claude login` on the host; `make up` mounts only `~/.claude/.credentials.json`, read-only, into the container (set `INTROSPECT_CLAUDE_CREDENTIALS` for another path). The CLI runs with a private home at `/data/claude-home`, so its own sessions are never read as agent logs. After a new login, `docker compose restart`.
+
+A daily token budget (default 1,000,000) and an optional monthly dollar ceiling are set in Settings; work over budget waits for the next midnight or month (`GET /v1/budget`).
+A rubric counts as trusted once the judge agrees with at least 8 of your 10 hand labels (Rubrics screen); untrusted rubrics are graded but marked.
+
+`INTROSPECT_JUDGE=fake` (environment only) swaps in a deterministic judge for tests and demos.
+
 ## Development
 
 Everything runs in Docker; the host needs only Docker with Compose.

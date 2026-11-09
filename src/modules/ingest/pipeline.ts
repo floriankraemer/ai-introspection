@@ -200,22 +200,51 @@ function findRepoRoot(cwd: string | undefined): Promise<string | null> {
   return cwd?.startsWith('/') ? walk(cwd) : Promise.resolve(null);
 }
 
+export interface IngestOptions {
+  /**
+   * Rebuild the session from the first byte (an adapter or redaction version moved). Events and
+   * signals are replaced in one transaction; grades, pins and labels stay, and events keep their
+   * ids by position so a grade's evidence ids still resolve.
+   */
+  force?: boolean;
+}
+
 export async function ingestFile(
   deps: PipelineDeps,
   source: { id: string; agent: Agent },
   path: string,
+  options: IngestOptions = {},
 ): Promise<IngestFileResult> {
   // One run per session, not per file: two sources holding the same session must not interleave.
   const sid = deriveSessionId(source.agent, adapterFor(source.agent).nativeIdFromPath(path));
-  return withLock(sid, () => run(deps, source, path));
+  return withLock(sid, async () => {
+    if (!options.force) return run(deps, source, path, false);
+    // Inside the transaction nothing may use the outer connection (SQLite has one and would wait
+    // for ever), so the settings are read first and handed in as a value.
+    const settings = await deps.settings.get();
+    return deps.db
+      .transaction()
+      .execute((tx) =>
+        run(
+          { ...deps, db: tx, settings: { get: () => Promise.resolve(settings) } },
+          source,
+          path,
+          true,
+        ),
+      );
+  });
 }
 
 async function run(
   deps: PipelineDeps,
   source: { id: string; agent: Agent },
   path: string,
+  force: boolean,
 ): Promise<IngestFileResult> {
   const { db, workspaceId } = deps;
+  // A forced run is already inside one transaction (see ingestFile); Kysely cannot nest them.
+  const transact = <T>(fn: (tx: Db) => Promise<T>): Promise<T> =>
+    db.isTransaction ? fn(db) : db.transaction().execute(fn);
   const now = deps.now ?? (() => new Date());
   const st = await stat(path).catch(() => null);
   if (!st?.isFile()) return { status: 'missing', events: 0, reset: false };
@@ -259,6 +288,10 @@ async function run(
       start = 0;
     }
   }
+  if (force && cursor) {
+    reset = true;
+    start = 0;
+  }
   const fp = await currentFingerprint(path, st.size);
 
   if (!reset && cursor && st.size === start) {
@@ -278,8 +311,15 @@ async function run(
     };
   }
 
+  const keptIds = new Map<number, string>();
   if (reset) {
-    await db.transaction().execute(async (tx) => {
+    await transact(async (tx) => {
+      const old = await tx
+        .selectFrom('event')
+        .select(['seq', 'id'])
+        .where('session_id', '=', sid)
+        .execute();
+      for (const e of old) keptIds.set(e.seq, e.id);
       await tx.deleteFrom('event').where('session_id', '=', sid).execute();
       await tx.deleteFrom('signal').where('session_id', '=', sid).execute();
     });
@@ -384,11 +424,12 @@ async function run(
         : e.input,
     );
     const output = field(e.output);
+    const seq = nextSeq++;
     const row: EventRow = {
-      id: newId(),
+      id: keptIds.get(seq) ?? newId(),
       workspace_id: workspaceId,
       session_id: sid,
-      seq: nextSeq++,
+      seq,
       ts: e.ts ?? null,
       kind: e.kind,
       name: plain(e.name),
@@ -489,7 +530,7 @@ async function run(
     const title = s.title ?? s.fallbackTitle;
     const repoRoot = s.touched ? await findRepoRoot(s.cwd ?? undefined) : null;
     const startedAt = s.startedAt ?? new Date(st.mtimeMs).toISOString();
-    await db.transaction().execute(async (tx) => {
+    await transact(async (tx) => {
       if (s.touched) {
         const values = {
           title: title ? titleOf(title) : null,

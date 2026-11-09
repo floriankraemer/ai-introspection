@@ -632,6 +632,50 @@ export function ingestSuite(name: string, make: TestDbFactory): void {
       });
     });
 
+    it('re-ingests a session whose adapter version is outdated, keeping pins and event ids', async () => {
+      await importAll();
+      const id = await sessionIdOf('claude_code');
+      const before = await ingest.sessions.events(id, { filter: 'all', limit: 500 });
+      // A row stored by an older release: wrong version and legacy token counts (cache included in `in`).
+      await t.handle.db
+        .updateTable('session')
+        .set({ adapter_version: '0', tokens_in: 99_999, pinned: true })
+        .where('id', '=', id)
+        .execute();
+      expect(await ingest.reconcile()).toBeGreaterThanOrEqual(1);
+      const job = await t.handle.db
+        .selectFrom('job')
+        .selectAll()
+        .where('kind', '=', 'ingest_file')
+        .where('status', '=', 'queued')
+        .execute();
+      const forced = job.filter((j) => (fromJson(j.payload) as { force?: boolean }).force);
+      expect(forced).toHaveLength(1);
+      await ingest.handlers.ingest_file?.run({ payload: fromJson(forced[0]?.payload) } as never);
+
+      const detail = await ingest.sessions.get(id);
+      expect(detail?.tokensIn).toBe(CLAUDE_TOKENS.in);
+      const row = await t.handle.db
+        .selectFrom('session')
+        .select(['adapter_version', 'pinned'])
+        .where('id', '=', id)
+        .executeTakeFirstOrThrow();
+      expect(row.adapter_version).not.toBe('0');
+      expect(Boolean(row.pinned)).toBe(true);
+      const after = await ingest.sessions.events(id, { filter: 'all', limit: 500 });
+      expect(after?.items.map((e) => e.id)).toEqual(before?.items.map((e) => e.id));
+      // Current rows are left alone: no further forced job is queued.
+      await ingest.reconcile();
+      const again = await t.handle.db
+        .selectFrom('job')
+        .select('payload')
+        .where('kind', '=', 'ingest_file')
+        .execute();
+      expect(again.filter((j) => (fromJson(j.payload) as { force?: boolean }).force)).toHaveLength(
+        1,
+      );
+    });
+
     it('registers a source once and rejects missing folders', async () => {
       const again = await ingest.sources.add('claude_code', sources.claude);
       expect((await ingest.sources.list()).filter((s) => s.id === again.id)).toHaveLength(1);

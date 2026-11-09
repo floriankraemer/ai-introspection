@@ -184,6 +184,9 @@ sequenceDiagram
 
 ### 6.2 Grade
 
+Triggers: a `grade_sweep` schedule (every minute) queues one `grade_session` job per ended session in the last 7 days that the policy selects (flagged or in the 20 % sample, or all with sampling `every`; a merged PR with `schedule.grade = pr_merge`) and per rubric whose `applies_to` fits and that has no grade yet; `grade_batch` jobs come from the API (re-grade, "Grade selected"); `introspect grade` runs the same code in the foreground.
+The judge sees a deterministic condensed trace with events labelled `e<seq>`; labels map back to event ids.
+
 ```mermaid
 sequenceDiagram
   autonumber
@@ -381,18 +384,19 @@ flowchart LR
 | Sessions | Header counts, pass-rate cards vs target | `GET /v1/trends/summary?days=7` | trends (via grading `passRates`) |
 | Sessions | Search, Agent and Result filters, table with tool errors and rubric chips | `GET /v1/sessions?q=&agent=&result=failed_any|all|not_graded&cursor=` | ingest + grading (current grades joined via API) |
 | Sessions | Import history | `POST /v1/imports` → 202 job | ingest |
-| Sessions | Grade selected | `POST /v1/grades/runs {session_ids}` → 202 job | grading |
-| Session detail | Header (agent, repo, branch, duration, tokens, PR) | `GET /v1/sessions/{id}` | ingest |
-| Session detail | Trace timeline, All / Errors / Evidence only | `GET /v1/sessions/{id}/events?filter=all|errors|evidence&cursor=` | ingest (+ evidence IDs from grading) |
+| Sessions | Grade selected | `POST /v1/grades/batch {sessionIds, rubrics?, force?}` → 202 job (status `deferred` with the reason in `error` when over budget) | grading |
+| Session detail | Header (agent, repo, branch, duration, tokens, PR) and grades `[{rubric, rubricVersion, rubricSha, score, passed, reason, evidenceEventIds, judgeModel, transport, gradedAt, status, trusted}]` | `GET /v1/sessions/{id}` | ingest + grading |
+| Session detail | Trace timeline, All / Errors / Evidence only (union of the evidence ids of the newest grades) | `GET /v1/sessions/{id}/events?filter=all|errors|evidence&cursor=` | ingest (+ evidence IDs from grading) |
 | Session detail | Open raw JSONL (local only) | `GET /v1/sessions/{id}/raw` | ingest |
-| Session detail | Grades with reason and evidence | `GET /v1/grades?session_id=` | grading |
-| Session detail | Re-grade | `POST /v1/grades/runs {session_ids:[id], force:true}` | grading |
-| Session detail | Judge was wrong / Add to calibration set | `POST /v1/rubrics/{name}/calibration/labels` | rubrics |
-| Rubrics | Rubric list with versions; editor, threshold, applies to, target | `GET /v1/rubrics`, `GET /v1/rubrics/{name}` | rubrics |
-| Rubrics | Save as vN (commit) | `PUT /v1/rubrics/{name}` | rubrics |
-| Rubrics | + New rubric | `POST /v1/rubrics` | rubrics |
-| Rubrics | Dry-run on 10 sessions | `POST /v1/rubrics/{name}/dry-runs` → 202 job; `GET /v1/jobs/{id}` | grading (rubric body from request, nothing persisted as grades) |
-| Rubrics | Calibration table, n/10, gate | `GET /v1/rubrics/{name}/calibration` | rubrics (+ grading for judge column) |
+| Session detail | Grades with reason and evidence | `GET /v1/grades?session_id=` (same objects as above) | grading |
+| Session detail | Re-grade | `POST /v1/sessions/{id}/grade` → 202 job (replaces the grade of the same rubric version and judge model) | grading |
+| Session detail | Judge was wrong / Add to calibration set | `POST` or `PUT /v1/rubrics/{name}/labels {sessionId, passed, score?, note?}` → 204; pins the session | grading |
+| Rubrics | Rubric list with gate state; editor, threshold, applies to, target, commit history, calibration rows | `GET /v1/rubrics` → `RubricSummary[]`, `GET /v1/rubrics/{name}` → `RubricDetail` | rubrics (+ grading) |
+| Rubrics | Save as vN (commit) and + New rubric | `PUT /v1/rubrics/{name} {body, passThreshold?, target?, message?}`; `body` is the whole file or only the text below the frontmatter; a new name creates the file | rubrics |
+| Rubrics | Dry-run on up to 20 sessions, saved rubric or unsaved draft | `POST /v1/rubrics/{name}/dry-run {sessionIds, body?, passThreshold?}` → 200 `{verdicts, skipped, usage}` (synchronous; 429 problem when over budget) | grading (nothing persisted as grades) |
+| Rubrics | Calibration table, n/10, gate | `GET /v1/rubrics/{name}/calibration` | grading |
+| Settings | Test the judge transport (a tiny real request) | `POST /v1/judge/test {transport, apiKey?}` | grading |
+| Settings | Tokens today, spend this month against the active limits | `GET /v1/budget` | grading |
 | Proposals | Nav badge, Open / Accepted / Rejected tabs, list | `GET /v1/proposals?status=` | improvement |
 | Proposals | Detail: branch, target repo and file, why, evidence, diff | `GET /v1/proposals/{id}` | improvement |
 | Proposals | Accept and merge / Edit first / Reject with reason | `POST /v1/proposals/{id}/accept`, `PATCH /v1/proposals/{id}`, `POST /v1/proposals/{id}/reject` | improvement |
@@ -400,7 +404,7 @@ flowchart LR
 | Trends | Change log with before → after | `GET /v1/change-events?range=` | trends |
 | Settings | Sources, redaction, retention days, judge "Runs via" (API key default or claude CLI), sampling, budget mode and limits, schedule, accept mode | `GET /v1/settings`, `PATCH /v1/settings`, `GET /v1/sources`, `POST /v1/sources` | settings, ingest |
 | Settings | Global skills repo, registered project repos (enable, accept-mode override) | `GET /v1/skill-repos`, `GET /v1/skill-repos/detected`, `PUT /v1/skill-repos/global`, `POST /v1/skill-repos/global/init`, `PATCH /v1/skill-repos/{id}` | improvement |
-| Settings | Last / next improver run, dead jobs, tokens today, spend this month | `GET /v1/jobs?status=dead`, `GET /v1/usage` | platform/jobs, platform/llm |
+| Settings | Last / next improver run, dead jobs | `GET /v1/jobs?status=dead` | platform/jobs |
 | Settings | Team mode: server URL, share toggle, Connect with SSO | `PATCH /v1/settings` (team.*), device flow against the team server | settings, identity |
 | (team) | Shipper intake | `POST /v1/sessions` (idempotent upsert) | ingest |
 | (team) | GitHub App webhook | `POST /v1/webhooks/github` | ingest (outcome), improvement (PR merged) |

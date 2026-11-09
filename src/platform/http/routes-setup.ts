@@ -85,30 +85,6 @@ const putJudgeKey = createRoute({
   responses: { 204: { description: 'Stored' }, ...problemResponses },
 });
 
-const testJudge = createRoute({
-  method: 'post',
-  path: '/v1/judge/test',
-  summary: 'Check that the judge is reachable',
-  security,
-  request: {
-    body: {
-      content: {
-        'application/json': {
-          schema: z.object({
-            transport: z.enum(['api', 'cli']),
-            apiKey: z.string().max(500).optional(),
-          }),
-        },
-      },
-      required: true,
-    },
-  },
-  responses: {
-    200: json(z.object({ ok: z.boolean(), detail: z.string() }), 'The result'),
-    ...problemResponses,
-  },
-});
-
 const listSkillRepos = createRoute({
   method: 'get',
   path: '/v1/skill-repos',
@@ -181,11 +157,6 @@ export function registerSetupRoutes(
     settings.setJudgeKey(c.req.valid('json').apiKey);
     return c.body(null, 204);
   });
-
-  // The judge arrives in Phase 2; until then the check reports that honestly.
-  app.openapi(testJudge, (c) =>
-    c.json({ ok: false, detail: 'Judge not available until Phase 2' }, 200),
-  );
 
   app.openapi(getDoctor, async (c) => c.json(await doctor(), 200));
   app.openapi(detectSkillRepoRoute, async (c) => c.json(await skillRepos.detect(), 200));

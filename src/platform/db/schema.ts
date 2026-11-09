@@ -123,6 +123,7 @@ export interface Schema {
     session_id: string;
     user_id: string;
     label: 'pass' | 'fail';
+    score: number | null;
     note: string | null;
     created_at: Ts;
   };

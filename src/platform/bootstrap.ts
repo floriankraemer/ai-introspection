@@ -1,7 +1,9 @@
 import { serve } from '@hono/node-server';
 import { fileURLToPath } from 'node:url';
+import { createGrading, createJudgeProvider } from '../modules/grading/index.js';
 import { createSkillRepos } from '../modules/improvement/index.js';
 import { createIngest } from '../modules/ingest/index.js';
+import { createRubrics } from '../modules/rubrics/index.js';
 import { createSecretStore, createSettings } from '../modules/settings/index.js';
 import { createTrends } from '../modules/trends/index.js';
 import type { Config } from './config/index.js';
@@ -18,6 +20,47 @@ import { createWorker } from './jobs/worker.js';
 // Same relative path from src/platform (tsx) and dist/platform (built).
 const WEB_DIR = fileURLToPath(new URL('../../web/dist', import.meta.url));
 
+type SecretStoreLike = ReturnType<typeof createSecretStore>;
+
+/** The rubric store, judge provider and grading service, wired the same way for the server and the CLI. */
+function buildGrading(
+  config: Config,
+  handle: ReturnType<typeof openDatabase>,
+  settings: ReturnType<typeof createSettings>,
+  secrets: SecretStoreLike,
+  ingest: ReturnType<typeof createIngest>,
+  queue: ReturnType<typeof createJobQueue>,
+  skillRepos: ReturnType<typeof createSkillRepos>,
+) {
+  const rubrics = createRubrics({
+    db: handle.db,
+    workspaceId: LOCAL_WORKSPACE_ID,
+    repoPath: async () => (await skillRepos.getGlobal())?.path ?? null,
+  });
+  const judges = createJudgeProvider({
+    secrets,
+    env: process.env,
+    transport: async () => (await settings.get())['judge.transport'],
+    claudeHome: config.claudeHome,
+    claudeCredentials: config.claudeCredentials,
+    sourcePaths: async () => (await ingest.sources.list()).map((s) => s.path),
+    override: config.judgeOverride,
+  });
+  const grading = createGrading({
+    db: handle.db,
+    workspaceId: LOCAL_WORKSPACE_ID,
+    userId: LOCAL_USER_ID,
+    settings,
+    queue,
+    ingest,
+    rubrics,
+    judges,
+  });
+  return { rubrics, judges, grading };
+}
+
+type GradingParts = ReturnType<typeof buildGrading>;
+
 /** Gathers what the doctor checks look at. `dbError` is set when the database is not usable. */
 async function doctorReport(
   config: Config,
@@ -25,27 +68,38 @@ async function doctorReport(
   settings: ReturnType<typeof createSettings>,
   sources: { list(): Promise<{ agent: string; path: string; enabled: boolean }[]> },
   skillRepos: ReturnType<typeof createSkillRepos>,
+  parts: Pick<GradingParts, 'rubrics' | 'judges'>,
 ): Promise<DoctorReport> {
   let dbError: string | undefined;
   let repos: Awaited<ReturnType<typeof skillRepos.list>> = [];
   let sourceList: Awaited<ReturnType<typeof sources.list>> = [];
+  let rubricProblems: string[] = [];
   try {
     await handle.db.selectFrom('setting').select('key').limit(1).execute();
     repos = await skillRepos.list();
     sourceList = await sources.list();
+    rubricProblems = (await parts.rubrics.list()).problems.map((p) => `${p.name}: ${p.error}`);
   } catch (e) {
     dbError = e instanceof Error ? e.message : String(e);
   }
   const current = await settings.get().catch(() => undefined);
+  const status = await parts.judges.status().catch(() => undefined);
   return runDoctor({
     dataDir: config.dataDir,
     watchPoll: config.watchPoll,
     db: dbError === undefined ? {} : { error: dbError },
     sources: sourceList,
     repos,
+    rubricProblems,
     judge: {
       transport: current?.['judge.transport'] ?? 'api',
       keySet: current?.['judge.api_key_set'] ?? false,
+      fake: config.judgeOverride === 'fake',
+      cli: {
+        credentialsPath: config.claudeCredentials,
+        loginPresent: status?.cliLoginPresent ?? false,
+        isolationProblem: status?.isolationProblem ?? null,
+      },
     },
     env: process.env,
     uid: process.getuid?.(),
@@ -57,27 +111,21 @@ async function doctorReport(
 export async function runDoctorCommand(config: Config): Promise<DoctorReport> {
   const handle = openDatabase(config.databaseUrl);
   try {
-    const settings = createSettings(
-      handle.db,
-      LOCAL_WORKSPACE_ID,
-      createSecretStore(config.dataDir),
-    );
+    const secrets = createSecretStore(config.dataDir);
+    const settings = createSettings(handle.db, LOCAL_WORKSPACE_ID, secrets);
+    const queue = createJobQueue(handle);
     const ingest = createIngest({
       db: handle.db,
       workspaceId: LOCAL_WORKSPACE_ID,
       userId: LOCAL_USER_ID,
       dataDir: config.dataDir,
       settings,
-      queue: createJobQueue(handle),
+      queue,
       pollMode: config.watchPoll,
     });
-    return await doctorReport(
-      config,
-      handle,
-      settings,
-      ingest.sources,
-      createSkillRepos(handle.db, LOCAL_WORKSPACE_ID),
-    );
+    const skillRepos = createSkillRepos(handle.db, LOCAL_WORKSPACE_ID);
+    const parts = buildGrading(config, handle, settings, secrets, ingest, queue, skillRepos);
+    return await doctorReport(config, handle, settings, ingest.sources, skillRepos, parts);
   } finally {
     await handle.close();
   }
@@ -98,7 +146,8 @@ export async function startServer(config: Config): Promise<RunningServer> {
     throw e;
   }
   const queue = createJobQueue(handle);
-  const settings = createSettings(handle.db, LOCAL_WORKSPACE_ID, createSecretStore(config.dataDir));
+  const secrets = createSecretStore(config.dataDir);
+  const settings = createSettings(handle.db, LOCAL_WORKSPACE_ID, secrets);
   const ingest = createIngest({
     db: handle.db,
     workspaceId: LOCAL_WORKSPACE_ID,
@@ -108,9 +157,19 @@ export async function startServer(config: Config): Promise<RunningServer> {
     queue,
     pollMode: config.watchPoll,
   });
+  const skillRepos = createSkillRepos(handle.db, LOCAL_WORKSPACE_ID);
+  const { rubrics, judges, grading } = buildGrading(
+    config,
+    handle,
+    settings,
+    secrets,
+    ingest,
+    queue,
+    skillRepos,
+  );
   const worker = createWorker({
     queue,
-    handlers: { ...ingest.handlers },
+    handlers: { ...ingest.handlers, ...grading.handlers },
     onError: (error, job) => {
       console.error(`job ${job.kind} ${job.id} failed`, error);
     },
@@ -119,9 +178,8 @@ export async function startServer(config: Config): Promise<RunningServer> {
     handle,
     queue,
     workspaceId: LOCAL_WORKSPACE_ID,
-    schedules: [...ingest.schedules],
+    schedules: [...ingest.schedules, ...grading.schedules],
   });
-  const skillRepos = createSkillRepos(handle.db, LOCAL_WORKSPACE_ID);
   const app = createApp({
     webDir: WEB_DIR,
     port: config.port,
@@ -129,9 +187,13 @@ export async function startServer(config: Config): Promise<RunningServer> {
     queue,
     settings,
     ingest,
-    trends: createTrends(ingest),
+    grading,
+    rubrics,
+    judges,
+    trends: createTrends(ingest, grading),
     skillRepos,
-    doctor: () => doctorReport(config, handle, settings, ingest.sources, skillRepos),
+    doctor: () =>
+      doctorReport(config, handle, settings, ingest.sources, skillRepos, { rubrics, judges }),
   });
 
   const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host }, (info) => {
@@ -189,6 +251,66 @@ export async function runImportCommand(
     return await ingest.importAll((done, total) => {
       process.stderr.write(`\rimported ${String(done)}/${String(total)} files`);
     });
+  } finally {
+    process.stderr.write('\n');
+    await handle.close();
+  }
+}
+
+export interface GradeCommandOptions {
+  sessionId?: string | undefined;
+  since?: Date | undefined;
+  all?: boolean | undefined;
+  /** Respect the flagged-plus-sample policy and `applies_to`; manual runs grade every rubric. */
+  policy: boolean;
+}
+
+/** `introspect grade`: grades in the foreground, with the judge the settings select. */
+export async function runGradeCommand(
+  config: Config,
+  opts: GradeCommandOptions,
+): Promise<Awaited<ReturnType<ReturnType<typeof createGrading>['gradeNow']>>> {
+  const handle = openDatabase(config.databaseUrl);
+  try {
+    await migrateToLatest(handle);
+    await ensureLocalIdentity(handle.db);
+    const secrets = createSecretStore(config.dataDir);
+    const settings = createSettings(handle.db, LOCAL_WORKSPACE_ID, secrets);
+    const queue = createJobQueue(handle);
+    const ingest = createIngest({
+      db: handle.db,
+      workspaceId: LOCAL_WORKSPACE_ID,
+      userId: LOCAL_USER_ID,
+      dataDir: config.dataDir,
+      settings,
+      queue,
+      pollMode: config.watchPoll,
+    });
+    const skillRepos = createSkillRepos(handle.db, LOCAL_WORKSPACE_ID);
+    const { rubrics, grading } = buildGrading(
+      config,
+      handle,
+      settings,
+      secrets,
+      ingest,
+      queue,
+      skillRepos,
+    );
+    if ((await rubrics.list()).rubrics.length === 0)
+      throw new Error(
+        'No rubrics found. Set the global skills repository and add the starter rubrics first.',
+      );
+    return await grading.gradeNow(
+      {
+        ...(opts.sessionId && { sessionIds: [opts.sessionId] }),
+        ...(opts.since && { since: opts.since }),
+        ...(opts.all && { all: true }),
+        policy: opts.policy,
+      },
+      (done, total) => {
+        process.stderr.write(`\rgraded ${String(done)}/${String(total)} sessions`);
+      },
+    );
   } finally {
     process.stderr.write('\n');
     await handle.close();

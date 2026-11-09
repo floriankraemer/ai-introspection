@@ -12,6 +12,10 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1).optional(),
   INTROSPECT_WATCH_POLL: z.enum(['0', '1']).optional(),
   CHOKIDAR_USEPOLLING: z.enum(['0', '1', 'true', 'false']).optional(),
+  INTROSPECT_CLAUDE_HOME: z.string().min(1).optional(),
+  INTROSPECT_CLAUDE_CREDENTIALS: z.string().min(1).optional(),
+  /** Test-only: `fake` swaps the judge for a deterministic one. Never reachable from the UI. */
+  INTROSPECT_JUDGE: z.enum(['fake']).optional(),
 });
 
 export interface Config {
@@ -23,6 +27,11 @@ export interface Config {
   databaseUrl: string;
   /** Poll for file changes instead of using inotify (containers, network mounts). */
   watchPoll: boolean;
+  /** Private HOME of the `claude -p` judge runs; never a folder an agent-log source reads. */
+  claudeHome: string;
+  /** The user's Claude login file, read-only; copied into `claudeHome` for the CLI judge. */
+  claudeCredentials: string;
+  judgeOverride: 'fake' | undefined;
 }
 
 /** Inside a container the process must bind 0.0.0.0; the published port stays on 127.0.0.1 (compose.yaml). */
@@ -39,6 +48,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const { INTROSPECT_DATA_DIR, INTROSPECT_PORT, INTROSPECT_HOST, DATABASE_URL } = parsed.data;
   const { INTROSPECT_WATCH_POLL, CHOKIDAR_USEPOLLING } = parsed.data;
   const dataDir = INTROSPECT_DATA_DIR ?? join(homedir(), '.introspect');
+  const { INTROSPECT_CLAUDE_HOME, INTROSPECT_CLAUDE_CREDENTIALS, INTROSPECT_JUDGE } = parsed.data;
 
   const loopback = LOOPBACK_HOSTS.includes(INTROSPECT_HOST);
   if (!loopback && !(INTROSPECT_HOST === '0.0.0.0' && inContainer())) {
@@ -52,6 +62,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port: INTROSPECT_PORT,
     host: INTROSPECT_HOST,
     databaseUrl: DATABASE_URL ?? join(dataDir, 'introspect.db'),
+    claudeHome: INTROSPECT_CLAUDE_HOME ?? join(dataDir, 'claude-home'),
+    claudeCredentials:
+      INTROSPECT_CLAUDE_CREDENTIALS ?? join(homedir(), '.claude', '.credentials.json'),
+    judgeOverride: INTROSPECT_JUDGE,
     watchPoll:
       INTROSPECT_WATCH_POLL === '1' ||
       CHOKIDAR_USEPOLLING === '1' ||

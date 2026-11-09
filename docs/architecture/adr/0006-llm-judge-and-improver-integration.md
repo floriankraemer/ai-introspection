@@ -110,3 +110,16 @@ Self-ingest guard: judge and improver CLI or Agent SDK runs start with `cwd` und
 ## Related
 
 - ADR-0005 (budget, jobs), ADR-0007 (redaction), ADR-0010 (worktrees and proposals), overview "Runtime flows".
+
+## Implementation notes (Phase 2, WP5)
+
+- The transport setting is `judge.transport` (`api` or `cli`), as shipped in Phase 1.
+- CLI transport: `claude -p --output-format json --no-session-persistence --tools "" --setting-sources "" --system-prompt <fixed judge prompt> --json-schema <verdict schema>`, prompt on stdin, in a private HOME (`INTROSPECT_CLAUDE_HOME`, default `<data>/claude-home`) that holds a copy of the login file and nothing else.
+  Measured on the host: with the real home a trivial request cost 214,000 cache-write tokens (user memory, skills, MCP); with the private home it costs about 850.
+  The user's login file is mounted read-only as one file, never `~/.claude`.
+  The adapter refuses to run when the private home overlaps a registered agent-log source, and `introspect doctor` reports the same.
+  The adapter accepts CLI major version 2 only.
+- Token budget counts fresh input, cache writes and output tokens; cache reads are excluded (they cost about a tenth).
+  Pre-call estimates use 3 characters per token, which errs high.
+- Evidence labels in the prompt are `e<seq>` (the stable event sequence number), mapped to event ids after the call.
+- Re-ingest on an adapter or redaction version change keeps event ids by position, so stored evidence ids stay valid.

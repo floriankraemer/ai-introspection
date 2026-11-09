@@ -12,6 +12,7 @@ RUN := $(COMPOSE) run --rm --build dev
 # wins over .env, as it does for Compose.
 env_file_value = $(shell sed -n 's/^$(1)=//p' .env 2>/dev/null | tail -n 1)
 SKILLS_REPO := $(or $(INTROSPECT_SKILLS_REPO),$(call env_file_value,INTROSPECT_SKILLS_REPO),$(HOME)/.introspect/skills)
+CLAUDE_CREDENTIALS := $(or $(INTROSPECT_CLAUDE_CREDENTIALS),$(call env_file_value,INTROSPECT_CLAUDE_CREDENTIALS),$(HOME)/.claude/.credentials.json)
 PROJECTS_DIR := $(or $(INTROSPECT_PROJECTS_DIR),$(call env_file_value,INTROSPECT_PROJECTS_DIR),$(HOME)/.introspect/projects)
 
 # Docker would create these bind-mount points as root if they were missing.
@@ -37,6 +38,8 @@ build: mount-points
 # Created here as your user: the Docker engine on Linux would create missing mount points as root.
 up:
 	mkdir -p $(HOME)/.claude/projects $(HOME)/.codex/sessions "$(SKILLS_REPO)" "$(PROJECTS_DIR)"
+	@# A file bind mount needs its source; an empty file means "not logged in" (never a directory Docker makes as root).
+	@[ -e "$(CLAUDE_CREDENTIALS)" ] || { mkdir -p "$$(dirname "$(CLAUDE_CREDENTIALS)")" && install -m 600 /dev/null "$(CLAUDE_CREDENTIALS)"; }
 	docker compose up -d --build --wait
 
 # Prints the URL that signs this browser in.

@@ -60,3 +60,44 @@ export interface SourceAdapter {
 }
 
 export type MetaItem = Extract<ParsedItem, { type: 'meta' }>;
+
+declare const redactedBrand: unique symbol;
+
+/** One event as the judge may see it: stored fields are redacted at ingest, long payloads are cut to head and tail. */
+export interface TraceRecord {
+  id: string;
+  seq: number;
+  ts: string | null;
+  kind: EventKind;
+  name: string | null;
+  /** One-line summary, the same text the timeline shows. */
+  summary: string;
+  input: string | null;
+  output: string | null;
+  isError: boolean;
+}
+
+/**
+ * Redacted events of one session. Only `ingest.sessions.traceFor` creates one (ADR-0006), so
+ * unredacted data cannot reach a judge adapter by construction.
+ */
+export interface RedactedTrace {
+  readonly [redactedBrand]: true;
+  sessionId: string;
+  agent: Agent;
+  title: string;
+  events: TraceRecord[];
+}
+
+/** What the grading policy needs to know about a session. */
+export interface GradeCandidate {
+  id: string;
+  agent: Agent;
+  status: string;
+  flagged: boolean;
+  sampled: boolean;
+  outcomeKind: 'none' | 'commit' | 'pr_open' | 'pr_merged';
+  startedAt: string;
+  failedToolCalls: number;
+  testsRun: number;
+}

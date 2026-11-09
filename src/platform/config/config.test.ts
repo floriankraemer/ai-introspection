@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment -- vitest asymmetric matchers are typed any */
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from './index.js';
 
@@ -10,7 +11,17 @@ describe('loadConfig', () => {
       host: '127.0.0.1',
       databaseUrl: '/data/introspect.db',
       watchPoll: false,
+      claudeHome: '/data/claude-home',
+      claudeCredentials: expect.stringMatching(/\.claude\/\.credentials\.json$/),
+      judgeOverride: undefined,
     });
+  });
+
+  it('accepts the fake judge only as the literal `fake`', () => {
+    expect(
+      loadConfig({ INTROSPECT_DATA_DIR: '/data', INTROSPECT_JUDGE: 'fake' }).judgeOverride,
+    ).toBe('fake');
+    expect(() => loadConfig({ INTROSPECT_DATA_DIR: '/data', INTROSPECT_JUDGE: 'real' })).toThrow();
   });
 
   it('polls for file changes when asked to, or when Docker sets CHOKIDAR_USEPOLLING', () => {

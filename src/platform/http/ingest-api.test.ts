@@ -19,6 +19,7 @@ import { createIngest } from '../../modules/ingest/index.js';
 import { PLANTED, writeFixtureSources } from '../testkit/agent-fixtures.js';
 import { createSecretStore, createSettings } from '../../modules/settings/index.js';
 import { createTrends } from '../../modules/trends/index.js';
+import { wireGrading } from './wire-grading.js';
 import { LOCAL_USER_ID, LOCAL_WORKSPACE_ID } from '../identity/index.js';
 import { createJobQueue } from '../jobs/queue.js';
 import { createWorker } from '../jobs/worker.js';
@@ -69,7 +70,18 @@ beforeAll(async () => {
     queue,
     pollMode: true,
   });
-  const worker = createWorker({ queue, handlers: { ...ingest.handlers } });
+  const skillRepos = createSkillRepos(t.handle.db, LOCAL_WORKSPACE_ID, {
+    mountRoots: [join(dir, 'repos')],
+    candidates: [join(dir, 'repos', 'skills')],
+  });
+  const { grading, rubrics, judges } = wireGrading({
+    db: t.handle.db,
+    ingest,
+    settings,
+    queue,
+    skillRepos,
+  });
+  const worker = createWorker({ queue, handlers: { ...ingest.handlers, ...grading.handlers } });
   tick = () => worker.tick();
   app = createApp({
     webDir: join(dir, 'web'),
@@ -78,11 +90,11 @@ beforeAll(async () => {
     queue,
     settings,
     ingest,
-    trends: createTrends(ingest),
-    skillRepos: createSkillRepos(t.handle.db, LOCAL_WORKSPACE_ID, {
-      mountRoots: [join(dir, 'repos')],
-      candidates: [join(dir, 'repos', 'skills')],
-    }),
+    grading,
+    rubrics,
+    judges,
+    trends: createTrends(ingest, grading),
+    skillRepos,
     doctor: () => Promise.resolve({ checks: [] }),
   });
 });
@@ -258,10 +270,10 @@ describe('settings and judge key', () => {
     });
   });
 
-  it('says the judge is not available yet', async () => {
+  it('tests the judge transport (a fake judge in this suite)', async () => {
     expect(await json(await call('POST', '/v1/judge/test', { transport: 'api' }))).toEqual({
-      ok: false,
-      detail: 'Judge not available until Phase 2',
+      ok: true,
+      detail: 'Fake judge (test only)',
     });
   });
 });
