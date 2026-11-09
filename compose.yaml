@@ -21,6 +21,13 @@ services:
     environment:
       # inotify is unreliable on WSL2 and Docker Desktop bind mounts; the watcher polls.
       CHOKIDAR_USEPOLLING: '1'
+      # Pass-through form: a variable you leave out of .env stays unset in the container.
+      # An empty GIT_AUTHOR_NAME would make git refuse to commit.
+      GIT_AUTHOR_NAME:
+      GIT_AUTHOR_EMAIL:
+      GIT_COMMITTER_NAME:
+      GIT_COMMITTER_EMAIL:
+      GH_TOKEN:
     volumes:
       - data:/data
       # Agent logs, read-only. Compose has no optional bind mounts: a missing folder is created
@@ -34,6 +41,14 @@ services:
         source: ${HOME}/.codex/sessions
         target: /sources/codex/sessions
         read_only: true
+      # Global skills repository and project repositories, read-write: Introspect commits
+      # rubrics and merges proposals there. `make up` creates both folders as your user first.
+      - type: bind
+        source: ${INTROSPECT_SKILLS_REPO:-${HOME}/.claude}
+        target: /repos/skills
+      - type: bind
+        source: ${INTROSPECT_PROJECTS_DIR:-${HOME}/.introspect/projects}
+        target: /repos/projects
 
 volumes:
   data:

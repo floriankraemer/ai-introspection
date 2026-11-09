@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
-import { runImportCommand, startServer } from './platform/bootstrap.js';
+import { runDoctorCommand, runImportCommand, startServer } from './platform/bootstrap.js';
+import { formatReport, hasFailure } from './platform/doctor/index.js';
 import { loadConfig } from './platform/config/index.js';
 
 async function serveCommand(): Promise<void> {
@@ -50,6 +51,12 @@ async function importCommand(): Promise<void> {
   );
 }
 
+async function doctorCommand(): Promise<void> {
+  const report = await runDoctorCommand(loadConfig());
+  console.log(formatReport(report));
+  if (hasFailure(report)) process.exit(1);
+}
+
 const [command] = process.argv.slice(2);
 if (command === 'serve') {
   serveCommand().catch((e: unknown) => {
@@ -58,12 +65,19 @@ if (command === 'serve') {
   });
 } else if (command === 'open') {
   openCommand();
+} else if (command === 'doctor') {
+  doctorCommand().catch((e: unknown) => {
+    console.error(e instanceof Error ? e.message : e);
+    process.exit(1);
+  });
 } else if (command === 'import') {
   importCommand().catch((e: unknown) => {
     console.error(e instanceof Error ? e.message : e);
     process.exit(1);
   });
 } else {
-  console.error('Usage: introspect serve | open | import [--agent <agent> --path <folder>]');
+  console.error(
+    'Usage: introspect serve | open | doctor | import [--agent <agent> --path <folder>]',
+  );
   process.exit(1);
 }

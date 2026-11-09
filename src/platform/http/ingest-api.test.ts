@@ -71,6 +71,7 @@ beforeAll(async () => {
     ingest,
     trends: createTrends(ingest),
     skillRepos: createSkillRepos(t.handle.db, LOCAL_WORKSPACE_ID),
+    doctor: () => Promise.resolve({ checks: [] }),
   });
 });
 afterAll(async () => {

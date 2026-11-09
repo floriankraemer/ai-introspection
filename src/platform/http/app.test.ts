@@ -47,6 +47,10 @@ beforeAll(async () => {
     ingest,
     trends: createTrends(ingest),
     skillRepos: createSkillRepos(t.handle.db, LOCAL_WORKSPACE_ID),
+    doctor: () =>
+      Promise.resolve({
+        checks: [{ id: 'x', label: 'X', status: 'ok' as const, detail: 'fine', fix: null }],
+      }),
   });
 });
 afterAll(async () => {
@@ -150,6 +154,17 @@ describe('api behaviour', () => {
       body: JSON.stringify({ 'schedule.improver': 'weekly' }),
     });
     expect(await res.json()).toMatchObject({ 'schedule.improver': 'weekly' });
+  });
+
+  it('serves the doctor report and the detected skill repos behind the token', async () => {
+    expect((await get('/v1/doctor')).status).toBe(401);
+    const doctor = await get('/v1/doctor', bearer());
+    expect(await doctor.json()).toEqual({
+      checks: [{ id: 'x', label: 'X', status: 'ok', detail: 'fine', fix: null }],
+    });
+    const detected = await get('/v1/skill-repos/detected', bearer());
+    expect(detected.status).toBe(200);
+    expect(Array.isArray(await detected.json())).toBe(true);
   });
 
   it('lists jobs and answers 404 problem+json for a missing job', async () => {

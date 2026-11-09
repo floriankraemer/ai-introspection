@@ -50,7 +50,7 @@ Adapter contract (ingest module):
 
 ```ts
 interface SourceAdapter {
-  agent: 'claude-code' | 'codex';
+  agent: 'claude_code' | 'codex';
   version: string;                       // adapter version, stored on session
   matches(path: string): boolean;
   parse(lines: AsyncIterable<string>, cursor: Cursor): AsyncIterable<SessionMeta | RawEvent>;

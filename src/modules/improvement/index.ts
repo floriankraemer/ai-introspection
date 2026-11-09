@@ -1,4 +1,6 @@
-import { realpath } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { newId } from '../../platform/db/ids.js';
 import { asBool } from '../../platform/db/json.js';
 import type { Db } from '../../platform/db/schema.js';
@@ -14,6 +16,28 @@ export interface SkillRepoDto {
   hasRubrics: boolean;
   enabled: boolean;
   acceptMode: 'merge' | 'pr' | null;
+}
+
+export interface DetectedSkillRepo {
+  path: string;
+  isGitRepo: boolean;
+  hasRubrics: boolean;
+}
+
+/** The fixed mount point of compose.yaml first, then the host-native default for the npm install. */
+const SKILL_REPO_CANDIDATES = ['/repos/skills', join(homedir(), '.claude')];
+
+/** Existing folders where a global skills repository usually lives, for the setup wizard to propose. */
+export async function detectSkillRepos(): Promise<DetectedSkillRepo[]> {
+  const found: DetectedSkillRepo[] = [];
+  const seen = new Set<string>();
+  for (const path of SKILL_REPO_CANDIDATES) {
+    const real = await realpath(path).catch(() => null);
+    if (!real || seen.has(real) || !(await stat(real)).isDirectory()) continue;
+    seen.add(real);
+    found.push({ path, isGitRepo: await isGitRepoRoot(real), hasRubrics: await hasRubrics(real) });
+  }
+  return found;
 }
 
 export function createSkillRepos(db: Db, workspaceId: string) {

@@ -1,14 +1,17 @@
 import { createRoute, z, type OpenAPIHono } from '@hono/zod-openapi';
-import type { SkillRepos } from '../../modules/improvement/index.js';
+import { detectSkillRepos, type SkillRepos } from '../../modules/improvement/index.js';
 import { copyStarterRubrics } from '../../modules/rubrics/index.js';
 import type { SettingsService } from '../../modules/settings/index.js';
 import { ConflictError } from '../errors.js';
+import type { DoctorReport } from '../doctor/index.js';
 import { ApiError, problemResponses } from './problem.js';
 import { security } from './schemas.js';
 
 export interface SetupRouteDeps {
   settings: SettingsService;
   skillRepos: SkillRepos;
+  /** Runs every environment check (see platform/doctor). */
+  doctor: () => Promise<DoctorReport>;
 }
 
 const json = <T extends z.ZodType>(schema: T, description: string) => ({
@@ -26,6 +29,40 @@ const skillRepoSchema = z
     acceptMode: z.enum(['merge', 'pr']).nullable(),
   })
   .openapi('SkillRepo');
+
+const doctorReportSchema = z
+  .object({
+    checks: z.array(
+      z.object({
+        id: z.string(),
+        label: z.string(),
+        status: z.enum(['ok', 'warn', 'fail']),
+        detail: z.string(),
+        fix: z.string().nullable(),
+      }),
+    ),
+  })
+  .openapi('DoctorReport');
+
+const getDoctor = createRoute({
+  method: 'get',
+  path: '/v1/doctor',
+  summary: 'Environment checks, the same as `introspect doctor`',
+  security,
+  responses: { 200: json(doctorReportSchema, 'One entry per check'), ...problemResponses },
+});
+
+const detectedRepoSchema = z
+  .object({ path: z.string(), isGitRepo: z.boolean(), hasRubrics: z.boolean() })
+  .openapi('DetectedSkillRepo');
+
+const detectSkillRepoRoute = createRoute({
+  method: 'get',
+  path: '/v1/skill-repos/detected',
+  summary: 'Folders that look like a global skills repository (the compose mount first)',
+  security,
+  responses: { 200: json(z.array(detectedRepoSchema), 'Candidates'), ...problemResponses },
+});
 
 const putJudgeKey = createRoute({
   method: 'put',
@@ -118,7 +155,7 @@ const patchRepo = createRoute({
 
 export function registerSetupRoutes(
   app: OpenAPIHono,
-  { settings, skillRepos }: SetupRouteDeps,
+  { settings, skillRepos, doctor }: SetupRouteDeps,
 ): void {
   app.openapi(putJudgeKey, (c) => {
     settings.setJudgeKey(c.req.valid('json').apiKey);
@@ -130,6 +167,8 @@ export function registerSetupRoutes(
     c.json({ ok: false, detail: 'Judge not available until Phase 2' }, 200),
   );
 
+  app.openapi(getDoctor, async (c) => c.json(await doctor(), 200));
+  app.openapi(detectSkillRepoRoute, async (c) => c.json(await detectSkillRepos(), 200));
   app.openapi(listSkillRepos, async (c) => c.json(await skillRepos.list(), 200));
   app.openapi(putGlobal, async (c) =>
     c.json(await skillRepos.putGlobal(c.req.valid('json').path), 200),
