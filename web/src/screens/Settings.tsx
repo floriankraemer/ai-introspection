@@ -484,10 +484,14 @@ function BudgetUsage({ mode }: { mode: BudgetMode }) {
 
 const MODE_VALUE = { default: '', merge: 'merge', pr: 'pr' } as const;
 
-/** Every skills repo with its own accept override; "Default" follows the global setting. */
-function RepoList({ repos }: { repos: SkillRepo[] }) {
+const MODE_LABEL = { merge: 'Merging locally', pr: 'Opening a pull request' } as const;
+
+/** Every skills repo (global first) with its own accept override and executable-files toggle. */
+function RepoList({ repos, defaultMode }: { repos: SkillRepo[]; defaultMode: 'merge' | 'pr' }) {
   const patch = usePatchSkillRepo();
-  if (repos.length === 0) return null;
+  const sorted = [...repos].sort(
+    (a, b) => Number(b.kind === 'global') - Number(a.kind === 'global'),
+  );
   return (
     <>
       {patch.isError ? (
@@ -496,31 +500,34 @@ function RepoList({ repos }: { repos: SkillRepo[] }) {
         </p>
       ) : null}
       <ul aria-label="Skills repos" className="m-0 flex list-none flex-col gap-4 p-0 text-sm">
-        {repos.map((r) => (
+        {sorted.map((r) => (
           <li key={r.id} className="flex flex-wrap items-center justify-between gap-2">
             <span className="flex min-w-0 items-center gap-2">
               <code className="break-all">{r.path}</code>
               <Chip>{r.kind === 'global' ? 'Global' : r.enabled ? 'Project' : 'Disabled'}</Chip>
             </span>
-            <label className="flex items-center gap-2 text-xs text-muted">
-              Accept by
-              <select
-                aria-label={`Accept mode for ${r.path}`}
-                className={`${FIELD} w-auto`}
-                value={r.acceptMode ?? MODE_VALUE.default}
-                disabled={patch.isPending}
-                onChange={(e) => {
-                  patch.mutate({
-                    id: r.id,
-                    acceptMode: e.target.value === '' ? null : (e.target.value as 'merge' | 'pr'),
-                  });
-                }}
-              >
-                <option value="">Default</option>
-                <option value="merge">Merging locally</option>
-                <option value="pr">Opening a pull request</option>
-              </select>
-            </label>
+            <select
+              aria-label={`Accept mode for ${r.path}`}
+              className={`${FIELD} w-auto`}
+              value={r.acceptMode ?? MODE_VALUE.default}
+              disabled={patch.isPending}
+              onChange={(e) => {
+                patch.mutate({
+                  id: r.id,
+                  acceptMode: e.target.value === '' ? null : (e.target.value as 'merge' | 'pr'),
+                });
+              }}
+            >
+              <option value="">Use default ({MODE_LABEL[defaultMode]})</option>
+              <option value="merge">{MODE_LABEL.merge}</option>
+              <option value="pr">{MODE_LABEL.pr}</option>
+            </select>
+            {r.kind === 'global' && !r.hasRubrics ? (
+              <span className="basis-full text-xs text-muted">
+                This folder has no rubrics/ folder yet. Run the setup wizard to copy the starter
+                rubrics.
+              </span>
+            ) : null}
             <ExecutableToggle r={r} patch={patch} />
           </li>
         ))}
@@ -667,42 +674,36 @@ function ScheduleCard({ settings, save }: { settings: SettingsData; save: (p: Pa
 
 function ReposCard({ settings, save }: { settings: SettingsData; save: (p: Patch) => void }) {
   const repos = useSkillRepos();
-  const global = repos.data?.find((r) => r.kind === 'global');
+  const hasGlobal = repos.data?.some((r) => r.kind === 'global') ?? false;
   return (
     <section aria-label="Skills repositories" className={SECTION}>
       <h2 className={H2}>Skills repositories</h2>
-      <div className="flex flex-col gap-1 text-xs text-muted">
-        <span>Skills repo for patches</span>
-        {repos.isPending ? (
-          <span className="text-sm">Loading…</span>
-        ) : global ? (
-          <>
-            <code className="text-sm break-all text-ink">{global.path}</code>
-            {!global.hasRubrics ? (
-              <span>
-                This folder has no rubrics/ folder yet. Run the setup wizard to copy the starter
-                rubrics.
-              </span>
-            ) : null}
-          </>
-        ) : (
-          <span className="text-sm text-ink-soft">
-            Not set. Choose one in the Health check above or the{' '}
-            <Link to="/setup">setup wizard</Link>.
-          </span>
-        )}
-      </div>
       <Select
-        label="Accept a proposal by"
+        label="Accept proposals by"
         name="proposals.accept_mode"
         settings={settings}
         save={save}
         options={[
-          ['merge', 'Merging locally'],
-          ['pr', 'Opening a pull request'],
+          ['merge', MODE_LABEL.merge],
+          ['pr', MODE_LABEL.pr],
         ]}
       />
-      <RepoList repos={repos.data ?? []} />
+      {repos.isPending ? (
+        <p className="m-0 text-sm text-muted">Loading…</p>
+      ) : (
+        <>
+          {!hasGlobal ? (
+            <p className="m-0 text-sm text-ink-soft">
+              No global skills repo yet. Choose one in the Health check above or the{' '}
+              <Link to="/setup">setup wizard</Link>.
+            </p>
+          ) : null}
+          <RepoList
+            repos={repos.data ?? []}
+            defaultMode={settings['proposals.accept_mode'] === 'pr' ? 'pr' : 'merge'}
+          />
+        </>
+      )}
       <AddProject />
     </section>
   );

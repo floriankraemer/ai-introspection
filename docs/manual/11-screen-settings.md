@@ -1,9 +1,10 @@
 # Settings and Health check
 
 The Settings screen holds every option, and the **Health check**.
+Below the Health check are seven cards: **Sources**, **Redaction and retention**, **Judge and budget**, **Schedule**, **Skills repositories**, **Trends** and **Team mode**.
 Open it with **Settings** in the left menu.
 
-![The Settings screen starts with the Health check, followed by cards for sources, judge, schedule and trends.](images/settings-overview.png)
+![The Settings screen starts with the Health check, followed by seven cards.](images/settings-overview.png)
 
 Most settings save by themselves.
 A checkbox or a list saves when you change it.
@@ -44,19 +45,23 @@ In Docker the chip is **Polling**, because Introspect checks the folders at inte
 **+ Add source folder** adds a folder: choose the agent, enter the **Folder path** and click **Add folder**.
 Folders must be readable inside the container, so a new folder also needs a mount.
 
-![The Sources card lists the folders and holds the redaction and retention options.](images/settings-sources.png)
+![The Sources card lists the session folders.](images/settings-sources.png)
 
-The same card holds:
+## Redaction and retention
+
+![The Redaction and retention card holds the redaction switch, the extra patterns and the retention period.](images/settings-redaction.png)
 
 - **Redact secrets at ingest (tokens, keys, .env values)**: on by default.
   Turn it off only for tests.
   Sessions stored while it is off are never sent to a judge.
 - **Extra redaction patterns**: one regular expression per line, up to 50.
+  A pattern that is not valid shows a hint, and nothing is saved.
 - **Keep event payloads for (days)**: default 90, minimum 7.
 
 ## Judge and budget
 
 ![The Judge and budget card holds the transport, the API key, the sampling rule and the budget.](images/settings-judge.png)
+
 
 | Field | Meaning |
 |---|---|
@@ -75,22 +80,37 @@ The time zone for these windows comes from `TZ` in `.env`.
 
 ## Schedule
 
-![The Schedule card sets when grading and the improver run, and how proposals are accepted.](images/settings-schedule.png)
+![The Schedule card sets when grading and the improver run.](images/settings-schedule.png)
 
 | Field | Meaning |
 |---|---|
 | **Grade sessions** | **When a session ends**, or **When its PR merges** |
 | **Run improver** | **Daily at 06:00**, **Weekly, Monday 06:00**, or **Manually**. A run missed while the computer was off runs once at the next start. |
-| **Skills repo for patches** | The global skills repo. If it is not set, use the wizard. |
-| **Accept a proposal by** | **Merging locally** or **Opening a pull request** |
 
-The list of repos under **Accept a proposal by** has one line for each repo.
-For each repo:
+A line below the fields shows when the next run starts.
 
-- **Accept by** overrides the default: **Default**, **Merging locally** or **Opening a pull request**.
-- **Allow hooks, settings and scripts** is off by default.
+## Skills repositories
+
+![The Skills repositories card sets how proposals are accepted and lists each repo.](images/settings-repos.png)
+
+The card starts with one global default:
+
+- **Accept proposals by**: **Merging locally** or **Opening a pull request**.
+
+Below it, a list shows each repo once, the global skills repo first, then the project repos.
+Each row has:
+
+- The path, and a chip: **Global**, **Project** or **Disabled**.
+- A list that overrides the default for this repo: **Use default (Merging locally)**, **Merging locally** or **Opening a pull request**.
+  The first entry names the current default.
+- **Allow hooks, settings and scripts**: off by default.
   Read the [safety notes](02-safety-and-privacy.md) before you turn it on.
   A confirmation box asks you to click **Allow**.
+  **Cancel** leaves the option off.
+
+If the global repo has no `rubrics/` folder, its row says so.
+Run the [setup wizard](05-setup-wizard.md) to copy the starter rubrics.
+If no global repo is set, the card tells you to use the Health check or the wizard.
 
 **Project repo path** with **Add project repo** registers a project repo.
 The path must be inside the mounted projects folder, for example `/repos/projects/web-app`, and the folder name must match the repo's folder name.

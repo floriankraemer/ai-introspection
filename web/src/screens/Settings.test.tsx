@@ -62,7 +62,7 @@ describe('Settings', () => {
     renderApp('/settings');
     expect(await screen.findByLabelText('Keep event payloads for (days)')).toHaveValue(90);
     expect(screen.getByLabelText('Daily token budget')).toHaveValue(1_000_000);
-    expect(screen.getByLabelText('Accept a proposal by')).toHaveValue('merge');
+    expect(screen.getByLabelText('Accept proposals by')).toHaveValue('merge');
     expect(screen.getByLabelText('Server URL')).toBeDisabled();
 
     await user.selectOptions(screen.getByLabelText('Budget'), 'usd_month');
@@ -139,6 +139,9 @@ describe('Settings', () => {
     await user.selectOptions(mode, 'pr');
     expect(await screen.findByLabelText('Accept mode for ~/dev/agent-skills')).toHaveValue('pr');
     expect(screen.getByText(/^Next run /)).toBeVisible();
+    expect(
+      screen.getAllByRole('option', { name: 'Use default (Merging locally)' })[0],
+    ).toBeInTheDocument();
 
     const add = screen.getByRole('button', { name: 'Add project repo' });
     expect(add).toBeDisabled();

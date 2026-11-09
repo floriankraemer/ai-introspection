@@ -52,6 +52,12 @@ test('manual screenshots', async ({ page, browser }) => {
       page.getByRole('heading', { name: 'How should sessions be graded?' }),
     ).toBeVisible();
     await shot(page, 'wizard-step-2-judge');
+    await page.getByRole('radio', { name: /Local claude CLI/ }).check();
+    await expect(page.getByRole('group', { name: 'Claude login' })).toBeVisible();
+    await expect(
+      page.getByRole('group', { name: 'Claude login' }).getByText('Checking…'),
+    ).toHaveCount(0);
+    await shot(page, 'wizard-step-2-judge-cli');
     await page.getByRole('button', { name: 'Skip' }).click();
 
     await expect(page.getByRole('heading', { name: 'Where do your skills live?' })).toBeVisible();
@@ -224,8 +230,10 @@ test('manual screenshots', async ({ page, browser }) => {
     await shot(health, 'settings-health-check');
     for (const [name, file] of [
       ['Sources', 'settings-sources'],
+      ['Redaction and retention', 'settings-redaction'],
       ['Judge', 'settings-judge'],
       ['Schedule', 'settings-schedule'],
+      ['Skills repositories', 'settings-repos'],
       ['Trends', 'settings-trends'],
     ] as const)
       await shot(page.getByRole('region', { name, exact: true }), file);

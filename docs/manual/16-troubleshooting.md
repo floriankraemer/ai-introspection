@@ -232,7 +232,7 @@ Run `make claude-login`.
 Set `GH_TOKEN` in `.env`, then run `make up`.
 Check that the token covers the repo you accept into.
 The proposal stays open, and the red box names the problem.
-To avoid GitHub, set **Accept a proposal by** to **Merging locally**.
+To avoid GitHub, set **Accept proposals by** to **Merging locally**.
 
 ### Merge into main is refused
 

@@ -83,6 +83,13 @@ Procedure for the API key:
 
    Introspect saves the key and the budget and shows step 3.
 
+When you select **Local claude CLI**, the step shows the login state of the container.
+
+![With the local claude CLI selected, step 2 shows the Claude login in the container and a Check again button.](images/wizard-step-2-judge-cli.png)
+
+The chip says **Logged in** or **Not logged in**.
+If it says **Not logged in**, run `make claude-login`, then click **Check again**.
+
 Procedure for the claude CLI:
 
 1. Select **Local claude CLI**.

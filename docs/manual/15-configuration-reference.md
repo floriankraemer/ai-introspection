@@ -55,7 +55,7 @@ The keys appear in the API and in the Health check.
 | **Monthly ceiling (USD)** | `budget.usd_per_month` | none | 1 or more |
 | **Grade sessions** | `schedule.grade` | **When a session ends** | that, or **When its PR merges** |
 | **Run improver** | `schedule.improver` | **Daily at 06:00** | that, **Weekly, Monday 06:00**, **Manually** |
-| **Accept a proposal by** | `proposals.accept_mode` | **Merging locally** | that, or **Opening a pull request** |
+| **Accept proposals by** | `proposals.accept_mode` | **Merging locally** | that, or **Opening a pull request** |
 | **Compare windows of (days)** | `trends.window_days` | 7 | 1 to 60 |
 | **Minimum graded sessions per side** | `trends.min_graded` | 10 | 1 to 1000 |
 
@@ -66,7 +66,7 @@ Each registered repo has two more options, set on the Settings screen:
 
 | Screen label | Meaning |
 |---|---|
-| **Accept by** | Overrides **Accept a proposal by** for this repo. |
+| The list next to the repo path | Overrides **Accept proposals by** for this repo. **Use default** follows the global value. |
 | **Allow hooks, settings and scripts** | Lets proposals change files that Claude Code runs. Off by default. |
 
 ## Mounts

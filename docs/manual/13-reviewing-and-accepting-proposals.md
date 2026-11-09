@@ -61,7 +61,7 @@ It also refuses hooks, `settings*.json`, scripts and symlinks, unless you opted 
 ## Accept
 
 How the button reads depends on the accept mode.
-You set the mode in Settings (**Accept a proposal by**), and you can override it for each repo.
+You set the mode in Settings (**Accept proposals by**), and you can override it for each repo.
 
 ### Merge locally
 
