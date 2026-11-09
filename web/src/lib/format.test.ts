@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { TraceEvent } from '../api/types.js';
 import {
   collapseRuns,
+  plural,
   formatOffset,
   formatTokens,
   formatWhen,
@@ -84,5 +85,13 @@ describe('humanizeSources', () => {
     expect(humanizeSources('Source codex: ~/.codex/sessions')).toBe(
       'Source Codex: ~/.codex/sessions',
     );
+  });
+});
+
+describe('plural', () => {
+  it('keeps the singular for exactly one', () => {
+    expect(plural(1, 'version')).toBe('1 version');
+    expect(plural(0, 'version')).toBe('0 versions');
+    expect(plural(2, 'version')).toBe('2 versions');
   });
 });

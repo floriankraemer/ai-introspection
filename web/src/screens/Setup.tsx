@@ -7,7 +7,7 @@ import type { DetectedSource, JudgeTransport, SkillRepo } from '../api/types.js'
 import { FailingChecks } from '../components/HealthCheck.js';
 import { JudgeTest } from '../components/JudgeTest.js';
 import { Button, Card, ErrorState, Field, FIELD, Loading } from '../components/ui.js';
-import { AGENT_LABEL } from '../lib/format.js';
+import { AGENT_LABEL, plural } from '../lib/format.js';
 
 const STEPS = ['Sources', 'Judge', 'Skills repo', 'Done'] as const;
 const DEFAULT_BUDGET = 1_000_000;
@@ -54,7 +54,7 @@ function SourcesStep({
             <strong>{AGENT_LABEL[d.agent]}</strong>
             <code className="break-all text-muted">{d.path}</code>
           </span>
-          <span className="text-muted">{d.sessionCount} sessions</span>
+          <span className="text-muted">{plural(d.sessionCount, 'session')}</span>
         </label>
       ))}
     </fieldset>

@@ -25,6 +25,8 @@ import {
   PageHeader,
 } from '../components/ui.js';
 import { formatWhen, titleText } from '../lib/format.js';
+import { plural } from '../lib/format.js';
+import { rubricLabel } from '../lib/trends.js';
 
 // CodeMirror only loads when someone edits a diff.
 const Editor = lazy(() => import('../components/MarkdownEditor.js'));
@@ -100,8 +102,8 @@ function LastRun({ run }: { run: ImproverRun }) {
           <ul className="m-0 mt-1 flex list-none flex-col gap-1 p-0">
             {run.summary.clusters.map((c) => (
               <li key={c.id}>
-                <strong>{c.outcome}</strong> · {c.rubric} · {c.summary} (
-                {String(c.sessionIds.length)} sessions): {c.detail}
+                <strong>{c.outcome}</strong> · {rubricLabel(c.rubric)} · {c.summary} (
+                {plural(c.sessionIds.length, 'session')}): {c.detail}
               </li>
             ))}
           </ul>
@@ -110,8 +112,10 @@ function LastRun({ run }: { run: ImproverRun }) {
       <NextRun className="!text-[13px]" />
       {run.untrustedRubrics.length > 0 ? (
         <p className="m-0 text-warn">
-          {run.untrustedRubrics.map((r) => `${r} needs calibration — excluded`).join('; ')}.{' '}
-          <Link to="/rubrics">Calibrate in Rubrics</Link>
+          {run.untrustedRubrics
+            .map((r) => `${rubricLabel(r)} needs calibration — excluded`)
+            .join('; ')}
+          . <Link to="/rubrics">Calibrate in Rubrics</Link>
         </p>
       ) : null}
     </div>
@@ -488,7 +492,7 @@ function Detail({ id, onDone }: { id: string; onDone: () => void }) {
             <Problems title="This diff does not validate." items={p.validation.problems} />
           ) : null}
           <p className="m-0 text-[13px] text-muted">
-            Expected effect: {p.rubricNames.join(' and ')} pass{' '}
+            Expected effect: {p.rubricNames.map(rubricLabel).join(' and ')} pass{' '}
             {p.rubricNames.length === 1 ? 'rate' : 'rates'}. Measured on Trends after{' '}
             {p.acceptMode === 'pr' ? 'the pull request is merged' : 'merge'}.
           </p>
@@ -527,7 +531,7 @@ function ListItem({
     >
       <strong className="text-sm">{p.title}</strong>
       <span className="text-xs text-muted">
-        {p.clusterSize} sessions · {p.rubricNames.join(', ')}
+        {plural(p.clusterSize, 'session')} · {p.rubricNames.map(rubricLabel).join(', ')}
         {p.status === 'open' && p.prUrl ? ' · PR open' : ''}
         {p.status === 'conflict' || p.status === 'failed' || p.status === 'superseded'
           ? ` · ${p.status}`

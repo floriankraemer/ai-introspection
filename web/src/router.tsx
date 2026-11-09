@@ -15,7 +15,7 @@ import { Shell } from './components/Shell.js';
 import { ErrorState } from './components/ui.js';
 import { AuthExchange, AuthRequired } from './screens/AuthRequired.js';
 import { SessionDetail } from './screens/SessionDetail.js';
-import { Sessions, type SessionsSearch } from './screens/Sessions.js';
+import { Sessions, SESSION_RANGES, type SessionsSearch } from './screens/Sessions.js';
 import { Settings } from './screens/Settings.js';
 import { Setup } from './screens/Setup.js';
 
@@ -62,6 +62,7 @@ const sessions = createRoute({
     q: typeof s.q === 'string' && s.q ? s.q : undefined,
     agent: AGENTS.find((a) => a === s.agent),
     result: RESULTS.find((r) => r === s.result),
+    range: SESSION_RANGES.find((r) => r === s.range),
   }),
   component: function SessionsRoute() {
     const search = sessions.useSearch();

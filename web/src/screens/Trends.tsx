@@ -14,7 +14,7 @@ import type {
   TrendChange,
   Trends as TrendData,
 } from '../api/types.js';
-import { titleText } from '../lib/format.js';
+import { plural, titleText } from '../lib/format.js';
 import { JobNote } from '../components/JobNote.js';
 import {
   BTN,
@@ -335,8 +335,8 @@ function ChangeLog() {
         <div className="flex flex-col gap-0.5">
           <h2 className="m-0 text-base font-semibold">Did the fix help?</h2>
           <p className="m-0 text-[13px] text-muted">
-            Pass rate for the rubric(s) a change targets, over the{' '}
-            {String(changes.data?.[0]?.before.window ?? 7)} days before and after it landed. Each
+            Pass rate for the rubrics a change targets, over the{' '}
+            {plural(changes.data?.[0]?.before.window ?? 7, 'day')} before and after it landed. Each
             rubric is tested separately (Fisher’s exact test for small samples) at 90 % confidence.
           </p>
         </div>

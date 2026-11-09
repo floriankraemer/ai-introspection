@@ -23,7 +23,8 @@ import {
   PageHeader,
   VerdictChip,
 } from '../components/ui.js';
-import { formatTokens, formatWhen, titleText } from '../lib/format.js';
+import { formatTokens, formatWhen, plural, titleText } from '../lib/format.js';
+import { rubricLabel } from '../lib/trends.js';
 import {
   composeRubricFile,
   NEW_RUBRIC_BODY,
@@ -86,8 +87,11 @@ function RubricList({
             className={`flex min-h-11 flex-col gap-0.5 rounded-[10px] border p-3 text-left font-[inherit] text-ink ${on ? 'border-accent bg-accent-soft' : 'border-line bg-surface hover:bg-sunken'}`}
           >
             <span className="flex items-center justify-between gap-2">
-              <span className={on ? 'font-semibold' : ''}>{r.name}</span>
+              <span className={on ? 'font-semibold' : ''}>{rubricLabel(r.name)}</span>
               <span className="text-xs text-muted">v{r.version}</span>
+            </span>
+            <span className="truncate font-mono text-xs text-muted" title={r.name}>
+              {r.name}
             </span>
             <span
               className="flex items-center gap-1.5 text-xs whitespace-nowrap text-muted"
@@ -281,7 +285,7 @@ function RubricEditor({
             dry.mutate();
           }}
         >
-          {dry.isPending ? 'Running…' : `Dry-run on ${String(dryIds.length)} sessions`}
+          {dry.isPending ? 'Running…' : `Dry-run on ${plural(dryIds.length, 'session')}`}
         </Button>
         {ids.calibration.length ? (
           <label className="flex items-center gap-2 text-[13px] text-muted">
@@ -316,7 +320,7 @@ function RubricEditor({
       {dry.data ? <DryRunResults result={dry.data} titles={titles} /> : null}
       <details className="text-[13px]">
         <summary className="w-fit cursor-pointer text-accent">
-          History ({detail.versions.length} versions)
+          History ({plural(detail.versions.length, 'version')})
         </summary>
         <ol className="m-0 mt-2 flex list-none flex-col gap-1 p-0 text-muted">
           {[...detail.versions]
@@ -342,7 +346,7 @@ function DryRunResults({ result, titles }: { result: DryRunResult; titles: Map<s
       <p className="m-0 text-xs text-muted">
         Used {formatTokens(result.usage.tokens)} tokens. Nothing is saved as a grade.
         {result.skipped.length > 0
-          ? ` ${String(result.skipped.length)} sessions were skipped: ${result.skipped[0]?.reason ?? ''}`
+          ? ` ${plural(result.skipped.length, 'session')} skipped: ${result.skipped[0]?.reason ?? ''}`
           : ''}
       </p>
       <table className="w-full table-fixed border-collapse">
@@ -424,7 +428,7 @@ function Calibration({ detail }: { detail: RubricDetail }) {
         {detail.trusted
           ? 'The improver may use this rubric.'
           : total < NEEDED
-            ? `Gate: label ${String(NEEDED - total)} more sessions, then ${String(GATE)} / ${String(NEEDED)} must agree before the improver may use this rubric.`
+            ? `Gate: label ${plural(NEEDED - total, 'more session')}, then ${String(GATE)} / ${String(NEEDED)} must agree before the improver may use this rubric.`
             : `Gate: needs ${String(GATE)} / ${String(NEEDED)} before the improver may use this rubric.`}
       </p>
       {detail.calibration.length ? (

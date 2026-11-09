@@ -1,6 +1,11 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { render } from '@testing-library/react';
+import { createMemoryHistory } from '@tanstack/react-router';
+import { App } from '../App.js';
+import { createMockApi } from '../api/mock.js';
+import type { Api } from '../api/types.js';
 import { renderApp } from '../test-utils.js';
 
 describe('Settings', () => {
@@ -149,5 +154,27 @@ describe('Settings', () => {
   it('shows what the improver used inside the budget line', async () => {
     renderApp('/settings');
     expect(await screen.findByText(/The improver used 48k tokens today/)).toBeVisible();
+  });
+
+  it('flips an autosave checkbox at once and reverts it with a message when the save fails', async () => {
+    const user = userEvent.setup();
+    const mock = createMockApi('graded', 0);
+    let fail!: (e: Error) => void;
+    const api: Api = {
+      ...mock,
+      patchSettings: () =>
+        new Promise((_, reject) => {
+          fail = reject;
+        }),
+    };
+    render(<App api={api} history={createMemoryHistory({ initialEntries: ['/settings'] })} />);
+    const box = await screen.findByRole('checkbox', { name: /Redact secrets at ingest/ });
+    const was = (box as HTMLInputElement).checked;
+    await user.click(box);
+    // The request is still pending, yet the control already shows the click.
+    expect(box).toHaveProperty('checked', !was);
+    fail(new Error('Server said no'));
+    expect(await screen.findByText(/Could not save: Server said no/)).toBeInTheDocument();
+    expect(box).toHaveProperty('checked', was);
   });
 });

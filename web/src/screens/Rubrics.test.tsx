@@ -1,6 +1,10 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
+import { createMemoryHistory } from '@tanstack/react-router';
+import { App } from '../App.js';
+import { createMockApi } from '../api/mock.js';
+import type { Api } from '../api/types.js';
 import { renderApp } from '../test-utils.js';
 
 // The editor is a lazily loaded chunk and CodeMirror applies text asynchronously, so under load
@@ -130,5 +134,41 @@ describe('Rubrics', () => {
     expect(
       await screen.findByText(/Dry-run failed: The daily token budget is used up/),
     ).toBeInTheDocument();
+  });
+
+  it('does not keep a rubric detail that was fetched before a label and answered after it', async () => {
+    const user = userEvent.setup();
+    const mock = createMockApi('graded', 0);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let first = true;
+    // The first detail request reads the server before the label exists, but answers after it.
+    const api: Api = {
+      ...mock,
+      async getRubric(name) {
+        const snapshot = await mock.getRubric(name);
+        if (first) {
+          first = false;
+          await gate;
+        }
+        return snapshot;
+      },
+    };
+    render(<App api={api} history={createMemoryHistory({ initialEntries: ['/rubrics'] })} />);
+    await screen.findByRole('navigation', { name: 'Rubrics' });
+    await user.click(screen.getByRole('link', { name: 'Sessions' }));
+    await user.click(await screen.findByRole('link', { name: /Fix flaky e2e login test/ }));
+    const grades = await screen.findByRole('complementary', { name: 'Grades' });
+    const wrong = await within(grades).findAllByRole('button', { name: 'Judge was wrong…' });
+    await user.click(wrong[0] ?? grades);
+    await user.click(within(grades).getByLabelText('Fail'));
+    await user.click(within(grades).getByRole('button', { name: 'Save label' }));
+    const link = await within(grades).findByRole('link', { name: /calibration of/ });
+    release();
+    await user.click(link);
+    const panel = await screen.findByRole('complementary', { name: 'Calibration' });
+    expect(await within(panel).findByText('8 / 10')).toBeInTheDocument();
   });
 });

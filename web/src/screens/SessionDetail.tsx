@@ -10,6 +10,7 @@ import {
 import type { EventFilter, TraceEvent } from '../api/types.js';
 import { JobNote } from '../components/JobNote.js';
 import { BTN, Button, Chip, EmptyState, ErrorState, Loading } from '../components/ui.js';
+import { rubricLabel } from '../lib/trends.js';
 import {
   AGENT_LABEL,
   collapseRuns,
@@ -18,6 +19,7 @@ import {
   formatOffset,
   formatTokenSplit,
   outcomeLabel,
+  plural,
   titleText,
 } from '../lib/format.js';
 import { ApiError } from '../api/client.js';
@@ -156,7 +158,7 @@ function Trace({
       className="flex min-w-0 flex-[3_1_480px] flex-col rounded-xl border border-line bg-surface"
     >
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line-soft px-4 py-3.5">
-        <h2 className="m-0 text-base font-semibold">Trace · {eventCount} events</h2>
+        <h2 className="m-0 text-base font-semibold">Trace · {plural(eventCount, 'event')}</h2>
         <div className="flex flex-wrap gap-1.5">
           {tab('all', 'All')}
           {tab('errors', `Errors (${String(errorCount)})`)}
@@ -165,7 +167,7 @@ function Trace({
       </div>
       {focus ? (
         <p className="m-0 flex flex-wrap items-center gap-2 border-b border-line-soft px-4 py-2 text-[13px] text-muted">
-          Highlighted: evidence for {focus.rubric}
+          Highlighted: evidence for {rubricLabel(focus.rubric)}
           <button
             type="button"
             onClick={onClearFocus}
@@ -209,7 +211,8 @@ function Trace({
                   }}
                   className="w-fit text-left text-muted underline decoration-dotted underline-offset-2 hover:text-ink"
                 >
-                  … {r.events.length} more failed {r.name ?? 'tool'} calls (collapsed)
+                  … {r.events.length} more failed {r.name ?? 'tool'}{' '}
+                  {r.events.length === 1 ? 'call' : 'calls'} (collapsed)
                 </button>
               </li>
             );

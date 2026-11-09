@@ -15,7 +15,8 @@ import {
   VerdictChip,
 } from '../components/ui.js';
 import { JobNote } from '../components/JobNote.js';
-import { AGENT_LABEL, formatPercent, formatWhen, titleText } from '../lib/format.js';
+import { rubricLabel } from '../lib/trends.js';
+import { AGENT_LABEL, formatPercent, plural, formatWhen, titleText } from '../lib/format.js';
 
 function ImportButton() {
   const { start, job } = useImport();
@@ -64,7 +65,7 @@ function PassRateCards({ summary }: { summary: TrendSummary }) {
         const below = r.passRate !== null && r.passRate < r.target;
         return (
           <Card key={r.name} className="flex flex-col gap-1.5 p-4">
-            <span className="text-[13px] text-muted">{r.name} · pass rate</span>
+            <span className="text-[13px] text-muted">{rubricLabel(r.name)} · pass rate</span>
             <span className="text-[26px] leading-tight font-bold">
               {r.passRate === null ? '—' : formatPercent(r.passRate)}
             </span>
@@ -84,8 +85,8 @@ function PassRateCards({ summary }: { summary: TrendSummary }) {
 
 /** Column headers from the Sessions mockup; the full name stays in the tooltip. */
 const RUBRIC_SHORT: Record<string, string> = {
-  'Redundant tests': 'Tests',
-  'Silent workaround': 'Workaround',
+  'redundant-tests': 'Tests',
+  'silent-workaround': 'Workaround',
 };
 
 function SessionRow({
@@ -141,7 +142,11 @@ function SessionRow({
           const g = s.grades.find((x) => x.rubric === name);
           return (
             <td key={name}>
-              <VerdictChip passed={g?.passed ?? null} />
+              <span
+                title={`${rubricLabel(name)}: ${g?.passed == null ? 'n/a' : g.passed ? 'Pass' : 'Fail'}`}
+              >
+                <VerdictChip passed={g?.passed ?? null} />
+              </span>
             </td>
           );
         })
@@ -154,7 +159,19 @@ export interface SessionsSearch {
   q?: string | undefined;
   agent?: Agent | undefined;
   result?: SessionResultFilter | undefined;
+  range?: SessionRange | undefined;
 }
+
+export type SessionRange = '7' | '30' | 'all';
+export const SESSION_RANGES: SessionRange[] = ['7', '30', 'all'];
+const RANGE_LABEL: Record<SessionRange, string> = {
+  '7': '7 days',
+  '30': '30 days',
+  all: 'All time',
+};
+const DAY_MS = 86_400_000;
+// ponytail: the summary API caps `days` at 365, so "All" is the last year there; the table has no cap.
+const RANGE_DAYS: Record<SessionRange, number> = { '7': 7, '30': 30, all: 365 };
 
 /** Header checkbox: selects or clears every loaded row; shows a dash for a partial selection. */
 function SelectAll({ all, some, onChange }: { all: boolean; some: boolean; onChange: () => void }) {
@@ -184,7 +201,8 @@ export function Sessions({
   const [resetKey, setResetKey] = useState(0);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const grade = useGradeJob((api, ids) => api.gradeBatch(ids));
-  const summary = useTrendSummary(7);
+  const range = search.range ?? '7';
+  const summary = useTrendSummary(RANGE_DAYS[range]);
   // Until something is graded, "Failed any rubric" would always be empty, so default to All.
   const defaultResult: SessionResultFilter =
     (summary.data?.sessionsGraded ?? 0) > 0 ? 'failed_any' : 'all';
@@ -195,9 +213,16 @@ export function Sessions({
   if (summary.isError)
     return <ErrorState error={summary.error} onRetry={() => void summary.refetch()} />;
 
+  if (summary.data.sessionsCollected === 0 && sessions.isPending)
+    return <Loading label="Loading sessions" />;
+
   const s = summary.data;
-  const filtered = Boolean(search.q ?? search.agent ?? search.result);
-  const items = sessions.data?.pages.flatMap((p) => p.items) ?? [];
+  const filtered = Boolean(search.q ?? search.agent ?? search.result ?? search.range);
+  // GET /v1/sessions has no since filter yet, so the range cuts the (newest-first) list here.
+  const cutoff = range === 'all' ? null : Date.now() - RANGE_DAYS[range] * DAY_MS;
+  const loaded = sessions.data?.pages.flatMap((p) => p.items) ?? [];
+  const items = cutoff === null ? loaded : loaded.filter((r) => Date.parse(r.startedAt) >= cutoff);
+  const reachedCutoff = cutoff !== null && loaded.length > items.length;
   const names = s.rubrics.map((r) => r.name);
   const rubricCols = names.length ? names : ['Rubrics'];
   const allSelected = items.length > 0 && items.every((r) => selected.has(r.id));
@@ -206,13 +231,14 @@ export function Sessions({
     if (!next.delete(id)) next.add(id);
     setSelected(next);
   };
-  const noData = s.sessionsCollected === 0 && !filtered;
+  // Nothing in the chosen period is not the same as nothing collected: older sessions may exist.
+  const noData = s.sessionsCollected === 0 && !filtered && loaded.length === 0;
 
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Sessions"
-        subtitle={`Last ${String(s.days)} days · ${String(s.sessionsCollected)} sessions collected · ${String(s.sessionsGraded)} graded`}
+        subtitle={`${range === 'all' ? 'All time' : `Last ${plural(RANGE_DAYS[range], 'day')}`} · ${plural(s.sessionsCollected, 'session')} collected · ${String(s.sessionsGraded)} graded`}
         actions={
           <>
             <ImportButton />
@@ -275,6 +301,21 @@ export function Sessions({
                 <option value="codex">Codex</option>
               </select>
             </Field>
+            <Field label="Period">
+              <select
+                className={FIELD}
+                value={range}
+                onChange={(e) => {
+                  onSearch({ range: e.target.value as SessionRange });
+                }}
+              >
+                {SESSION_RANGES.map((r) => (
+                  <option key={r} value={r}>
+                    {RANGE_LABEL[r]}
+                  </option>
+                ))}
+              </select>
+            </Field>
             <Field label="Result">
               <select
                 className={FIELD}
@@ -307,7 +348,7 @@ export function Sessions({
                 </Button>
               }
             >
-              Widen the search, or switch Result to All.
+              Widen the search, the period, or switch Result to All.
             </EmptyState>
           ) : (
             <>
@@ -346,8 +387,8 @@ export function Sessions({
                         Tool errors
                       </th>
                       {rubricCols.map((n) => (
-                        <th key={n} scope="col" title={n} className="whitespace-nowrap">
-                          {RUBRIC_SHORT[n] ?? n}
+                        <th key={n} scope="col" title={rubricLabel(n)} className="truncate">
+                          {RUBRIC_SHORT[n] ?? rubricLabel(n)}
                         </th>
                       ))}
                     </tr>
@@ -367,7 +408,7 @@ export function Sessions({
                   </tbody>
                 </table>
               </Card>
-              {sessions.hasNextPage ? (
+              {sessions.hasNextPage && !reachedCutoff ? (
                 <Button
                   className="self-center"
                   disabled={sessions.isFetchingNextPage}

@@ -30,10 +30,10 @@ import type {
 export type MockScenario = 'graded' | 'ungraded' | 'empty' | 'fresh' | 'overbudget' | 'noruns';
 
 const RUBRICS = [
-  { name: 'Efficiency', target: 0.7 },
-  { name: 'Redundant tests', target: 0.7 },
-  { name: 'Verbosity', target: 0.7 },
-  { name: 'Silent workaround', target: 0.8 },
+  { name: 'efficiency', target: 0.7 },
+  { name: 'redundant-tests', target: 0.7 },
+  { name: 'verbosity', target: 0.7 },
+  { name: 'silent-workaround', target: 0.8 },
 ];
 
 /** Rubric files as the API shows them: slug names, body with frontmatter. */
@@ -103,16 +103,16 @@ function splitRubricFile(text: string): { fields: Map<string, string>; body: str
 }
 
 const REASONS: Record<string, string> = {
-  Efficiency: 'Spent ~7 min probing ports. The e2e skill gives no way to find the dev-server port.',
-  'Redundant tests': '46 unit tests; guidelines prefer a few end-to-end tests for auth flows.',
-  Verbosity: 'The final summary is short and the code carries no filler comments.',
-  'Silent workaround':
+  efficiency: 'Spent ~7 min probing ports. The e2e skill gives no way to find the dev-server port.',
+  'redundant-tests': '46 unit tests; guidelines prefer a few end-to-end tests for auth flows.',
+  verbosity: 'The final summary is short and the code carries no filler comments.',
+  'silent-workaround':
     '11 tool errors were routed around; final summary reports success without mentioning them.',
 };
 /** Event ids that justify each grade in the fixture trace (`e1`… in order). */
 const EVIDENCE: Record<string, string[]> = {
-  Efficiency: ['e7', 'e8', 'e9', 'e10', 'e11', 'e12', 'e13', 'e14', 'e15', 'e16', 'e17', 'e18'],
-  'Silent workaround': ['e22', 'e25'],
+  efficiency: ['e7', 'e8', 'e9', 'e10', 'e11', 'e12', 'e13', 'e14', 'e15', 'e16', 'e17', 'e18'],
+  'silent-workaround': ['e22', 'e25'],
 };
 
 const JOB_META = {
@@ -184,7 +184,7 @@ const SESSIONS: {
     title: `Triage issue #${String(210 + i)}`,
     agent: i % 3 === 0 ? ('codex' as const) : ('claude_code' as const),
     repo: ['web-app', 'api-service', 'infra'][i % 3] ?? 'web-app',
-    ago: (80 + i * 7) * H,
+    ago: (80 + i * 70) * H,
     errors: i % 4,
     g: [],
   })),
@@ -410,10 +410,10 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
   const gradesOf = (s: SessionSummary): GradeDetail[] =>
     s.grades.map((g) => ({
       rubric: g.rubric,
-      rubricVersion: g.rubric === 'Efficiency' ? 3 : 1,
+      rubricVersion: g.rubric === 'efficiency' ? 3 : 1,
       rubricSha: '9f3c2a1b7d4e',
-      status: g.rubric === 'Silent workaround' ? 'stale' : 'ok',
-      answeredModel: g.rubric === 'Redundant tests' ? 'claude-haiku-4-5' : 'claude-sonnet-5-5',
+      status: g.rubric === 'silent-workaround' ? 'stale' : 'ok',
+      answeredModel: g.rubric === 'redundant-tests' ? 'claude-haiku-4-5' : 'claude-sonnet-5-5',
       score: g.score,
       passed: g.passed,
       reason:
@@ -424,7 +424,7 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
       judgeModel: 'claude-sonnet-5-5',
       transport: settings['judge.transport'],
       gradedAt: s.startedAt,
-      trusted: rubrics.get(g.rubric.toLowerCase().replace(/ /g, '-'))?.trusted ?? false,
+      trusted: rubrics.get(g.rubric)?.trusted ?? false,
     }));
 
   // Rubric state is mutable so saving, labelling and re-reading behave like the real thing.
@@ -723,12 +723,14 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
       return next;
     },
     async getTrendSummary(days) {
+      const inLast = (d: number) =>
+        sessions.filter((s) => Date.parse(s.startedAt) >= Date.now() - d * 86_400_000);
       await wait();
       const rates = [0.58, 0.71, 0.84, 0.66];
       return {
         days,
-        sessionsCollected: sessions.length,
-        sessionsGraded: graded ? 5 : 0,
+        sessionsCollected: inLast(days).length,
+        sessionsGraded: inLast(days).filter((s) => s.grades.length > 0).length,
         rubrics: graded
           ? RUBRICS.map((r, i) => ({ ...r, passRate: rates[i] ?? null, gradedCount: 31 }))
           : [],
@@ -884,9 +886,7 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
       const r = rubrics.get(name.toLowerCase().replace(/ /g, '-'));
       if (!r) throw new ApiError(404, 'Not found', `No rubric ${name}`);
       const title = sessions.find((x) => x.id === label.sessionId)?.title ?? label.sessionId;
-      const g = gradesOf(find(label.sessionId)).find(
-        (x) => x.rubric.toLowerCase().replace(/ /g, '-') === r.name,
-      );
+      const g = gradesOf(find(label.sessionId)).find((x) => x.rubric === r.name);
       const row: CalibrationRow = {
         sessionId: label.sessionId,
         title,

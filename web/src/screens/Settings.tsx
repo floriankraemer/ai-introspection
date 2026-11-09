@@ -520,36 +520,43 @@ function RepoList({ repos }: { repos: SkillRepo[] }) {
   const patch = usePatchSkillRepo();
   if (repos.length === 0) return null;
   return (
-    <ul aria-label="Skills repos" className="m-0 flex list-none flex-col gap-4 p-0 text-sm">
-      {repos.map((r) => (
-        <li key={r.id} className="flex flex-wrap items-center justify-between gap-2">
-          <span className="flex min-w-0 items-center gap-2">
-            <code className="break-all">{r.path}</code>
-            <Chip>{r.kind === 'global' ? 'Global' : r.enabled ? 'Project' : 'Disabled'}</Chip>
-          </span>
-          <label className="flex items-center gap-2 text-xs text-muted">
-            Accept by
-            <select
-              aria-label={`Accept mode for ${r.path}`}
-              className={`${FIELD} w-auto`}
-              value={r.acceptMode ?? MODE_VALUE.default}
-              disabled={patch.isPending}
-              onChange={(e) => {
-                patch.mutate({
-                  id: r.id,
-                  acceptMode: e.target.value === '' ? null : (e.target.value as 'merge' | 'pr'),
-                });
-              }}
-            >
-              <option value="">Default</option>
-              <option value="merge">Merging locally</option>
-              <option value="pr">Opening a pull request</option>
-            </select>
-          </label>
-          <ExecutableToggle r={r} patch={patch} />
-        </li>
-      ))}
-    </ul>
+    <>
+      {patch.isError ? (
+        <p role="alert" className="m-0 text-sm text-fail">
+          Could not save: {patch.error.message}
+        </p>
+      ) : null}
+      <ul aria-label="Skills repos" className="m-0 flex list-none flex-col gap-4 p-0 text-sm">
+        {repos.map((r) => (
+          <li key={r.id} className="flex flex-wrap items-center justify-between gap-2">
+            <span className="flex min-w-0 items-center gap-2">
+              <code className="break-all">{r.path}</code>
+              <Chip>{r.kind === 'global' ? 'Global' : r.enabled ? 'Project' : 'Disabled'}</Chip>
+            </span>
+            <label className="flex items-center gap-2 text-xs text-muted">
+              Accept by
+              <select
+                aria-label={`Accept mode for ${r.path}`}
+                className={`${FIELD} w-auto`}
+                value={r.acceptMode ?? MODE_VALUE.default}
+                disabled={patch.isPending}
+                onChange={(e) => {
+                  patch.mutate({
+                    id: r.id,
+                    acceptMode: e.target.value === '' ? null : (e.target.value as 'merge' | 'pr'),
+                  });
+                }}
+              >
+                <option value="">Default</option>
+                <option value="merge">Merging locally</option>
+                <option value="pr">Opening a pull request</option>
+              </select>
+            </label>
+            <ExecutableToggle r={r} patch={patch} />
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
 

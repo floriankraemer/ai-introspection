@@ -3,6 +3,7 @@ import { useState } from 'react';
 import type { GradeDetail } from '../api/types.js';
 import { LabelForm } from '../components/LabelForm.js';
 import { Card, Chip, EmptyState, VerdictChip } from '../components/ui.js';
+import { rubricLabel } from '../lib/trends.js';
 
 // Quiet inline action: text only, with padding so the touch target stays tall enough.
 const QUIET = 'cursor-pointer border-0 bg-transparent px-0 py-2.5 text-[13px] leading-none';
@@ -23,7 +24,7 @@ function GradeCard({
   return (
     <Card className="flex flex-col gap-2 p-4">
       <div className="flex items-center justify-between gap-2">
-        <strong className="text-[15px]">{g.rubric}</strong>
+        <strong className="text-[15px]">{rubricLabel(g.rubric)}</strong>
         {g.status === 'stale' ? (
           <Chip
             tone="na"
@@ -101,7 +102,7 @@ function GradeCard({
         <span role="status" className="text-[13px] text-pass">
           Label saved. It counts toward the{' '}
           <Link to="/rubrics" className="text-pass underline">
-            calibration of {g.rubric}
+            calibration of {rubricLabel(g.rubric)}
           </Link>
           .
         </span>

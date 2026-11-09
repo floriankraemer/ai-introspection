@@ -18,6 +18,7 @@ import type {
   ProposalStatus,
   Settings,
   SessionQuery,
+  SkillRepo,
   TrendQuery,
 } from './types.js';
 
@@ -32,6 +33,16 @@ export function usePatchSettings() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (patch: Parameters<Api['patchSettings']>[0]) => api.patchSettings(patch),
+    // Optimistic: the control shows the click at once; a failed save puts the old values back.
+    onMutate: async (patch) => {
+      await qc.cancelQueries({ queryKey: ['settings'] });
+      const previous = qc.getQueryData<Settings>(['settings']);
+      if (previous) qc.setQueryData(['settings'], { ...previous, ...patch });
+      return { previous };
+    },
+    onError: (_e, _patch, ctx) => {
+      if (ctx?.previous) qc.setQueryData(['settings'], ctx.previous);
+    },
     onSuccess: (s) => {
       qc.setQueryData(['settings'], s);
       // The budget changes with the limits; the doctor's judge check with the transport.
@@ -40,9 +51,18 @@ export function usePatchSettings() {
   });
 }
 
-/** Marks the given query families stale; the ones on screen refetch right away. */
+/**
+ * Marks the given query families stale; the ones on screen refetch right away. A request still
+ * in flight for a screen that is gone would answer with the pre-change state and mark it fresh
+ * again, so those are cancelled first: the next visit then fetches anew.
+ */
 export function invalidateKeys(qc: QueryClient, keys: string[]) {
-  return Promise.all(keys.map((key) => qc.invalidateQueries({ queryKey: [key] })));
+  return Promise.all(
+    keys.map(async (key) => {
+      await qc.cancelQueries({ queryKey: [key], predicate: (q) => !q.isActive() });
+      await qc.invalidateQueries({ queryKey: [key] });
+    }),
+  );
 }
 
 /** Everything that shows a grade, a rubric's trusted flag or its agreement. */
@@ -77,7 +97,11 @@ export function useSkillRepos() {
 
 export function useTrendSummary(days = 7) {
   const api = useApi();
-  return useQuery({ queryKey: ['trend-summary', days], queryFn: () => api.getTrendSummary(days) });
+  return useQuery({
+    queryKey: ['trend-summary', days],
+    queryFn: () => api.getTrendSummary(days),
+    placeholderData: keepPreviousData,
+  });
 }
 
 export function useTrends(query: TrendQuery) {
@@ -280,7 +304,21 @@ export function usePatchSkillRepo() {
   return useMutation({
     mutationFn: ({ id, ...body }: { id: string } & Parameters<Api['patchSkillRepo']>[1]) =>
       api.patchSkillRepo(id, body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['skill-repos'] }),
+    // Optimistic, like the settings: the toggle or select follows the click; an error restores it.
+    onMutate: async ({ id, ...body }) => {
+      await qc.cancelQueries({ queryKey: ['skill-repos'] });
+      const previous = qc.getQueryData<SkillRepo[]>(['skill-repos']);
+      if (previous)
+        qc.setQueryData(
+          ['skill-repos'],
+          previous.map((r) => (r.id === id ? { ...r, ...body } : r)),
+        );
+      return { previous };
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.previous) qc.setQueryData(['skill-repos'], ctx.previous);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['skill-repos'] }),
   });
 }
 

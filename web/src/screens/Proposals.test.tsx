@@ -180,7 +180,7 @@ describe('Proposals', () => {
 
   it('shows the last run and why a rubric was excluded', async () => {
     renderApp('/proposals');
-    expect(await screen.findByText(/efficiency needs calibration — excluded/)).toBeVisible();
+    expect(await screen.findByText(/Efficiency needs calibration — excluded/)).toBeVisible();
     expect(screen.getByRole('link', { name: 'Calibrate in Rubrics' })).toHaveAttribute(
       'href',
       '/rubrics',
