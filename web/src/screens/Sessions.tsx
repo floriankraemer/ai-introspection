@@ -15,7 +15,7 @@ import {
   Loading,
   PageHeader,
 } from '../components/ui.js';
-import { AGENT_LABEL, formatPercent, formatWhen } from '../lib/format.js';
+import { AGENT_LABEL, formatPercent, formatWhen, titleText } from '../lib/format.js';
 
 function ImportButton() {
   const qc = useQueryClient();
@@ -87,21 +87,40 @@ function PassRateCards({ summary }: { summary: TrendSummary }) {
   );
 }
 
+/** Column headers from the Sessions mockup; the full name stays in the tooltip. */
+const RUBRIC_SHORT: Record<string, string> = {
+  'Redundant tests': 'Tests',
+  'Silent workaround': 'Workaround',
+};
+
 function SessionRow({ s, rubricCols }: { s: SessionSummary; rubricCols: string[] }) {
   return (
     <tr>
       <td>
-        <Link to="/sessions/$sessionId" params={{ sessionId: s.id }} className="font-semibold">
-          {s.title}
+        <Link
+          to="/sessions/$sessionId"
+          params={{ sessionId: s.id }}
+          title={titleText(s.title)}
+          className="block truncate font-semibold"
+        >
+          {titleText(s.title)}
         </Link>
       </td>
       <td>{AGENT_LABEL[s.agent]}</td>
-      <td>{s.repo ?? '—'}</td>
+      <td>
+        <span className="block truncate" title={s.repo ?? undefined}>
+          {s.repo ?? '—'}
+        </span>
+      </td>
       <td>{formatWhen(s.startedAt)}</td>
       <td className={s.toolErrors >= 5 ? 'font-semibold text-fail' : ''}>{s.toolErrors}</td>
       {s.grades.length === 0 ? (
-        <td colSpan={rubricCols.length} className="text-muted">
-          Not graded{s.notGradedReason ? ` · ${s.notGradedReason}` : ' yet'}
+        <td
+          colSpan={rubricCols.length}
+          className="text-muted"
+          title={`Not graded${s.notGradedReason ? ` · ${s.notGradedReason}` : ' yet'}`}
+        >
+          Not graded
         </td>
       ) : (
         rubricCols.map((name) => {
@@ -248,8 +267,20 @@ export function Sessions({
           ) : (
             <>
               <Card className="overflow-x-auto">
-                <table className="w-full border-collapse">
+                <table
+                  className={`w-full table-fixed border-collapse ${names.length ? 'min-w-[56rem]' : 'min-w-[40rem]'}`}
+                >
                   <caption className="sr-only">Sessions</caption>
+                  <colgroup>
+                    <col />
+                    <col className="w-[6.5rem]" />
+                    <col className="w-28" />
+                    <col className="w-[5.75rem]" />
+                    <col className="w-[5.75rem]" />
+                    {rubricCols.map((n) => (
+                      <col key={n} className={names.length ? 'w-[5.5rem]' : 'w-28'} />
+                    ))}
+                  </colgroup>
                   <thead>
                     <tr>
                       <th scope="col">Session</th>
@@ -260,8 +291,8 @@ export function Sessions({
                         Tool errors
                       </th>
                       {rubricCols.map((n) => (
-                        <th key={n} scope="col">
-                          {n}
+                        <th key={n} scope="col" title={n} className="whitespace-nowrap">
+                          {RUBRIC_SHORT[n] ?? n}
                         </th>
                       ))}
                     </tr>

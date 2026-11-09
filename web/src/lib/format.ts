@@ -28,6 +28,31 @@ export function formatTokens(n: number): string {
   return n >= 1000 ? `${String(Math.round(n / 1000))}k` : String(n);
 }
 
+/** "in 120k · out 45k · cache 17.5M"; cache is left out when there is none. */
+export function formatTokenSplit(s: SessionDetail): string {
+  const cache = s.tokensCacheRead + s.tokensCacheWrite;
+  return [
+    `in ${formatTokens(s.tokensIn)}`,
+    `out ${formatTokens(s.tokensOut)}`,
+    cache > 0 ? `cache ${formatTokens(cache)}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+/** The server cuts titles at 80 characters without a marker; add one unless it already ends in "…". */
+export function titleText(title: string): string {
+  return title.length >= 80 && !title.endsWith('…') ? `${title}…` : title;
+}
+
+/** Source names in check labels/details: `claude_code` -> "Claude Code". */
+export function humanizeSources(text: string): string {
+  // Not inside paths ("~/.codex/sessions", "/sources/codex"): skip names glued to path characters.
+  return text
+    .replace(/(?<![\w./~-])claude_code(?![\w/-])/g, AGENT_LABEL.claude_code)
+    .replace(/(?<![\w./~-])codex(?![\w/.-])/g, AGENT_LABEL.codex);
+}
+
 export function formatPercent(rate: number): string {
   return `${String(Math.round(rate * 100))}%`;
 }

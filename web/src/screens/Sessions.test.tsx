@@ -22,7 +22,8 @@ describe('Sessions', () => {
     expect(await screen.findByText('Not graded yet')).toBeInTheDocument();
     // Result defaults to All when nothing is graded, so rows are visible.
     const row = (await screen.findByRole('link', { name: 'Bump dependencies' })).closest('tr');
-    expect(within(row as HTMLElement).getByText(/Not graded · not flagged/)).toBeInTheDocument();
+    const cell = within(row as HTMLElement).getByText('Not graded');
+    expect(cell).toHaveAttribute('title', expect.stringMatching(/Not graded · not flagged/));
   });
 
   it('filters by search text and offers a way out of an empty result', async () => {

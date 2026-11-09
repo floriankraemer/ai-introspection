@@ -105,22 +105,29 @@ function JudgeStep({ draft, set }: { draft: JudgeDraft; set: (d: JudgeDraft) => 
         ))}
       </fieldset>
       {draft.transport === 'api' ? (
-        <Field
-          label="Anthropic API key"
-          hint="Stored on this machine only, never in your skills repo."
+        <form
+          autoComplete="off"
+          onSubmit={(e) => {
+            e.preventDefault();
+          }}
         >
-          <input
-            type="password"
-            autoComplete="off"
-            spellCheck={false}
-            className={FIELD}
-            placeholder="sk-ant-…"
-            value={draft.apiKey}
-            onChange={(e) => {
-              set({ ...draft, apiKey: e.target.value });
-            }}
-          />
-        </Field>
+          <Field
+            label="Anthropic API key"
+            hint="Stored on this machine only, never in your skills repo."
+          >
+            <input
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              className={FIELD}
+              placeholder="sk-ant-…"
+              value={draft.apiKey}
+              onChange={(e) => {
+                set({ ...draft, apiKey: e.target.value });
+              }}
+            />
+          </Field>
+        </form>
       ) : null}
       <JudgeTest transport={draft.transport} apiKey={draft.apiKey.trim()} />
       <Field
@@ -149,6 +156,9 @@ function SkillsStep({
   onCopy,
   copying,
   error,
+  canInit,
+  onInit,
+  initing,
 }: {
   path: string;
   setPath: (p: string) => void;
@@ -157,6 +167,9 @@ function SkillsStep({
   onCopy: () => void;
   copying: boolean;
   error: string | null;
+  canInit: boolean;
+  onInit: () => void;
+  initing: boolean;
 }) {
   return (
     <div className="flex flex-col gap-4">
@@ -178,6 +191,18 @@ function SkillsStep({
         <p role="alert" className="m-0 text-sm text-fail">
           {error}
         </p>
+      ) : null}
+      {canInit && !repo ? (
+        <Card className="flex flex-col items-start gap-2 border-dashed border-line-dashed bg-surface-alt p-4 text-sm">
+          <strong>This folder is empty or not a git repo yet.</strong>
+          <span className="text-ink-soft">
+            Create a new skills repo here: Introspect runs <code>git init</code>, adds the starter
+            rubrics and makes the first commit. Or point to a repo you already have.
+          </span>
+          <Button variant="primary" onClick={onInit} disabled={initing}>
+            {initing ? 'Creating…' : 'Create a new skills repo here'}
+          </Button>
+        </Card>
       ) : null}
       {repo && !repo.hasRubrics ? (
         <Card className="flex flex-col items-start gap-2 border-dashed border-line-dashed bg-surface-alt p-4 text-sm">
@@ -300,6 +325,18 @@ export function Setup() {
     queryFn: () => api.detectSkillRepos(),
   });
   const path = edited ?? repos.data?.[0]?.path ?? '';
+  const entry = repos.data?.find((r) => r.path === path);
+  const canInit = Boolean(entry && (!entry.isGitRepo || entry.isEmpty));
+  const init = useMutation({
+    mutationFn: () => api.initGlobalSkillRepo(path.trim()),
+    onSuccess: (r) => {
+      setError(null);
+      setRepo(r);
+    },
+    onError: (e) => {
+      setError(e.message);
+    },
+  });
   const copy = useMutation({
     mutationFn: () => api.copyStarterRubrics(),
     onSuccess: (r) => {
@@ -373,6 +410,11 @@ export function Setup() {
       }}
       copying={copy.isPending}
       error={error}
+      canInit={canInit}
+      onInit={() => {
+        init.mutate();
+      }}
+      initing={init.isPending}
     />,
     <DoneStep key="d" />,
   ][step];
@@ -437,7 +479,9 @@ export function Setup() {
                   {save.isPending
                     ? 'Saving…'
                     : step === 2 && path.trim() && !repo
-                      ? 'Use this folder'
+                      ? canInit
+                        ? 'Use an existing repo'
+                        : 'Use this folder'
                       : 'Continue'}
                 </Button>
               </div>

@@ -297,6 +297,10 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
             repo: s.repo,
             startedAt: new Date(Date.now() - s.ago).toISOString(),
             toolErrors: s.errors,
+            tokensIn: 120_000,
+            tokensOut: 45_000,
+            tokensCacheRead: 17_500_000,
+            tokensCacheWrite: 400_000,
             grades,
             notGradedReason: grades.length ? null : 'not flagged, outside 20% sample',
           };
@@ -379,7 +383,22 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
     },
     async detectSkillRepos() {
       await wait();
-      return [];
+      return fresh
+        ? [{ path: '~/.claude', isGitRepo: false, hasRubrics: false, isEmpty: true }]
+        : [];
+    },
+    async initGlobalSkillRepo(path) {
+      await wait();
+      const repo: SkillRepo = {
+        id: 'r1',
+        kind: 'global',
+        path,
+        hasRubrics: true,
+        enabled: true,
+        acceptMode: null,
+      };
+      repos = [repo, ...repos.filter((r) => r.kind === 'project')];
+      return repo;
     },
     async copyStarterRubrics() {
       await wait();
@@ -462,8 +481,10 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
         branch: 'feat/oauth',
         startedAt: s.startedAt,
         durationS: 2460,
-        tokensIn: 250_000,
-        tokensOut: 62_000,
+        tokensIn: s.tokensIn,
+        tokensOut: s.tokensOut,
+        tokensCacheRead: s.tokensCacheRead,
+        tokensCacheWrite: s.tokensCacheWrite,
         model: 'claude-sonnet-5-5',
         outcome: { kind: 'pr_merged', ref: '128', url: null },
         eventCount: trace.length,

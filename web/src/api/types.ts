@@ -70,6 +70,7 @@ export interface Api {
   listSkillRepos(): Promise<SkillRepo[]>;
   detectSkillRepos(): Promise<DetectedSkillRepo[]>;
   putGlobalSkillRepo(path: string): Promise<SkillRepo>;
+  initGlobalSkillRepo(path: string): Promise<SkillRepo>;
   copyStarterRubrics(): Promise<{ copied: string[] }>;
   patchSkillRepo(id: string, body: { enabled: boolean }): Promise<SkillRepo>;
   startImport(): Promise<Job>;

@@ -50,6 +50,7 @@ export const realApi: Api = {
   listSkillRepos: () => request('GET', '/skill-repos'),
   detectSkillRepos: () => request('GET', '/skill-repos/detected'),
   putGlobalSkillRepo: (path) => request('PUT', '/skill-repos/global', { path }),
+  initGlobalSkillRepo: (path) => request('POST', '/skill-repos/global/init', { path }),
   copyStarterRubrics: () => request('POST', '/skill-repos/global/starter-rubrics'),
   patchSkillRepo: (rid, body) => request('PATCH', `/skill-repos/${id(rid)}`, body),
   startImport: () => request('POST', '/imports'),

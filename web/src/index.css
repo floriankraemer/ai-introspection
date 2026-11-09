@@ -132,11 +132,11 @@
     font-size: 12px;
     font-weight: 600;
     color: var(--ink-muted);
-    padding: 10px 12px;
+    padding: 10px 8px;
     border-bottom: 1px solid var(--line);
   }
   td {
-    padding: 12px;
+    padding: 12px 8px;
     border-bottom: 1px solid var(--line-soft);
     font-size: 14px;
     white-space: nowrap;

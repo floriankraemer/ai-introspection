@@ -9,8 +9,9 @@ import {
   eventLabel,
   formatDuration,
   formatOffset,
-  formatTokens,
+  formatTokenSplit,
   outcomeLabel,
+  titleText,
 } from '../lib/format.js';
 import { ApiError } from '../api/client.js';
 
@@ -39,6 +40,8 @@ function Payload({ label, value }: { label: string; value: string }) {
 }
 
 function EventRow({ e }: { e: TraceEvent }) {
+  // Long summaries are clamped in the row; the disclosure carries the full text.
+  const long = e.text.length > 100;
   const hasPayload = e.input !== null || e.output !== null || e.payloadPurged;
   return (
     <li
@@ -49,10 +52,13 @@ function EventRow({ e }: { e: TraceEvent }) {
         {eventLabel(e)}
       </Chip>
       <div className="min-w-0 break-words">
-        <Inline text={e.text} />
-        {hasPayload ? (
+        <div className="line-clamp-2">
+          <Inline text={e.text} />
+        </div>
+        {hasPayload || long ? (
           <details className="mt-1 text-[13px]">
             <summary className="w-fit cursor-pointer text-accent">Payload</summary>
+            {long ? <Payload label="Summary" value={e.text.replaceAll('`', '')} /> : null}
             {e.payloadPurged ? (
               <p className="m-0 mt-2 text-muted">Payload removed by the retention purge.</p>
             ) : (
@@ -186,7 +192,7 @@ export function SessionDetail({ id }: { id: string }) {
     s.repo,
     s.branch,
     formatDuration(s.durationS),
-    `${formatTokens(s.tokensIn + s.tokensOut)} tokens`,
+    formatTokenSplit(s),
   ].filter(Boolean);
   return (
     <div className="flex flex-col gap-5">
@@ -195,7 +201,9 @@ export function SessionDetail({ id }: { id: string }) {
       </Link>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex flex-col gap-1.5">
-          <h1 className="m-0 text-[26px] leading-tight font-bold">{s.title}</h1>
+          <h1 className="m-0 text-[26px] leading-tight font-bold break-words">
+            {titleText(s.title)}
+          </h1>
           <p className="m-0 text-sm text-muted">
             {meta.join(' · ')}
             {outcome ? (

@@ -319,38 +319,40 @@ function JudgeCard({ settings, save }: { settings: SettingsData; save: (p: Patch
         ]}
       />
       {settings['judge.transport'] === 'api' ? (
-        <Field
-          label="Anthropic API key"
-          hint={
-            settings['judge.api_key_set']
-              ? 'A key is saved on this machine. Paste a new one to replace it.'
-              : 'No key saved yet. It stays on this machine.'
-          }
+        <form
+          autoComplete="off"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (key.trim() && !saveKey.isPending) saveKey.mutate();
+          }}
         >
-          <div className="flex gap-2">
-            <input
-              type="password"
-              autoComplete="off"
-              spellCheck={false}
-              className={`${FIELD} min-w-0 flex-1`}
-              placeholder="sk-ant-…"
-              value={key}
-              onChange={(e) => {
-                setKey(e.target.value);
-              }}
-            />
-            <Button
-              disabled={!key.trim() || saveKey.isPending}
-              onClick={() => {
-                saveKey.mutate();
-              }}
-              className="h-10"
-            >
-              Save key
-            </Button>
-          </div>
-          {saveKey.isError ? <span className="text-fail">{saveKey.error.message}</span> : null}
-        </Field>
+          <Field
+            label="Anthropic API key"
+            hint={
+              settings['judge.api_key_set']
+                ? 'A key is saved on this machine. Paste a new one to replace it.'
+                : 'No key saved yet. It stays on this machine.'
+            }
+          >
+            <div className="flex gap-2">
+              <input
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                className={`${FIELD} min-w-0 flex-1`}
+                placeholder="sk-ant-…"
+                value={key}
+                onChange={(e) => {
+                  setKey(e.target.value);
+                }}
+              />
+              <Button type="submit" disabled={!key.trim() || saveKey.isPending} className="h-10">
+                Save key
+              </Button>
+            </div>
+            {saveKey.isError ? <span className="text-fail">{saveKey.error.message}</span> : null}
+          </Field>
+        </form>
       ) : null}
       <JudgeTest transport={settings['judge.transport']} apiKey={key.trim()} />
       <Select
@@ -401,19 +403,8 @@ function JudgeCard({ settings, save }: { settings: SettingsData; save: (p: Patch
 }
 
 function ScheduleCard({ settings, save }: { settings: SettingsData; save: (p: Patch) => void }) {
-  const api = useApi();
-  const qc = useQueryClient();
   const repos = useSkillRepos();
   const global = repos.data?.find((r) => r.kind === 'global');
-  const [path, setPath] = useState<string | null>(null);
-  const shown = path ?? global?.path ?? '';
-  const put = useMutation({
-    mutationFn: (p: string) => api.putGlobalSkillRepo(p),
-    onSuccess: async () => {
-      setPath(null);
-      await qc.invalidateQueries({ queryKey: ['skill-repos'] });
-    },
-  });
   const projects = repos.data?.filter((r) => r.kind === 'project') ?? [];
   return (
     <section aria-label="Schedule" className={SECTION}>
@@ -439,28 +430,27 @@ function ScheduleCard({ settings, save }: { settings: SettingsData; save: (p: Pa
           ['manual', 'Manually'],
         ]}
       />
-      <Field
-        label="Skills repo for patches"
-        hint={
-          put.isError ? (
-            <span className="text-fail">{put.error.message}</span>
-          ) : global && !global.hasRubrics ? (
-            'This folder has no rubrics/ folder yet. Run the setup wizard to copy the starter rubrics.'
-          ) : null
-        }
-      >
-        <input
-          className={FIELD}
-          value={shown}
-          placeholder="~/dev/agent-skills"
-          onChange={(e) => {
-            setPath(e.target.value);
-          }}
-          onBlur={() => {
-            if (path?.trim() && path !== global?.path) put.mutate(path.trim());
-          }}
-        />
-      </Field>
+      <div className="flex flex-col gap-1 text-xs text-muted">
+        <span>Skills repo for patches</span>
+        {repos.isPending ? (
+          <span className="text-sm">Loading…</span>
+        ) : global ? (
+          <>
+            <code className="text-sm break-all text-ink">{global.path}</code>
+            {!global.hasRubrics ? (
+              <span>
+                This folder has no rubrics/ folder yet. Run the setup wizard to copy the starter
+                rubrics.
+              </span>
+            ) : null}
+          </>
+        ) : (
+          <span className="text-sm text-ink-soft">
+            Not set. Choose one in the Health check above or the{' '}
+            <Link to="/setup">setup wizard</Link>.
+          </span>
+        )}
+      </div>
       <Select
         label="Accept a proposal by"
         name="proposals.accept_mode"
@@ -500,7 +490,7 @@ function TeamCard() {
         team; proposals open as PRs.
       </p>
       <Field label="Server URL">
-        <input type="url" className={FIELD} placeholder="https://loop.your-company.dev" disabled />
+        <input type="url" className={FIELD} placeholder="https://introspect.example.com" disabled />
       </Field>
       <label className="flex items-center gap-2.5 text-sm text-muted">
         <input type="checkbox" className="size-[18px]" disabled />

@@ -1805,6 +1805,93 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/v1/skill-repos/global/init': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Create the global skills repository in an empty folder below a mounted root: git init (main), starter rubrics, one commit */
+    post: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody: {
+        content: {
+          'application/json': {
+            path: string;
+          };
+        };
+      };
+      responses: {
+        /** @description The new repository */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/json': components['schemas']['SkillRepo'];
+          };
+        };
+        /** @description Invalid request */
+        400: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Missing or invalid token */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Not found */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Conflicts with the current state */
+        409: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Well-formed but cannot be applied */
+        422: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+      };
+    };
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/v1/skill-repos/global/starter-rubrics': {
     parameters: {
       query?: never;
@@ -2021,6 +2108,10 @@ export interface components {
       /** Format: date-time */
       startedAt: string;
       toolErrors: number;
+      tokensIn: number;
+      tokensOut: number;
+      tokensCacheRead: number;
+      tokensCacheWrite: number;
       grades: {
         rubric: string;
         passed: boolean | null;
@@ -2042,6 +2133,8 @@ export interface components {
       durationS: number;
       tokensIn: number;
       tokensOut: number;
+      tokensCacheRead: number;
+      tokensCacheWrite: number;
       model: string | null;
       outcome: {
         /** @enum {string} */
@@ -2106,6 +2199,7 @@ export interface components {
       path: string;
       isGitRepo: boolean;
       hasRubrics: boolean;
+      isEmpty: boolean;
     };
     SkillRepo: {
       /** Format: uuid */

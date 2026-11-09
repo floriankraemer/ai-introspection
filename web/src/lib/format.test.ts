@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { TraceEvent } from '../api/types.js';
-import { collapseRuns, formatOffset, formatTokens, formatWhen } from './format.js';
+import {
+  collapseRuns,
+  formatOffset,
+  formatTokens,
+  formatWhen,
+  humanizeSources,
+  titleText,
+} from './format.js';
 
 const ev = (seq: number, isError: boolean, name = 'bash'): TraceEvent => ({
   id: `e${String(seq)}`,
@@ -53,5 +60,24 @@ describe('formatting', () => {
 describe('formatTokens', () => {
   it('abbreviates thousands and millions', () => {
     expect([950, 62_000, 4_180_000].map(formatTokens)).toEqual(['950', '62k', '4.2M']);
+  });
+});
+
+describe('titleText', () => {
+  it('marks a server-cut title once', () => {
+    expect(titleText('a'.repeat(80))).toBe(`${'a'.repeat(80)}…`);
+    expect(titleText(`${'a'.repeat(79)}…`)).toBe(`${'a'.repeat(79)}…`);
+    expect(titleText('short')).toBe('short');
+  });
+});
+
+describe('humanizeSources', () => {
+  it('renames agents but leaves paths alone', () => {
+    expect(humanizeSources('Source claude_code: /sources/codex')).toBe(
+      'Source Claude Code: /sources/codex',
+    );
+    expect(humanizeSources('Source codex: ~/.codex/sessions')).toBe(
+      'Source Codex: ~/.codex/sessions',
+    );
   });
 });
