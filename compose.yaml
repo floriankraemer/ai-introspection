@@ -1,0 +1,39 @@
+# User-facing stack: `docker compose up`, then open http://localhost:7317
+name: introspect
+services:
+  introspect:
+    image: introspect:local
+    build:
+      context: .
+      target: runtime
+    # Run as the host user so files written to bind mounts are never owned by root.
+    user: '${UID:-1000}:${GID:-1000}'
+    ports:
+      - '127.0.0.1:7317:7317'
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    init: true
+    restart: unless-stopped
+    environment:
+      # inotify is unreliable on WSL2 and Docker Desktop bind mounts; the watcher polls.
+      CHOKIDAR_USEPOLLING: '1'
+    volumes:
+      - data:/data
+      # Agent logs, read-only. Compose has no optional bind mounts: a missing folder is created
+      # empty, so startup never fails. `make up` creates both as your user first, because the
+      # Docker engine on Linux would otherwise create them owned by root.
+      - type: bind
+        source: ${HOME}/.claude/projects
+        target: /sources/claude/projects
+        read_only: true
+      - type: bind
+        source: ${HOME}/.codex/sessions
+        target: /sources/codex/sessions
+        read_only: true
+
+volumes:
+  data:

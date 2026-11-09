@@ -321,24 +321,35 @@ Storage estimate: payloads about 25 MB per user per week (64 KiB cap per field),
 
 ### 8.1 Local
 
+Docker Compose is the primary local runtime (ADR-0011).
+The npm package remains supported for users without Docker.
+
 ```mermaid
 flowchart LR
   subgraph os[macOS / Linux / WSL2 on Windows]
-    node[Node.js 24 LTS]
-    pkg[introspect npm package<br/>server + CLI + built SPA]
-    data[(data dir<br/>introspect.db, token, config.toml,<br/>runs/, worktrees/)]
-    git[git ≥ 2.30, gh for PR accept mode, claude CLI for CLI transport]
+    subgraph ctr[introspect container - non-root, read-only root fs]
+      app[introspect serve<br/>server + CLI + built SPA, Node.js 24]
+      tools[git, gh for PR accept mode, claude CLI for CLI transport]
+    end
+    data[(named volume /data<br/>introspect.db, token, config.toml,<br/>runs/, worktrees/)]
+    logs[/~/.claude/projects, ~/.codex/sessions<br/>read-only bind mounts/]
+    repos[/skills repo, project repos<br/>read-write bind mounts/]
   end
-  pkg --> node
-  pkg --> data
-  pkg --> git
-  pkg -->|HTTPS| anthropic[(api.anthropic.com)]
-  browser[Browser] -->|http://127.0.0.1:7425| pkg
+  app --> data
+  app --> logs
+  app --> repos
+  app --> tools
+  app -->|HTTPS| anthropic[(api.anthropic.com)]
+  browser[Browser] -->|http://localhost:7317| app
 ```
 
-- One process: `introspect serve` with roles `api,watcher,worker,scheduler`.
-- WSL: run inside WSL; Windows-side agent folders (`/mnt/c/...`) are polled.
-- Nothing listens on a non-loopback interface.
+- One container, one process: `introspect serve` with roles `api,watcher,worker,scheduler`.
+- The container runs as the host UID and GID, so files in bind mounts are never owned by root.
+- The watcher polls by default, because inotify is unreliable on WSL2 and Docker Desktop bind mounts.
+- The port is published on `127.0.0.1` only; nothing listens on a non-loopback host interface.
+- Credentials: the API key lives in the data volume (mode 0600); the CLI transport mounts `~/.claude` read-only, the one weaker isolation point (ADR-0011).
+- Development uses the same image lineage: `compose.dev.yaml` (source bind-mounted, Postgres 16) driven by the Makefile, also as a devcontainer.
+- Without Docker: install the npm package and run `introspect serve` on the host; inside WSL, sources under `/mnt/c/...` are polled.
 
 ### 8.2 Cloud (team mode)
 

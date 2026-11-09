@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-11-08)
+Partially superseded by ADR-0011 (local runtime)
 
 ## Context
 
@@ -54,7 +54,7 @@ Configuration (environment variables override a `config.toml` in the data direct
 | `mode` | `local` | `team` |
 | `roles` | `api,watcher,worker,scheduler` | `api` on web replicas; `worker,scheduler` on worker replicas |
 | `database_url` | `sqlite:<data_dir>/introspect.db` | `postgres://…` |
-| `bind` | `127.0.0.1:7425` | `0.0.0.0:8080` behind TLS-terminating proxy |
+| `bind` | `127.0.0.1:7317` | `0.0.0.0:8080` behind TLS-terminating proxy |
 | `auth` | `local-token` | `oidc` (ADR-0008) |
 
 Data directory: `~/Library/Application Support/introspect` on macOS, `$XDG_DATA_HOME/introspect` (default `~/.local/share/introspect`) on Linux and WSL2.

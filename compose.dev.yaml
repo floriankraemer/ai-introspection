@@ -1,0 +1,41 @@
+# Development and CI environment. Use through the Makefile.
+name: introspect-dev
+services:
+  dev:
+    build:
+      context: .
+      target: dev
+    user: '${UID:-1000}:${GID:-1000}'
+    working_dir: /app
+    init: true
+    environment:
+      CI:
+      CHOKIDAR_USEPOLLING: '1'
+      DATABASE_URL: postgres://introspect:introspect@postgres:5432/introspect
+    ports:
+      - '127.0.0.1:5173:5173'
+      - '127.0.0.1:7317:7317'
+    volumes:
+      - .:/app
+      - node_modules:/app/node_modules
+      - web_node_modules:/app/web/node_modules
+      - pnpm_store:/pnpm/store
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: introspect
+      POSTGRES_PASSWORD: introspect
+      POSTGRES_DB: introspect
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U introspect -d introspect']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    tmpfs:
+      - /var/lib/postgresql/data
+
+volumes:
+  node_modules:
+  web_node_modules:
+  pnpm_store:

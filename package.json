@@ -1,0 +1,48 @@
+{
+  "name": "introspect",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Local-first agent self-improvement tool",
+  "type": "module",
+  "packageManager": "pnpm@12.18.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "introspect": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "web/dist"
+  ],
+  "scripts": {
+    "dev": "pnpm --parallel -r run \"/^dev:/\"",
+    "dev:server": "tsx watch src/cli.ts serve",
+    "build": "tsc -p tsconfig.build.json && pnpm --filter web build",
+    "test": "vitest run --exclude \"**/*.pg.test.ts\"",
+    "test:pg": "vitest run pg.test.ts",
+    "typecheck": "tsc --noEmit && pnpm --filter web typecheck",
+    "lint:eslint": "eslint .",
+    "lint:format": "prettier --check .",
+    "lint:deps": "depcruise src web/src --config .dependency-cruiser.cjs",
+    "lint": "pnpm run lint:eslint && pnpm run lint:format && pnpm run typecheck && pnpm run lint:deps",
+    "format": "prettier --write ."
+  },
+  "dependencies": {
+    "@hono/node-server": "2.1.6",
+    "hono": "4.13.17"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.19.2",
+    "@types/pg": "8.23.1",
+    "dependency-cruiser": "18.7.2",
+    "eslint": "10.14.0",
+    "pg": "8.23.1",
+    "prettier": "3.9.10",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.1",
+    "vitest": "5.1.0"
+  }
+}

@@ -1,0 +1,12 @@
+.git
+.github
+.devcontainer
+.env
+node_modules
+**/node_modules
+dist
+web/dist
+docs
+*.md
+compose*.yaml
+Makefile

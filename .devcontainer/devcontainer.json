@@ -1,0 +1,14 @@
+{
+  "name": "introspect",
+  "dockerComposeFile": ["../compose.dev.yaml"],
+  "service": "dev",
+  "workspaceFolder": "/app",
+  "shutdownAction": "stopCompose",
+  "forwardPorts": [5173, 7317],
+  "postCreateCommand": "pnpm install",
+  "customizations": {
+    "vscode": {
+      "extensions": ["dbaeumer.vscode-eslint", "esbenp.prettier-vscode"]
+    }
+  }
+}
