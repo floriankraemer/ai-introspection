@@ -11,7 +11,14 @@ SHELL := /bin/bash
 
 COMPOSE := docker compose -f compose.dev.yaml
 RUN := $(COMPOSE) run --rm --build dev
-APP := docker compose exec introspect introspect
+# App commands run in whichever is up: the app from `make up` (container `introspect`) or the dev
+# server from `make dev` (container `introspect-dev`). $(call app,<docker exec flags>,<command>)
+running = $(shell docker ps -q -f name=^$(1)$$ 2>/dev/null)
+define app
+	@if [ -n "$(call running,introspect)" ]; then docker exec $(1) introspect introspect $(2); \
+	elif [ -n "$(call running,introspect-dev)" ]; then docker exec $(1) introspect-dev pnpm -s exec tsx src/cli.ts $(2); \
+	else printf "Introspect is not running. Start it with $(CYAN)make up$(RESET) (or $(CYAN)make dev$(RESET)), then try again.\n" >&2; exit 1; fi
+endef
 
 # Host folders mounted into the user stack. Same defaults as compose.yaml; the shell environment
 # wins over .env, as it does for Compose.
@@ -61,38 +68,39 @@ status: ## Show the containers and their health
 logs: ## Follow the app logs (Ctrl+C to stop)
 	docker compose logs -f --tail=200 introspect
 
-open: ## Print the sign-in link for your browser
-	$(APP) open
+# The dev server is opened through Vite (5173), which proxies the API and reloads on change.
+open: ## Print the sign-in link for your browser (app or dev server)
+	$(call app,,open$(if $(call running,introspect),, | sed 's|http://127.0.0.1:7317|http://localhost:5173|'))
 
 doctor: ## Run the health check (same as Settings › Health check)
-	$(APP) doctor
+	$(call app,,doctor)
 
 # The login lives in the container's own home (/data/claude-home), never in ~/.claude: a second
 # client of your login could rotate its refresh token and sign you out on the host.
 claude-login: ## Sign the judge in to Claude once (CLI transport)
-	docker compose exec -it introspect introspect judge-login
+	$(call app,-it,judge-login)
 
 rotate-token: ## Issue a new sign-in token; old links and cookies stop working
-	$(APP) rotate-token
+	$(call app,,rotate-token)
 
 ##@ Work with your data
 
 .PHONY: import grade improve scan
 import: ## Import all session history now
-	$(APP) import
+	$(call app,,import)
 
 grade: ## Grade sessions now (ARGS="--since 7d" | "--session <id>" | "--all")
-	$(APP) grade $(or $(ARGS),--since 1d)
+	$(call app,,grade $(or $(ARGS),--since 1d))
 
 improve: ## Run the improver now (ARGS="--since 24h")
-	$(APP) improve --now $(ARGS)
+	$(call app,,improve --now $(ARGS))
 
 scan: ## Look for changes in the skills repos now (trends markers)
-	$(APP) scan
+	$(call app,,scan)
 
 ##@ Develop
 
-.PHONY: mount-points install dev dev-open shell gen-api format
+.PHONY: mount-points install dev shell gen-api format
 # Docker would create these bind-mount points as root if they were missing.
 mount-points:
 	@mkdir -p node_modules web/node_modules
@@ -106,9 +114,6 @@ dev: mount-points ## Start server (7317) and Vite (5173) with live reload
 	@docker compose stop introspect 2>/dev/null || true
 	@docker rm -f introspect-dev >/dev/null 2>&1 || true
 	$(COMPOSE) run --rm --build --service-ports --name introspect-dev server pnpm dev
-
-dev-open: ## Print the sign-in link for the dev server (Vite, port 5173)
-	@docker exec introspect-dev pnpm -s exec tsx src/cli.ts open | sed 's|http://127.0.0.1:7317|http://localhost:5173|'
 
 shell: mount-points ## Open a shell in the dev container
 	$(RUN) bash

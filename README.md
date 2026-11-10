@@ -104,7 +104,7 @@ Run `make` to see every command, grouped by task.
 
 - `make dev` starts the server (7317) and Vite (5173) with live reload, in the container `introspect-dev`.
   It stops the `make up` app first, because both use port 7317, and keeps its own database in the `dev_data` volume.
-  In a second terminal, `make dev-open` prints the sign-in link for http://localhost:5173.
+  In a second terminal, `make open` prints the sign-in link for http://localhost:5173.
 - `make test` runs the unit tests; `make test-pg` runs the Postgres tests.
 - `make lint`, `make build`, `make shell`, `make down` do what they say.
 - `make doctor` runs `introspect doctor` in the running stack; the same report is at `GET /v1/doctor`.

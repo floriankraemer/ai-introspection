@@ -10,7 +10,7 @@ All of them run in Docker, so the host needs only Docker with Compose and Make.
 | Command | What it does |
 |---|---|
 | `make up` | Creates the mounted folders as your user, then builds and starts Introspect (`docker compose up -d --build --wait`). |
-| `make open` | Prints the sign-in link. |
+| `make open` | Prints the sign-in link: for the app, or for the development server on port 5173 while `make dev` runs. |
 | `make doctor` | Runs the health checks and prints one fix line per problem. |
 | `make claude-login` | Signs the container's `claude` in, once. It prints an address to open and asks for the code. |
 | `make down` | Stops Introspect and the development stack. The data volume stays. |
@@ -23,7 +23,6 @@ This removes the database, the sign-in token, the API key and the container's Cl
 | Command | What it does |
 |---|---|
 | `make dev` | Starts the server (port 7317) and the web build server (port 5173) with live reload. Stops the `make up` app first, because both use port 7317. |
-| `make dev-open` | Prints the sign-in link for the development server on port 5173. |
 | `make install` | Installs the dependencies in the development container. |
 | `make lint` | Runs the linters, the formatter check, the type check and the dependency rules. |
 | `make test` | Runs the unit tests. |
