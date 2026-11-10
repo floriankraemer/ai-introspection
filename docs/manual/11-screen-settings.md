@@ -40,12 +40,57 @@ Click **Run again** after you fix something.
 
 ## Sources
 
-The **Sources** card lists the session log folders with a status chip: **Watching**, **Polling**, **Disabled** or **Not found**.
-In Docker the chip is **Polling**, because Introspect checks the folders at intervals instead of waiting for file events.
+The **Sources** card lists the session log sources.
+Each source has a kind chip next to the agent name, and a status chip: **Watching**, **Polling**, **Disabled** or **Not found**.
+In Docker the status chip is **Polling**, because Introspect checks the folders at intervals instead of waiting for file events.
+
+| Kind chip | Meaning |
+|---|---|
+| **Folder** | A folder on your computer. |
+| **S3** | An S3 bucket. The row shows `s3://<bucket>/<prefix>`. |
+| **Pushed** | The folder where the logs of one person who pushes to the [intake](20-sharing-sessions.md) are stored. The row says "Pushed by <name>". |
+
 **+ Add source folder** adds a folder: choose the agent, enter the **Folder path** and click **Add folder**.
 Folders must be readable inside the container, so a new folder also needs a mount.
 
-![The Sources card lists the session folders.](images/settings-sources.png)
+**+ Add S3 bucket** adds a bucket:
+
+1. Click **+ Add S3 bucket**.
+
+   A form opens.
+
+2. Choose the **Agent**, and enter the **Bucket**.
+
+   Optional fields: **Prefix (optional)** to read one folder of the bucket, and **Region (optional)**.
+
+3. For S3-compatible storage such as MinIO, enter the **Endpoint (optional)**.
+
+   The checkbox **Use path-style addressing** appears.
+   Tick it if the storage needs it.
+
+4. Click **Add bucket**.
+
+   Introspect lists the bucket once.
+   The row appears with the chip **S3**.
+   If the bucket cannot be read, a red message shows the error from S3 and nothing is added.
+
+Do not enter credentials in this form.
+They come from the server's environment: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and optionally `AWS_SESSION_TOKEN` and `AWS_REGION` in `.env`.
+See the [configuration reference](15-configuration-reference.md).
+The account needs the rights to list and read the bucket (`s3:ListBucket` and `s3:GetObject`).
+
+Introspect copies the matching log files of a bucket to its data folder (`/data/s3/<source id>`) once a minute and imports them like any other folder.
+A file you delete in the bucket stays in the copy, and its sessions stay in Introspect.
+A new bucket is copied at once, and a history import copies the buckets first.
+Objects larger than `INTROSPECT_INTAKE_MAX_MB` (default 64 MB) are skipped, and the Health check reports them.
+Objects older than the retention period are not fetched.
+The endpoint must use https, unless it is on your own computer.
+The Health check reports whether the credentials are found and the bucket answers.
+
+Disabling a **Pushed** source does not stop that person from uploading.
+Revoke their token instead (see [Sharing sessions](20-sharing-sessions.md)).
+
+![The Sources card lists each source with its kind: Folder, S3 or Pushed.](images/settings-sources.png)
 
 ## Redaction and retention
 

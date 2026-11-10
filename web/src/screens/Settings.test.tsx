@@ -4,8 +4,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render } from '@testing-library/react';
 import { createMemoryHistory } from '@tanstack/react-router';
 import { App } from '../App.js';
+import { ApiError } from '../api/client.js';
 import { createMockApi } from '../api/mock.js';
-import type { Api } from '../api/types.js';
+import type { AddSourceBody, Api } from '../api/types.js';
 import { renderApp } from '../test-utils.js';
 
 describe('Settings', () => {
@@ -179,5 +180,64 @@ describe('Settings', () => {
     fail(new Error('Server said no'));
     expect(await screen.findByText(/Could not save: Server said no/)).toBeInTheDocument();
     expect(box).toHaveProperty('checked', was);
+  });
+
+  it('badges each source by kind and shows the bucket URL for S3', async () => {
+    renderApp('/settings');
+    const sources = await screen.findByRole('region', { name: 'Sources' });
+    expect(await within(sources).findByText('s3://team-logs/claude/')).toBeVisible();
+    expect(within(sources).getAllByText('Folder')).toHaveLength(2);
+    expect(within(sources).getByText('S3')).toBeVisible();
+    expect(within(sources).getByText('Pushed')).toBeVisible();
+    expect(within(sources).getByText('Pushed by Ada')).toBeVisible();
+    expect(within(sources).queryByText(/intake\/ada/)).toBeNull();
+  });
+
+  it('adds an S3 bucket; the path-style box only appears with an endpoint', async () => {
+    const user = userEvent.setup();
+    const mock = createMockApi('graded', 0);
+    const addSource = vi.fn((b: AddSourceBody) => mock.addSource(b));
+    render(
+      <App
+        api={{ ...mock, addSource }}
+        history={createMemoryHistory({ initialEntries: ['/settings'] })}
+      />,
+    );
+    await user.click(await screen.findByRole('button', { name: '+ Add S3 bucket' }));
+    expect(screen.getByText(/AWS_ACCESS_KEY_ID/)).toBeVisible();
+    expect(screen.queryByLabelText('Use path-style addressing')).toBeNull();
+    await user.type(screen.getByLabelText('Bucket'), 'new-logs');
+    await user.type(screen.getByLabelText('Endpoint (optional)'), 'https://minio.local');
+    await user.click(screen.getByLabelText('Use path-style addressing'));
+    await user.click(screen.getByRole('button', { name: 'Add bucket' }));
+    await waitFor(() => {
+      expect(addSource).toHaveBeenCalledWith({
+        agent: 'claude_code',
+        s3: {
+          bucket: 'new-logs',
+          prefix: '',
+          endpoint: 'https://minio.local',
+          forcePathStyle: true,
+        },
+      });
+    });
+    expect(await screen.findByText('s3://new-logs/')).toBeVisible();
+  });
+
+  it('shows the 422 detail inline, linked to the bucket field', async () => {
+    const user = userEvent.setup();
+    const mock = createMockApi('graded', 0);
+    const detail = 'Cannot read s3://nope/: The specified bucket does not exist';
+    const api: Api = {
+      ...mock,
+      addSource: () => Promise.reject(new ApiError(422, 'Unprocessable', detail)),
+    };
+    render(<App api={api} history={createMemoryHistory({ initialEntries: ['/settings'] })} />);
+    await user.click(await screen.findByRole('button', { name: '+ Add S3 bucket' }));
+    await user.type(screen.getByLabelText('Bucket'), 'nope');
+    await user.click(screen.getByRole('button', { name: 'Add bucket' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(detail);
+    expect(screen.getByLabelText('Bucket')).toHaveAccessibleDescription(detail);
   });
 });

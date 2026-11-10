@@ -145,7 +145,7 @@ export interface DryRunResult {
 export function createGrading(deps: GradingDeps) {
   const { db, workspaceId, rubrics } = deps;
   const now = deps.now ?? (() => new Date());
-  const budget = createBudget(db, workspaceId, () => deps.settings.get(), deps.timeZone);
+  const budget = createBudget(db, workspaceId, () => deps.settings.get(), deps.timeZone, now);
   const grader = createGrader({
     db,
     workspaceId,

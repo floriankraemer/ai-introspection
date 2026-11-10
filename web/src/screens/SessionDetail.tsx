@@ -23,6 +23,7 @@ import {
   titleText,
 } from '../lib/format.js';
 import { ApiError } from '../api/client.js';
+import { LOCAL_USER_ID } from '../lib/format.js';
 import { GradesPanel } from './GradesPanel.js';
 
 /** Renders `code` spans: the API marks code in the one-line summary with backticks. */
@@ -296,6 +297,7 @@ export function SessionDetail({ id }: { id: string }) {
     AGENT_LABEL[s.agent],
     s.repo,
     s.branch,
+    s.person.id === LOCAL_USER_ID ? null : `Pushed by ${s.person.name}`,
     formatDuration(s.durationS),
     formatTokenSplit(s),
   ].filter(Boolean);

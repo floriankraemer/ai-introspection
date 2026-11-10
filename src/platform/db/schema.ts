@@ -26,6 +26,9 @@ export interface Schema {
     agent: string;
     path: string;
     mode: Generated<'watch' | 'poll'>;
+    kind: Generated<'folder' | 'intake' | 's3'>;
+    /** JSON: S3 connection settings; null for folders. */
+    remote: string | null;
     enabled: Bool;
     created_at: Ts;
   };

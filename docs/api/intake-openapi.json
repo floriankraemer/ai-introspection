@@ -1,0 +1,686 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Introspect Intake API",
+    "version": "1.0.0"
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "A personal intake token from `introspect intake-token create`"
+      }
+    },
+    "schemas": {
+      "IntakeLogAccepted": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "jobQueued": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sessionId",
+          "jobQueued"
+        ]
+      },
+      "Problem": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "default": "about:blank"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "message"
+              ]
+            }
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "fix": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "status"
+        ]
+      },
+      "Agent": {
+        "type": "string",
+        "enum": [
+          "claude_code",
+          "codex"
+        ]
+      },
+      "IntakeSessionStored": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "events": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sessionId",
+          "events"
+        ]
+      },
+      "PushedTrace": {
+        "type": "object",
+        "properties": {
+          "agent": {
+            "$ref": "#/components/schemas/Agent"
+          },
+          "nativeId": {
+            "type": "string",
+            "pattern": "^[\\x21-\\x7e]{1,256}$"
+          },
+          "adapterVersion": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "redactionVersion": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "ended": {
+            "type": "boolean"
+          },
+          "session": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 4096,
+                "default": null
+              },
+              "cwd": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 4096,
+                "default": null
+              },
+              "repo": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 4096,
+                "default": null
+              },
+              "branch": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 4096,
+                "default": null
+              },
+              "model": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 4096,
+                "default": null
+              },
+              "startedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "endedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time",
+                "default": null
+              },
+              "tokensIn": {
+                "type": "integer",
+                "minimum": 0,
+                "default": 0
+              },
+              "tokensOut": {
+                "type": "integer",
+                "minimum": 0,
+                "default": 0
+              },
+              "tokensCacheRead": {
+                "type": "integer",
+                "minimum": 0,
+                "default": 0
+              },
+              "tokensCacheWrite": {
+                "type": "integer",
+                "minimum": 0,
+                "default": 0
+              },
+              "outcomeKind": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "commit",
+                  "pr_open",
+                  "pr_merged"
+                ],
+                "default": "none"
+              },
+              "outcomeRef": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 4096,
+                "default": null
+              },
+              "warnings": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "unknown": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "malformed": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "oversized": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "redaction_failed": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "default": null
+              }
+            },
+            "required": [
+              "startedAt"
+            ]
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PushedEvent"
+            },
+            "maxItems": 50000
+          }
+        },
+        "required": [
+          "agent",
+          "nativeId",
+          "adapterVersion",
+          "redactionVersion",
+          "ended",
+          "session",
+          "events"
+        ]
+      },
+      "PushedEvent": {
+        "type": "object",
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "ts": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "default": null
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant",
+              "tool_call",
+              "file_op",
+              "mcp",
+              "skill",
+              "system",
+              "unknown"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 4096,
+            "default": null
+          },
+          "input": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 65536,
+            "default": null
+          },
+          "output": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 65536,
+            "default": null
+          },
+          "isError": {
+            "type": "boolean",
+            "default": false
+          },
+          "ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "default": null
+          },
+          "truncated": {
+            "type": "boolean",
+            "default": false
+          },
+          "callId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[\\x21-\\x7e]{1,256}$",
+            "default": null
+          },
+          "sourceKey": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[\\x21-\\x7e]{1,256}$",
+            "default": null
+          }
+        },
+        "required": [
+          "seq",
+          "kind"
+        ]
+      }
+    },
+    "parameters": {}
+  },
+  "paths": {
+    "/v1/health": {
+      "get": {
+        "summary": "Liveness probe",
+        "responses": {
+          "200": {
+            "description": "The intake is up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/intake/logs/{agent}/{path}": {
+      "put": {
+        "summary": "Upload a raw session log; the server redacts it while it ingests",
+        "description": "`path` is the log path below the agent log root and may contain `/` (`<project>/<session>.jsonl` for Claude Code, `YYYY/MM/DD/rollout-….jsonl` for Codex). Re-uploading a grown file ingests only the new lines; the same bytes are a no-op.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/Agent"
+            },
+            "required": true,
+            "name": "agent",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "path",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gzip",
+                "identity"
+              ],
+              "description": "gzip bodies are decompressed while they stream in"
+            },
+            "required": false,
+            "description": "gzip bodies are decompressed while they stream in",
+            "name": "content-encoding",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d+$",
+              "description": "The file's last-write time in epoch ms (default: now)"
+            },
+            "required": false,
+            "description": "The file's last-write time in epoch ms (default: now)",
+            "name": "x-introspect-mtime",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-ndjson": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Stored; the ingest is queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntakeLogAccepted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The body is larger than the configured limit (after decompression)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Content-Type or Content-Encoding",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Well-formed but cannot be applied",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "507": {
+            "description": "The server is low on disk space, or the person's storage quota is used up",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/intake/sessions/{id}": {
+      "put": {
+        "summary": "Upsert a session redacted on the client; the server redacts it again",
+        "description": "`id` must be the session id derived from `agent` and `nativeId`. Events are replaced; events with the same `sourceKey` keep their ids, so grades survive a re-push.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gzip",
+                "identity"
+              ],
+              "description": "gzip bodies are decompressed while they stream in"
+            },
+            "required": false,
+            "description": "gzip bodies are decompressed while they stream in",
+            "name": "content-encoding",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PushedTrace"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntakeSessionStored"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The body is larger than the configured limit (after decompression)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Content-Type or Content-Encoding",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Well-formed but cannot be applied",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Too many sessions are being stored at once; retry after `Retry-After` seconds",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "webhooks": {}
+}

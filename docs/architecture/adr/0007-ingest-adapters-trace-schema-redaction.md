@@ -112,3 +112,4 @@ Outcome linking: after session end, a `link_outcome` job matches `repo` + `branc
 ## Related
 
 - ADR-0005 (watcher and cursors), ADR-0006 (judge input), ADR-0008 (shipping endpoint), overview "Data model".
+- ADR-0012 amends "never receives unredacted data": in raw intake mode the server receives and stores unredacted logs.

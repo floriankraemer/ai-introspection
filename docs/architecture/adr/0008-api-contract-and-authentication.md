@@ -117,3 +117,4 @@ Team mode authentication (`auth = oidc`):
 ## Related
 
 - ADR-0002 (UI client), ADR-0004 (bind address and modes), ADR-0007 (shipping), ADR-0009 (module APIs behind the HTTP layer).
+- ADR-0012 adds a separate intake listener with per-person tokens, and amends the "server never receives unredacted data" rule for raw mode.

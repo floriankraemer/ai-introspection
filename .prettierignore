@@ -6,3 +6,4 @@ docs
 .playwright-mcp/
 e2e/package-lock.json
 e2e/.work
+.claude/settings.local.json

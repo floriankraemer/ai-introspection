@@ -3,20 +3,27 @@ import { readdir, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, relative, sep } from 'node:path';
 import { newId } from '../../platform/db/ids.js';
-import { asBool } from '../../platform/db/json.js';
+import { asBool, fromJson, toJson } from '../../platform/db/json.js';
 import type { Db } from '../../platform/db/schema.js';
 import { ConflictError, InvalidInputError } from '../../platform/errors.js';
 import { adapterFor } from './adapters/index.js';
+import type { S3Remote } from './s3.js';
 import { AGENTS, type Agent } from './types.js';
 
+export type SourceKind = 'folder' | 'intake' | 's3';
 export type SourceStatus = 'watching' | 'polling' | 'disabled' | 'missing';
 
 export interface SourceDto {
   id: string;
   agent: Agent;
   path: string;
+  kind: SourceKind;
+  /** Connection settings of an S3 source (no credentials); null for other kinds. */
+  remote: S3Remote | null;
   enabled: boolean;
   status: SourceStatus;
+  /** Who pushes to an intake source; null for the other kinds. */
+  person: { id: string; name: string } | null;
 }
 
 export interface DetectedSource {
@@ -115,7 +122,11 @@ export function createSources(
     id: string;
     agent: string;
     path: string;
+    kind: string;
+    remote: string | null;
     enabled: boolean | number;
+    user_id: string;
+    display_name: string;
   }): SourceDto => {
     const enabled = asBool(row.enabled);
     const status: SourceStatus = !enabled
@@ -125,17 +136,38 @@ export function createSources(
         : pollMode
           ? 'polling'
           : 'watching';
-    return { id: row.id, agent: row.agent as Agent, path: row.path, enabled, status };
+    return {
+      id: row.id,
+      agent: row.agent as Agent,
+      path: row.path,
+      kind: row.kind as SourceKind,
+      remote: row.remote === null ? null : (fromJson(row.remote) as S3Remote),
+      enabled,
+      status,
+      person: row.kind === 'intake' ? { id: row.user_id, name: row.display_name } : null,
+    };
   };
+  const selectDtoRows = () =>
+    db
+      .selectFrom('source')
+      .innerJoin('app_user', 'app_user.id', 'source.user_id')
+      .select([
+        'source.id',
+        'source.agent',
+        'source.path',
+        'source.kind',
+        'source.remote',
+        'source.enabled',
+        'source.user_id',
+        'app_user.display_name',
+      ]);
 
   return {
     async list(): Promise<SourceDto[]> {
-      const rows = await db
-        .selectFrom('source')
-        .select(['id', 'agent', 'path', 'enabled'])
-        .where('workspace_id', '=', workspaceId)
-        .orderBy('created_at')
-        .orderBy('id')
+      const rows = await selectDtoRows()
+        .where('source.workspace_id', '=', workspaceId)
+        .orderBy('source.created_at')
+        .orderBy('source.id')
         .execute();
       return rows.map(toDto);
     },
@@ -144,7 +176,11 @@ export function createSources(
      * Idempotent per (agent, real path): trailing slashes and symlinks name the same folder.
      * A folder inside or around another source of the same agent would ingest its files twice.
      */
-    async add(agent: Agent, given: string, opts: { restrict?: boolean } = {}): Promise<SourceDto> {
+    async add(
+      agent: Agent,
+      given: string,
+      opts: { restrict?: boolean; kind?: SourceKind; userId?: string } = {},
+    ): Promise<SourceDto> {
       if (!AGENTS.includes(agent)) throw new InvalidInputError(`Unknown agent "${agent}"`);
       if (!given.startsWith('/')) throw new InvalidInputError('The path must be absolute');
       const path = await realpath(given).catch(() => null);
@@ -173,27 +209,71 @@ export function createSources(
         .values({
           id: newId(),
           workspace_id: workspaceId,
-          user_id: userId,
+          user_id: opts.userId ?? userId,
           agent,
           path,
+          kind: opts.kind ?? 'folder',
           created_at: now().toISOString(),
         })
         .onConflict((oc) => oc.columns(['workspace_id', 'agent', 'path']).doNothing())
         .execute();
-      const row = await db
-        .selectFrom('source')
-        .select(['id', 'agent', 'path', 'enabled'])
-        .where('workspace_id', '=', workspaceId)
-        .where('agent', '=', agent)
-        .where('path', 'in', [path, `${path}/`])
+      const row = await selectDtoRows()
+        .where('source.workspace_id', '=', workspaceId)
+        .where('source.agent', '=', agent)
+        .where('source.path', 'in', [path, `${path}/`])
         .executeTakeFirstOrThrow();
       return toDto(row);
     },
 
-    async enabledRows(): Promise<{ id: string; agent: Agent; path: string; createdAt: string }[]> {
+    /**
+     * Registers an S3 source whose files are cached in `dir` (created here). Idempotent per agent
+     * and bucket location; the folder rules of `add` do not apply because the folder is ours.
+     */
+    async addS3(
+      agent: Agent,
+      remote: S3Remote,
+      dirFor: (sourceId: string) => Promise<string>,
+    ): Promise<SourceDto> {
+      if (!AGENTS.includes(agent)) throw new InvalidInputError(`Unknown agent "${agent}"`);
+      const same = (r: S3Remote): boolean =>
+        r.bucket === remote.bucket &&
+        r.prefix === remote.prefix &&
+        (r.endpoint ?? '') === (remote.endpoint ?? '');
+      for (const row of await this.list()) {
+        if (row.kind === 's3' && row.agent === agent && row.remote && same(row.remote)) return row;
+      }
+      const id = newId();
+      await db
+        .insertInto('source')
+        .values({
+          id,
+          workspace_id: workspaceId,
+          user_id: userId,
+          agent,
+          path: await dirFor(id),
+          kind: 's3',
+          remote: toJson(remote),
+          created_at: now().toISOString(),
+        })
+        .execute();
+      const row = await selectDtoRows().where('source.id', '=', id).executeTakeFirstOrThrow();
+      return toDto(row);
+    },
+
+    async enabledRows(): Promise<
+      {
+        id: string;
+        agent: Agent;
+        path: string;
+        createdAt: string;
+        userId: string;
+        kind: SourceKind;
+        remote: S3Remote | null;
+      }[]
+    > {
       const rows = await db
         .selectFrom('source')
-        .select(['id', 'agent', 'path', 'created_at'])
+        .select(['id', 'agent', 'path', 'created_at', 'user_id', 'kind', 'remote'])
         .where('workspace_id', '=', workspaceId)
         .where('enabled', '=', true)
         .execute();
@@ -202,6 +282,9 @@ export function createSources(
         agent: r.agent as Agent,
         path: trimSlash(r.path),
         createdAt: r.created_at,
+        userId: r.user_id,
+        kind: r.kind,
+        remote: r.remote === null ? null : (fromJson(r.remote) as S3Remote),
       }));
     },
   };

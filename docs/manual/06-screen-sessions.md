@@ -26,6 +26,7 @@ A rubric can set its own `target` (see [Writing and calibrating rubrics](12-writ
 |---|---|
 | **Search** | Text in the prompt, repo or branch |
 | **Agent** | **All agents**, **Claude Code**, **Codex** |
+| **Person** | **Everyone**, or one person. Shown only when sessions of more than one person exist. |
 | **Period** | **7 days**, **30 days**, **All time** |
 | **Result** | **Failed any rubric**, **All**, **Not graded** |
 
@@ -40,6 +41,7 @@ Each row is one session.
 | Checkbox | Selects the session for grading |
 | **Session** | The first prompt. Click it to open [Session detail](07-screen-session-detail.md). |
 | **Agent** | Claude Code or Codex |
+| **Person** | Who pushed the session. Shown only when sessions of more than one person exist. See [Sharing sessions](20-sharing-sessions.md). |
 | **Repo** | The repo folder name the session ran in |
 | **When** | When the session started |
 | **Tool errors** | Number of failed tool calls. Five or more appear in red. |

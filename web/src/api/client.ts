@@ -77,6 +77,7 @@ export const realApi: Api = {
   addToReferenceSet: (sid) => request('POST', `/sessions/${id(sid)}/reference`),
   removeFromReferenceSet: (sid) => request('DELETE', `/sessions/${id(sid)}/reference`),
   listSessions: (q) => request('GET', `/sessions${qs({ ...q })}`),
+  listPeople: () => request('GET', '/people'),
   getSession: (sid) => request('GET', `/sessions/${id(sid)}`),
   listEvents: (sid, q) => request('GET', `/sessions/${id(sid)}/events${qs({ ...q })}`),
   getDoctor: () => request('GET', '/doctor'),

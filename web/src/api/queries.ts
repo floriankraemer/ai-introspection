@@ -159,6 +159,11 @@ export function useSessions(query: SessionQuery) {
   });
 }
 
+export function usePeople() {
+  const api = useApi();
+  return useQuery({ queryKey: ['people'], queryFn: () => api.listPeople() });
+}
+
 export function useSession(id: string) {
   const api = useApi();
   return useQuery({ queryKey: ['session', id], queryFn: () => api.getSession(id) });

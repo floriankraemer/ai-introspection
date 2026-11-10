@@ -124,8 +124,12 @@ const JOB_META = {
 };
 
 const H = 3_600_000;
+const YOU = { id: '00000000-0000-7000-8000-000000000002', name: 'You' };
+const ADA = { id: '00000000-0000-7000-8000-0000000000a1', name: 'Ada' };
+
 const SESSIONS: {
   title: string;
+  person?: typeof ADA;
   agent: 'claude_code' | 'codex';
   repo: string;
   ago: number;
@@ -150,6 +154,7 @@ const SESSIONS: {
   },
   {
     title: 'Write changelog for 0.4',
+    person: ADA,
     agent: 'claude_code',
     repo: 'docs-site',
     ago: 26 * H,
@@ -174,6 +179,7 @@ const SESSIONS: {
   },
   {
     title: 'Bump dependencies',
+    person: ADA,
     agent: 'codex',
     repo: 'api-service',
     ago: 74 * H,
@@ -347,10 +353,42 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
           id: 's1',
           agent: 'claude_code',
           path: '~/.claude/projects',
+          kind: 'folder',
+          remote: null,
           enabled: true,
           status: 'watching',
+          person: null,
         },
-        { id: 's2', agent: 'codex', path: '~/.codex/sessions', enabled: true, status: 'watching' },
+        {
+          id: 's2',
+          agent: 'codex',
+          path: '~/.codex/sessions',
+          kind: 'folder',
+          remote: null,
+          enabled: true,
+          status: 'watching',
+          person: null,
+        },
+        {
+          id: 's3',
+          agent: 'claude_code',
+          path: '~/.cache/introspect/s3/team-logs',
+          kind: 's3',
+          remote: { bucket: 'team-logs', prefix: 'claude/' },
+          enabled: true,
+          status: 'polling',
+          person: null,
+        },
+        {
+          id: 's4',
+          agent: 'claude_code',
+          path: '~/.local/share/introspect/intake/ada',
+          kind: 'intake',
+          remote: null,
+          enabled: true,
+          status: 'watching',
+          person: ADA,
+        },
       ];
   const detected: DetectedSource[] = [
     { agent: 'claude_code', path: '~/.claude/projects', sessionCount: 212 },
@@ -396,6 +434,7 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
             title: s.title,
             agent: s.agent,
             repo: s.repo,
+            person: s.person ?? YOU,
             startedAt: new Date(Date.now() - s.ago).toISOString(),
             toolErrors: s.errors,
             tokensIn: 120_000,
@@ -598,13 +637,19 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
     },
     async addSource(body) {
       await wait();
-      const existing = sources.find((x) => x.path === body.path);
+      const remote = 's3' in body ? body.s3 : null;
+      const path = 's3' in body ? `~/.cache/introspect/s3/${body.s3.bucket}` : body.path;
+      const existing = sources.find((x) => x.path === path);
       if (existing) return existing;
       const s: Source = {
         id: `s${String(sources.length + 1)}`,
-        ...body,
+        agent: body.agent,
+        path,
+        kind: remote ? 's3' : 'folder',
+        remote,
         enabled: true,
         status: 'watching',
+        person: null,
       };
       sources = [...sources, s];
       return s;
@@ -739,13 +784,21 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
           : [],
       };
     },
-    async listSessions({ q, agent, result, since, cursor, limit = 50 }) {
+    async listPeople() {
+      await wait();
+      const counts = new Map<string, { id: string; name: string; sessions: number }>();
+      for (const { person } of sessions)
+        counts.set(person.id, { ...person, sessions: (counts.get(person.id)?.sessions ?? 0) + 1 });
+      return [...counts.values()].sort((a, b) => b.sessions - a.sessions);
+    },
+    async listSessions({ q, agent, person, result, since, cursor, limit = 50 }) {
       await wait();
       const needle = q?.toLowerCase();
       const all = sessions.filter(
         (s) =>
           (!needle || `${s.title} ${s.repo ?? ''}`.toLowerCase().includes(needle)) &&
           (!agent || s.agent === agent) &&
+          (!person || s.person.id === person) &&
           (!since || Date.parse(s.startedAt) >= Date.parse(since)) &&
           (result === 'failed_any'
             ? s.grades.some((g) => g.passed === false)
@@ -766,6 +819,7 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
         agent: s.agent,
         repo: s.repo,
         branch: 'feat/oauth',
+        person: s.person,
         startedAt: s.startedAt,
         durationS: 2460,
         tokensIn: s.tokensIn,

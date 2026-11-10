@@ -12,6 +12,9 @@ function isTimeZone(name: string): boolean {
   }
 }
 
+/** Largest session log copied in (intake upload, S3 object), in MiB, unless INTROSPECT_INTAKE_MAX_MB says otherwise. */
+export const DEFAULT_INTAKE_MAX_MB = 64;
+
 const LOOPBACK_HOSTS = ['127.0.0.1', 'localhost', '::1'];
 
 const envSchema = z.object({
@@ -19,6 +22,15 @@ const envSchema = z.object({
   INTROSPECT_PORT: z.coerce.number().int().min(1).max(65535).default(7317),
   INTROSPECT_HOST: z.string().min(1).default('127.0.0.1'),
   DATABASE_URL: z.string().min(1).optional(),
+  /** Port of the intake listener for pushes from other people; unset keeps it off. */
+  INTROSPECT_INTAKE_PORT: z.coerce.number().int().min(1).max(65535).optional(),
+  INTROSPECT_INTAKE_HOST: z.string().min(1).optional(),
+  /** Largest decompressed upload (and S3 object), in MiB. */
+  INTROSPECT_INTAKE_MAX_MB: z.coerce.number().int().min(1).max(4096).default(DEFAULT_INTAKE_MAX_MB),
+  /** Most MiB of raw logs one person may keep on the intake. */
+  INTROSPECT_INTAKE_QUOTA_MB: z.coerce.number().int().min(1).default(2048),
+  /** `1` allows a plain-http S3 endpoint on a host that is not this machine (tests with MinIO). */
+  INTROSPECT_S3_ALLOW_HTTP: z.enum(['0', '1']).optional(),
   INTROSPECT_WATCH_POLL: z.enum(['0', '1']).optional(),
   CHOKIDAR_USEPOLLING: z.enum(['0', '1', 'true', 'false']).optional(),
   INTROSPECT_CLAUDE_HOME: z.string().min(1).optional(),
@@ -65,6 +77,12 @@ export interface Config {
   improverOverride: 'fake' | undefined;
   /** `INTROSPECT_NOW`: where the app clock starts; undefined means the real time. */
   fixedNow: string | undefined;
+  /** The intake listener (ADR-0012); undefined when `INTROSPECT_INTAKE_PORT` is unset. */
+  intake: { port: number; host: string; maxBytes: number; quotaBytes: number } | undefined;
+  /** Largest session log Introspect copies in: intake uploads and S3 objects. */
+  logMaxBytes: number;
+  /** `INTROSPECT_S3_ALLOW_HTTP=1`: S3 endpoints may use plain http on any host. */
+  s3AllowHttp: boolean;
 }
 
 /** Inside a container the process must bind 0.0.0.0; the published port stays on 127.0.0.1 (compose.yaml). */
@@ -90,6 +108,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     );
   }
 
+  const { INTROSPECT_INTAKE_PORT, INTROSPECT_INTAKE_HOST, INTROSPECT_INTAKE_MAX_MB } = parsed.data;
+  const MIB = 1024 * 1024;
+  if (INTROSPECT_INTAKE_PORT === INTROSPECT_PORT) {
+    throw new Error(
+      `INTROSPECT_INTAKE_PORT must differ from INTROSPECT_PORT (${String(INTROSPECT_PORT)})`,
+    );
+  }
+
   return {
     dataDir,
     port: INTROSPECT_PORT,
@@ -101,6 +127,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     judgeOverride: INTROSPECT_JUDGE,
     improverOverride: parsed.data.INTROSPECT_IMPROVER,
     fixedNow: parsed.data.INTROSPECT_NOW,
+    // Other people reach the intake from their machines, so it may bind any address.
+    intake:
+      INTROSPECT_INTAKE_PORT === undefined
+        ? undefined
+        : {
+            port: INTROSPECT_INTAKE_PORT,
+            host: INTROSPECT_INTAKE_HOST ?? (inContainer() ? '0.0.0.0' : '127.0.0.1'),
+            maxBytes: INTROSPECT_INTAKE_MAX_MB * MIB,
+            quotaBytes: parsed.data.INTROSPECT_INTAKE_QUOTA_MB * MIB,
+          },
+    logMaxBytes: INTROSPECT_INTAKE_MAX_MB * MIB,
+    s3AllowHttp: parsed.data.INTROSPECT_S3_ALLOW_HTTP === '1',
     watchPoll:
       INTROSPECT_WATCH_POLL === '1' ||
       CHOKIDAR_USEPOLLING === '1' ||

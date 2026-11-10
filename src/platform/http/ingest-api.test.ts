@@ -16,6 +16,7 @@ import type { OpenAPIHono } from '@hono/zod-openapi';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createSkillRepos } from '../../modules/improvement/index.js';
 import { createIngest } from '../../modules/ingest/index.js';
+import { fakeS3Api } from '../testkit/s3.js';
 import { PLANTED, writeFixtureSources } from '../testkit/agent-fixtures.js';
 import { createSecretStore, createSettings } from '../../modules/settings/index.js';
 import { wireGrading, wireImprovement, wireTrends } from './wire-grading.js';
@@ -68,6 +69,9 @@ beforeAll(async () => {
     settings,
     queue,
     pollMode: true,
+    s3Api: (r) =>
+      fakeS3Api({}, r.bucket === 'bad' ? { failWith: 'The specified bucket does not exist' } : {})
+        .api,
     sourceRoots: [join(dir, 'claude'), join(dir, 'codex')],
   });
   const skillRepos = createSkillRepos(t.handle.db, LOCAL_WORKSPACE_ID, {
@@ -129,13 +133,33 @@ describe('sources and import', () => {
     expect(res.headers.get('content-type')).toContain('application/problem+json');
   });
 
+  it('registers an S3 source, and answers 422 with the AWS message when the bucket is unreachable', async () => {
+    const bad = await call('POST', '/v1/sources', {
+      agent: 'claude_code',
+      s3: { bucket: 'bad', prefix: 'x' },
+    });
+    expect(bad.status).toBe(422);
+    expect(JSON.stringify(await bad.json())).toContain('bucket does not exist');
+    const good = await call('POST', '/v1/sources', {
+      agent: 'codex',
+      s3: { bucket: 'good', prefix: 'x', region: 'eu-central-1' },
+    });
+    expect(good.status).toBe(200);
+    expect(await json(good)).toMatchObject({
+      kind: 's3',
+      remote: { bucket: 'good', prefix: 'x/', region: 'eu-central-1' },
+    });
+  });
+
   it('registers sources and reports their watch status', async () => {
     expect(
       (await call('POST', '/v1/sources', { agent: 'claude_code', path: sources.claude })).status,
     ).toBe(200);
     await call('POST', '/v1/sources', { agent: 'codex', path: sources.codex });
-    const list = await json<{ agent: string; status: string }[]>(await call('GET', '/v1/sources'));
-    expect(list.map((s) => [s.agent, s.status])).toEqual([
+    const list = await json<{ agent: string; status: string; kind: string }[]>(
+      await call('GET', '/v1/sources'),
+    );
+    expect(list.filter((s) => s.kind === 'folder').map((s) => [s.agent, s.status])).toEqual([
       ['claude_code', 'polling'],
       ['codex', 'polling'],
     ]);
@@ -164,6 +188,20 @@ describe('sources and import', () => {
 });
 
 describe('sessions', () => {
+  it('lists the people who own sessions and filters sessions by person', async () => {
+    await call('POST', '/v1/imports');
+    await tick();
+    const people = await json<{ id: string; name: string; sessions: number }[]>(
+      await call('GET', '/v1/people'),
+    );
+    expect(people).toEqual([{ id: expect.any(String), name: 'You', sessions: 2 }]);
+    const mine = await json<{ items: unknown[] }>(
+      await call('GET', `/v1/sessions?person=${people[0]?.id ?? ''}`),
+    );
+    expect(mine.items).toHaveLength(2);
+    expect((await call('GET', '/v1/sessions?person=nope')).status).toBe(400);
+  });
+
   const firstSession = async () =>
     (
       await json<{ items: { id: string; agent: string }[] }>(
@@ -181,6 +219,7 @@ describe('sessions', () => {
       title: expect.any(String),
       agent: expect.any(String),
       repo: expect.any(String),
+      person: { id: expect.any(String), name: 'You' },
       startedAt: expect.any(String),
       toolErrors: expect.any(Number),
       tokensIn: expect.any(Number),

@@ -10,7 +10,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 update=()
-[[ "${1:-}" == "--update" ]] && update=(--update-snapshots)
+[[ "${1:-}" == "--update" ]] && update=(--update-snapshots=changed)
 
 dc() { env UID="$(id -u)" GID="$(id -g)" docker compose -f compose.e2e.yaml "$@"; }
 pw() { dc run --rm -T playwright "$@"; }
@@ -27,14 +27,16 @@ trap cleanup EXIT
 # Created as your user: the Docker engine on Linux would create missing mount points as root.
 rm -rf e2e/.work
 mkdir -p e2e/.work/results e2e/.work/sources/claude/projects e2e/.work/sources/codex/sessions \
-  e2e/.work/repos/skills e2e/.work/repos/projects e2e/__screenshots
+  e2e/.work/repos/skills e2e/.work/repos/projects e2e/.work/extra/push e2e/.work/extra/s3 e2e/.work/intake e2e/__screenshots
 
 dc down -v --remove-orphans >/dev/null 2>&1 || true
 dc build
-dc up -d --wait app
+dc up -d --wait app minio
 
 pw node_modules/.bin/tsc --noEmit
 pw node seed/seed.ts /work/sources
+# The bucket the S3 source reads in spec 7 (fixtures come from the seed).
+dc run --rm -T minio-init
 
 if [[ "${1:-}" == "--manual" ]]; then
   # The spec builds its own state on the fresh stack, so the other specs must not run first.
@@ -44,4 +46,14 @@ if [[ "${1:-}" == "--manual" ]]; then
   exit 0
 fi
 
-spec "${update[@]}"
+# Specs 1-6 see the seeded folders only: pushed and bucket sessions would change their counts and baselines.
+spec "${update[@]}" '/0[1-6]-'
+
+# Spec 7: session intake and the S3 source. What needs the app image (the admin CLI and the client
+# CLI) runs here; the spec drives curl, the browser and the assertions.
+exec_app() { dc exec -T app "$@"; }
+exec_app introspect intake-token create e2e-curl 2>/dev/null >e2e/.work/intake/curl.token
+bob="$(exec_app introspect intake-token create e2e-cli 2>/dev/null)"
+dc exec -T -e INTROSPECT_PUSH_TOKEN="${bob}" app introspect push \
+  --server http://127.0.0.1:7318 --redact --dir claude_code=/push/claude >e2e/.work/intake/push.log
+spec "${update[@]}" '/07-'

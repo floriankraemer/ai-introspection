@@ -34,6 +34,15 @@ describe('Session detail', () => {
     expect(screen.queryByRole('link', { name: /merged/i })).toBeNull();
   });
 
+  it('says who pushed the session unless it is the local user', async () => {
+    const ada = renderApp('/sessions/sess-3');
+    expect(await screen.findByText(/Pushed by Ada/, undefined, { timeout: 5000 })).toBeVisible();
+    ada.unmount();
+    renderApp('/sessions/sess-1');
+    await screen.findByText(/Claude Code/, undefined, { timeout: 5000 });
+    expect(screen.queryByText(/Pushed by/)).toBeNull();
+  });
+
   it('adds and removes the session from the reference set', async () => {
     const user = userEvent.setup();
     renderApp('/sessions/sess-1');

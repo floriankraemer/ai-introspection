@@ -22,13 +22,30 @@ const json = <T extends z.ZodType>(schema: T, description: string) => ({
   content: { 'application/json': { schema } },
 });
 
+const s3RemoteSchema = z
+  .object({
+    bucket: z.string().min(1).max(255),
+    prefix: z.string().max(1024).default(''),
+    region: z.string().min(1).max(64).optional(),
+    endpoint: z.url().optional(),
+    forcePathStyle: z.boolean().optional(),
+  })
+  .openapi('S3Remote');
+
+const personSchema = z.object({ id: z.uuid(), name: z.string() }).openapi('Person');
+
 const sourceSchema = z
   .object({
     id: z.uuid(),
     agent: agentSchema,
     path: z.string(),
+    kind: z.enum(['folder', 'intake', 's3']),
+    /** Connection settings of an S3 source; never credentials. */
+    remote: s3RemoteSchema.nullable(),
     enabled: z.boolean(),
     status: z.enum(['watching', 'polling', 'disabled', 'missing']),
+    /** Who pushes to an intake source; null for other kinds. */
+    person: z.object({ id: z.uuid(), name: z.string() }).nullable(),
   })
   .openapi('Source');
 
@@ -42,6 +59,7 @@ const sessionSummarySchema = z
     title: z.string(),
     agent: agentSchema,
     repo: z.string().nullable(),
+    person: personSchema,
     startedAt: z.iso.datetime(),
     toolErrors: z.number().int(),
     tokensIn: z.number().int(),
@@ -66,6 +84,7 @@ const sessionDetailSchema = z
     agent: agentSchema,
     repo: z.string().nullable(),
     branch: z.string().nullable(),
+    person: personSchema,
     startedAt: z.iso.datetime(),
     durationS: z.number().int(),
     tokensIn: z.number().int(),
@@ -138,6 +157,8 @@ const listSessions = createRoute({
     query: z.object({
       q: z.string().max(200).optional(),
       agent: agentSchema.optional(),
+      /** Only sessions of this person (see `GET /v1/people`). */
+      person: z.uuid().optional(),
       result: z.enum(['failed_any', 'all', 'not_graded']).optional(),
       cursor: z.string().max(300).optional(),
       /** Only sessions that started at or after this instant. */
@@ -149,6 +170,20 @@ const listSessions = createRoute({
     200: json(
       z.object({ items: z.array(sessionSummarySchema), nextCursor: z.string().nullable() }),
       'A page of sessions',
+    ),
+    ...problemResponses,
+  },
+});
+
+const listPeople = createRoute({
+  method: 'get',
+  path: '/v1/people',
+  summary: 'People who own at least one session, most sessions first',
+  security,
+  responses: {
+    200: json(
+      z.array(personSchema.extend({ sessions: z.number().int() }).openapi('PersonWithSessions')),
+      'The people',
     ),
     ...problemResponses,
   },
@@ -220,12 +255,17 @@ const detectSources = createRoute({
 const addSource = createRoute({
   method: 'post',
   path: '/v1/sources',
-  summary: 'Register a log folder (idempotent per agent and path)',
+  summary: 'Register a log folder or an S3 bucket (idempotent per agent and location)',
   security,
   request: {
     body: {
       content: {
-        'application/json': { schema: z.object({ agent: agentSchema, path: z.string().min(1) }) },
+        'application/json': {
+          schema: z.union([
+            z.object({ agent: agentSchema, path: z.string().min(1) }),
+            z.object({ agent: agentSchema, s3: s3RemoteSchema }),
+          ]),
+        },
       },
       required: true,
     },
@@ -258,6 +298,8 @@ export function registerIngestRoutes(
   app.openapi(listSessions, async (c) =>
     c.json(await grading.sessions.list(c.req.valid('query')), 200),
   );
+
+  app.openapi(listPeople, async (c) => c.json(await ingest.sessions.people(), 200));
 
   app.openapi(getSession, async (c) => {
     const session = await grading.sessions.get(c.req.valid('param').id);
@@ -302,8 +344,9 @@ export function registerIngestRoutes(
   app.openapi(listSources, async (c) => c.json(await ingest.sources.list(), 200));
   app.openapi(detectSources, async (c) => c.json(await ingest.sources.detect(), 200));
   app.openapi(addSource, async (c) => {
-    const { agent, path } = c.req.valid('json');
-    return c.json(await ingest.sources.add(agent, path, { restrict: true }), 200);
+    const body = c.req.valid('json');
+    if ('s3' in body) return c.json(await ingest.sources.addS3(body.agent, body.s3), 200);
+    return c.json(await ingest.sources.add(body.agent, body.path, { restrict: true }), 200);
   });
 
   app.openapi(startImport, async (c) => {

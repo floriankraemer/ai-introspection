@@ -80,7 +80,9 @@ describe('redaction of JSON', () => {
 
   it('falls back to text rules for a document with too many leaves', () => {
     const text = JSON.stringify([...Array<string>(60_000).fill('x'), SECRETS.github]);
-    const r = redactor.redact(text);
+    // A frozen clock: the field time budget can never trip, so a slow or loaded machine cannot fail this.
+    const frozen = createRedactor({ key: Buffer.from('k'.repeat(32)), now: () => 0 });
+    const r = frozen.redact(text);
     expect(r.failed).toBe(false);
     expect(r.text).not.toContain(SECRETS.github);
   });

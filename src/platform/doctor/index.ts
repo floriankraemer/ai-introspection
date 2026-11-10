@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { accessSync, constants, statSync } from 'node:fs';
 import { promisify } from 'node:util';
 import { isGitRepoRoot } from '../git/index.js';
+import { isLoopbackHost } from '../transport.js';
 
 export interface DoctorCheck {
   id: string;
@@ -24,7 +25,18 @@ export interface DoctorInput {
   redactionEnabled: boolean;
   /** `error` is set when the database cannot be read or is not migrated. */
   db: { error?: string };
-  sources: { agent: string; path: string; enabled: boolean }[];
+  sources: {
+    agent: string;
+    path: string;
+    enabled: boolean;
+    kind?: string;
+    remote?: { bucket: string; prefix: string } | null;
+  }[];
+  /** Resolves AWS credentials and lists the bucket; absent when the caller has no S3 support. */
+  diagnoseS3?: (remote: {
+    bucket: string;
+    prefix: string;
+  }) => Promise<{ credentialsError: string | null; bucketError: string | null }>;
   /** Registered skills repositories (global and project). */
   repos: { kind: 'global' | 'project'; path: string; hasRubrics: boolean }[];
   /** Problems the trends change scan had with a repository (rewritten history, unreadable commits). */
@@ -45,6 +57,8 @@ export interface DoctorInput {
       isolationProblem: string | null;
     };
   };
+  /** The intake listener (undefined when off) and how many intake tokens are usable now. */
+  intake?: { port: number; host: string; activeTokens: number } | undefined;
   env: NodeJS.ProcessEnv;
   uid: number | undefined;
   /** Runs a program and returns stdout; rejects when it is missing or exits non-zero. */
@@ -140,14 +154,50 @@ export function checkSources({ sources }: DoctorInput): DoctorCheck[] {
       ),
     ];
   }
-  return enabled.map((s, i) => {
-    const id = `source-${String(i + 1)}`;
-    const label = `Source ${s.agent}: ${s.path}`;
-    if (!can(s.path, constants.R_OK | constants.X_OK)) {
-      return problem('fail', id, label, 'Folder is missing or not readable', mountFix(s.path));
-    }
-    return ok(id, label, 'Readable');
-  });
+  // Pushed and S3 sources live in our data folder (checkData); S3 and intake have their own checks.
+  return enabled
+    .filter((s) => (s.kind ?? 'folder') === 'folder')
+    .map((s, i) => {
+      const id = `source-${String(i + 1)}`;
+      const label = `Source ${s.agent}: ${s.path}`;
+      if (!can(s.path, constants.R_OK | constants.X_OK)) {
+        return problem('fail', id, label, 'Folder is missing or not readable', mountFix(s.path));
+      }
+      return ok(id, label, 'Readable');
+    });
+}
+
+export async function checkS3Sources({
+  sources,
+  diagnoseS3,
+}: Pick<DoctorInput, 'sources' | 'diagnoseS3'>): Promise<DoctorCheck[]> {
+  const s3 = sources.filter((s) => s.enabled && s.kind === 's3' && s.remote);
+  if (!diagnoseS3) return [];
+  return Promise.all(
+    s3.map(async (s, i) => {
+      const id = `s3-${String(i + 1)}`;
+      const remote = s.remote as { bucket: string; prefix: string };
+      const label = `S3 source s3://${remote.bucket}/${remote.prefix}`;
+      const d = await diagnoseS3(remote);
+      if (d.credentialsError !== null)
+        return problem(
+          'fail',
+          id,
+          label,
+          `No AWS credentials: ${d.credentialsError}`,
+          'Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY (or AWS_PROFILE, with ~/.aws mounted) in .env and run `make up`.',
+        );
+      if (d.bucketError !== null)
+        return problem(
+          'fail',
+          id,
+          label,
+          `Bucket is not reachable: ${d.bucketError}`,
+          'Check the bucket name, region and endpoint in Settings, and that the credentials may list and read the bucket (s3:ListBucket, s3:GetObject).',
+        );
+      return ok(id, label, 'Credentials found and the bucket is reachable');
+    }),
+  );
 }
 
 export function checkWatcher({ watchPoll }: DoctorInput): DoctorCheck {
@@ -365,10 +415,30 @@ export function checkOwnership({ repos, uid }: DoctorInput): DoctorCheck {
   );
 }
 
+/**
+ * Intake on or off, where it listens, and how many tokens can push. In a container the address the
+ * port is published on (`INTROSPECT_INTAKE_BIND`, passed in by compose.yaml) decides who reaches it.
+ */
+export function checkIntake({ intake, env }: Pick<DoctorInput, 'intake' | 'env'>): DoctorCheck {
+  const label = 'Session intake';
+  if (!intake) return ok('intake', label, 'Off (INTROSPECT_INTAKE_PORT is not set)');
+  const exposed = env.INTROSPECT_INTAKE_BIND ?? intake.host;
+  const detail = `On, port ${String(intake.port)} on ${exposed}; ${String(intake.activeTokens)} active token(s)`;
+  if (isLoopbackHost(exposed)) return ok('intake', label, detail);
+  return problem(
+    'warn',
+    'intake',
+    label,
+    `${detail}; reachable from other machines`,
+    'Put a TLS-terminating reverse proxy in front of the intake port, so tokens and session logs never cross the network in plain text.',
+  );
+}
+
 export async function runDoctor(input: DoctorInput): Promise<DoctorReport> {
   const checks = [
     checkData(input),
     ...checkSources(input),
+    ...(await checkS3Sources(input)),
     checkWatcher(input),
     await checkSkillsRepo(input),
     await checkGitIdentity(input),
@@ -379,6 +449,7 @@ export async function runDoctor(input: DoctorInput): Promise<DoctorReport> {
     ...checkChangeScan(input),
     checkOwnership(input),
     checkClock(input),
+    checkIntake(input),
   ].filter((c): c is DoctorCheck => c !== null);
   return { checks };
 }

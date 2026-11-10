@@ -8,7 +8,9 @@ import { createSkillRepos } from '../../modules/improvement/index.js';
 import { createIngest } from '../../modules/ingest/index.js';
 import { createSecretStore, createSettings } from '../../modules/settings/index.js';
 import { wireGrading, wireImprovement, wireTrends } from './wire-grading.js';
+import { newId } from '../db/ids.js';
 import { LOCAL_USER_ID, LOCAL_WORKSPACE_ID } from '../identity/index.js';
+import { hashIntakeToken } from '../identity/tokens.js';
 import { createJobQueue } from '../jobs/queue.js';
 import { sqliteTestDb, type TestDb } from '../testkit/db.js';
 import { createApp, OPENAPI_INFO } from './app.js';
@@ -123,6 +125,27 @@ describe('local token auth', () => {
   it('rejects a wrong token, including on unknown /v1 paths', async () => {
     expect((await get('/v1/settings', { authorization: 'Bearer nope' })).status).toBe(401);
     expect((await get('/v1/does-not-exist')).status).toBe(401);
+  });
+
+  it('rejects a personal intake token: those work on the intake port only', async () => {
+    const intakeToken = 'itk_main-api-check';
+    const at = new Date().toISOString();
+    await t.handle.db
+      .insertInto('api_token')
+      .values({
+        id: newId(),
+        workspace_id: LOCAL_WORKSPACE_ID,
+        user_id: LOCAL_USER_ID,
+        name: 'main-api-check',
+        token_hash: hashIntakeToken(intakeToken),
+        created_at: at,
+        expires_at: null,
+        revoked_at: null,
+      })
+      .execute();
+    expect((await get('/v1/settings', { authorization: `Bearer ${intakeToken}` })).status).toBe(
+      401,
+    );
   });
 
   it('accepts the bearer token', async () => {

@@ -1,6 +1,9 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { createMemoryHistory } from '@tanstack/react-router';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
+import { App } from '../App.js';
+import { createMockApi } from '../api/mock.js';
 import { renderApp } from '../test-utils.js';
 
 describe('Sessions', () => {
@@ -33,6 +36,33 @@ describe('Sessions', () => {
     expect(await screen.findByText('No sessions match these filters')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Clear filters' }));
     expect(await screen.findByRole('link', { name: 'Bump dependencies' })).toBeInTheDocument();
+  });
+
+  it('shows a Person column and filter when more than one person has sessions', async () => {
+    const user = userEvent.setup();
+    renderApp('/?result=all');
+    const row = (await screen.findByRole('link', { name: 'Bump dependencies' })).closest('tr');
+    expect(await screen.findByRole('columnheader', { name: 'Person' })).toBeInTheDocument();
+    expect(within(row as HTMLElement).getByText('Ada')).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText('Person'), 'Ada');
+    expect(await screen.findByRole('link', { name: 'Bump dependencies' })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByRole('link', { name: 'Fix flaky e2e login test' })).toBeNull();
+    });
+  });
+
+  it('shows no Person column or filter when only one person has sessions', async () => {
+    const api = createMockApi('graded', 0);
+    const listPeople: typeof api.listPeople = async () => (await api.listPeople()).slice(0, 1);
+    render(
+      <App
+        api={{ ...api, listPeople }}
+        history={createMemoryHistory({ initialEntries: ['/?result=all'] })}
+      />,
+    );
+    await screen.findByRole('link', { name: 'Bump dependencies' });
+    expect(screen.queryByRole('columnheader', { name: 'Person' })).toBeNull();
+    expect(screen.queryByLabelText('Person')).toBeNull();
   });
 
   it('explains the next step when nothing is collected', async () => {

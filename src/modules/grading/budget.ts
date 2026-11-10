@@ -142,6 +142,8 @@ export function createBudget(
   workspaceId: string,
   getSettings: () => Promise<Settings>,
   timeZone = 'UTC',
+  /** The app clock (INTROSPECT_NOW): usage is recorded at this time, so windows must use it too. */
+  clock: () => Date = () => new Date(),
 ) {
   const w = windows(timeZone);
 
@@ -183,7 +185,7 @@ export function createBudget(
   });
 
   return {
-    async status(now = new Date()): Promise<BudgetStatus> {
+    async status(now = clock()): Promise<BudgetStatus> {
       const s = await getSettings();
       const u = await used(db, now);
       const limit = limitsOf(s);
@@ -214,7 +216,7 @@ export function createBudget(
     async reserve(
       call: CallMeta,
       estimate: { inputTokens: number; usd: number; outputTokens?: number },
-      now = new Date(),
+      now = clock(),
     ): Promise<Reservation> {
       const outputTokens = estimate.outputTokens ?? ESTIMATED_OUTPUT_TOKENS;
       const tokens = estimate.inputTokens + outputTokens;

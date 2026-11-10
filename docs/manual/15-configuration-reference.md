@@ -24,6 +24,12 @@ A variable you leave out keeps its default.
 | `TZ` | `UTC` | The time zone, as an IANA name such as `Europe/Berlin`. The daily token budget resets at midnight in this zone, and the monthly budget on the first of the month. |
 | `INTROSPECT_PIDS_LIMIT` | `512` | The process limit of the container. |
 | `INTROSPECT_MEM_LIMIT` | `2g` | The memory limit of the container. |
+| `INTROSPECT_INTAKE_BIND` | `127.0.0.1` | The address that publishes the intake port 7318. Set `0.0.0.0` to let other computers push sessions, and put TLS in front first. See [Sharing sessions](20-sharing-sessions.md). |
+| `INTROSPECT_INTAKE_MAX_MB` | `64` | The largest upload in MB, counted after decompression. It also caps the size of an S3 object: larger objects are skipped and reported. Allowed: 1 to 4096. |
+| `INTROSPECT_INTAKE_QUOTA_MB` | `2048` | The most MB of raw logs one person may keep. Over it, uploads answer 507. |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | unset | Credentials for [S3 sources](11-screen-settings.md#sources). Introspect never stores them. |
+| `AWS_SESSION_TOKEN` | unset | The session token, for temporary credentials. |
+| `AWS_REGION` | unset | The default region for S3 sources. A source can set its own **Region (optional)**. |
 
 These variables exist for tests.
 Do not set them for normal use:
@@ -36,6 +42,25 @@ Do not set them for normal use:
 
 The host port is fixed at `7317` and bound to `127.0.0.1`.
 To change it, edit the `ports` entry in `compose.yaml`.
+
+The intake port is `7318`.
+Compose sets it with `INTROSPECT_INTAKE_PORT=7318` and publishes it on `INTROSPECT_INTAKE_BIND`.
+Compose also hands `INTROSPECT_INTAKE_BIND` to the app, so the Health check can warn when the port is open to other computers.
+Without Docker, the intake is off until you set these variables:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `INTROSPECT_INTAKE_PORT` | unset (intake off) | The intake port. It must differ from `INTROSPECT_PORT`. |
+| `INTROSPECT_INTAKE_HOST` | `127.0.0.1` (`0.0.0.0` in a container) | The address the intake listens on. |
+| `INTROSPECT_INTAKE_MAX_MB` | `64` | As above. |
+| `INTROSPECT_INTAKE_QUOTA_MB` | `2048` | As above. |
+| `INTROSPECT_S3_ALLOW_HTTP` | `0` | An S3 endpoint must use `https://`, unless it is on your own computer. Set `1` to allow plain `http://` to other hosts, for example a MinIO test server. |
+
+The intake has fixed limits that you cannot change: a session body of 32 MiB, 50,000 events per pushed session, two session bodies parsed at once, and a reserve of 1 GiB of free disk.
+Intake and S3 copies older than **Keep event payloads for (days)** are deleted with the payloads, except those of pinned sessions.
+
+`AWS_PROFILE` works only without Docker.
+Compose does not pass it on and does not mount `~/.aws`, so the container could not resolve a profile.
 
 ## Settings
 
@@ -77,7 +102,7 @@ Each registered repo has two more options, set on the Settings screen:
 | `/sources/codex/sessions` | `~/.codex/sessions` | read-only | Codex session logs |
 | `/repos/skills` | `INTROSPECT_SKILLS_REPO`, or `~/.introspect/skills` | read-write | The global skills repo, with `rubrics/` |
 | `/repos/projects` | `INTROSPECT_PROJECTS_DIR`, or `~/.introspect/projects` | read-write | Project repos that the improver may change |
-| `/data` | Docker volume `introspect_data` | read-write | Database, sign-in token, API key, container Claude login (`/data/claude-home`), improver worktrees (`/data/worktrees`) |
+| `/data` | Docker volume `introspect_data` | read-write | Database, sign-in token, API key, container Claude login (`/data/claude-home`), improver worktrees (`/data/worktrees`), pushed logs (`/data/intake`), copies of S3 logs (`/data/s3`) |
 
 No Claude login of yours is mounted.
 The container's own login lives in `/data/claude-home`.

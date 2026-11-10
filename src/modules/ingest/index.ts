@@ -1,15 +1,24 @@
-import { realpath, stat } from 'node:fs/promises';
-import { sep } from 'node:path';
+import { mkdir, realpath, stat } from 'node:fs/promises';
+import { join, sep } from 'node:path';
+import { DEFAULT_INTAKE_MAX_MB } from '../../platform/config/index.js';
+import { InvalidInputError } from '../../platform/errors.js';
 import type { Db } from '../../platform/db/schema.js';
 import type { JobHandler } from '../../platform/jobs/worker.js';
 import type { Schedule } from '../../platform/jobs/scheduler.js';
 import type { JobQueue } from '../../platform/jobs/queue.js';
 import type { SettingsService } from '../settings/index.js';
 import { finalizeSession } from './finalize.js';
+import { createIntake, INTAKE_DIR } from './intake.js';
 import { adapterFor } from './adapters/index.js';
-import { ingestFile, SESSION_IDLE_MS, type PipelineDeps } from './pipeline.js';
+import { ingestFile, SESSION_IDLE_MS, withLock, type PipelineDeps } from './pipeline.js';
 import { loadOrCreateRedactionKey, REDACTION_VERSION } from './redaction.js';
-import { purgeFinishedJobs, purgePayloads, pinSession, setReference } from './retention.js';
+import {
+  purgeFinishedJobs,
+  purgePayloads,
+  purgeRawLogs,
+  pinSession,
+  setReference,
+} from './retention.js';
 import { createSessionQueries } from './sessions.js';
 import {
   createSources,
@@ -18,12 +27,29 @@ import {
   listSessionFiles,
   type SourceDto,
 } from './sources.js';
+import {
+  checkEndpoint,
+  createS3Api,
+  normalizePrefix,
+  probeS3,
+  syncS3Source,
+  type S3Api,
+  type S3Remote,
+} from './s3.js';
 import { createWatcher, type SourceWatcher } from './watcher.js';
 import type { Agent } from './types.js';
 
 export type { GradeCandidate, RedactedTrace, TraceRecord } from './types.js';
 
 export type { Agent, EventKind } from './types.js';
+export {
+  diagnoseS3,
+  probeS3,
+  createS3Api,
+  type S3Remote,
+  type S3Api,
+  type S3Diagnosis,
+} from './s3.js';
 export type { SourceDto, SourceStatus, DetectedSource } from './sources.js';
 export type {
   EventFilter,
@@ -42,15 +68,29 @@ export {
   type Redactor,
 } from './redaction.js';
 export { UnredactedSessionError } from './sessions.js';
+export { FIELD_CAP_CHARS } from './pipeline.js';
+export { runPush, type PushOptions, type PushSummary } from './push.js';
+export {
+  EVENT_KINDS,
+  OUTCOME_KINDS,
+  readIntakeBody,
+  type Intake,
+  type PushedEvent,
+  type PushedTrace,
+  type RawLogUpload,
+} from './intake.js';
 
 export const IMPORT_JOB = 'import_history';
 export const INGEST_FILE_JOB = 'ingest_file';
 const RECONCILE_JOB = 'reconcile_sources';
 const PURGE_JOB = 'purge_payloads';
+const S3_SYNC_JOB = 's3_sync';
 const WATCH_DEBOUNCE_MS = 2000;
 /** A dead ingest job blocks its key (same size and mtime); after this long reconcile may try the file again. */
 const DEAD_INGEST_RETRY_MS = 3600_000;
 const PROGRESS_INTERVAL_MS = 1000;
+const DAY_MS = 86_400_000;
+const S3_DIR = 's3';
 
 export interface IngestDeps {
   db: Db;
@@ -63,6 +103,12 @@ export interface IngestDeps {
   pollMode: boolean;
   /** Folders the API may register sources under; defaults to the mount roots and a native home. */
   sourceRoots?: readonly string[];
+  /** S3 access; tests pass a stub. Defaults to the AWS SDK with the standard credential chain. */
+  s3Api?: (remote: S3Remote) => S3Api;
+  /** Largest S3 object fetched (`config.logMaxBytes`); defaults to the config default. */
+  logMaxBytes?: number;
+  /** `INTROSPECT_S3_ALLOW_HTTP=1`: plain-http S3 endpoints on other hosts are allowed. */
+  s3AllowHttp?: boolean;
   now?: () => Date;
 }
 
@@ -131,6 +177,56 @@ export function createIngest(deps: IngestDeps) {
       payload: { sourceId: source.id, path },
       idempotencyKey,
     });
+  }
+
+  const s3ApiFor = deps.s3Api ?? createS3Api;
+  /** The folders that hold Introspect's own copies of raw logs; retention deletes old files there. */
+  const rawLogRoots = [join(deps.dataDir, INTAKE_DIR), join(deps.dataDir, S3_DIR)];
+
+  /** Mirrors every enabled S3 source into its cache folder and queues the ingest of what changed. */
+  async function syncS3(): Promise<number> {
+    // The s3_sync job, a history import and a new source can all sync at once; one at a time.
+    return withLock(S3_SYNC_JOB, syncS3Now);
+  }
+
+  async function syncS3Now(): Promise<number> {
+    let downloaded = 0;
+    const failures: string[] = [];
+    const retentionDays = (await deps.settings.get())['retention.days'];
+    const notBefore = new Date(now().getTime() - retentionDays * DAY_MS);
+    for (const source of await sources.enabledRows()) {
+      if (source.kind !== 's3' || !source.remote) continue;
+      try {
+        const result = await syncS3Source({
+          api: s3ApiFor(source.remote),
+          remote: source.remote,
+          agent: source.agent,
+          dir: source.path,
+          maxBytes: deps.logMaxBytes ?? DEFAULT_INTAKE_MAX_MB * 1024 * 1024,
+          notBefore,
+          onFile: async (path) => {
+            const st = await stat(path);
+            await enqueueIngest(source, path, st);
+          },
+        });
+        downloaded += result.downloaded;
+        if (result.rejected.length > 0)
+          failures.push(
+            `s3://${source.remote.bucket}: ignored keys outside the prefix folder: ${result.rejected.join(', ')}`,
+          );
+        if (result.tooLarge.length > 0)
+          failures.push(
+            `s3://${source.remote.bucket}: skipped objects larger than INTROSPECT_INTAKE_MAX_MB: ${result.tooLarge.join(', ')}`,
+          );
+      } catch (e) {
+        failures.push(
+          `s3://${source.remote.bucket}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+    // One broken bucket must not stop the others, but the job still fails so it shows up.
+    if (failures.length > 0) throw new Error(`S3 sync: ${failures.join('; ')}`);
+    return downloaded;
   }
 
   /** The 60 s safety net (ADR-0005): catches events missed after sleep or on mounts without notifications. */
@@ -203,11 +299,38 @@ export function createIngest(deps: IngestDeps) {
       .where('session.status', '=', 'active')
       .where('ingest_cursor.mtime_ms', '<', cutoff)
       .execute();
-    for (const { id } of idle) await finalizeSession(db, workspaceId, id, now());
+    // Sessions pushed by the intake have no cursor; their last event time says when they went quiet.
+    const pushed = await db
+      .selectFrom('session')
+      .select('session.id')
+      .where('session.workspace_id', '=', workspaceId)
+      .where('session.status', '=', 'active')
+      .where(
+        (eb) => eb.fn.coalesce('session.ended_at', 'session.started_at', 'session.created_at'),
+        '<',
+        new Date(cutoff).toISOString(),
+      )
+      .where((eb) =>
+        eb.not(
+          eb.exists(
+            eb
+              .selectFrom('ingest_cursor')
+              .select('session_id')
+              .whereRef('session_id', '=', 'session.id'),
+          ),
+        ),
+      )
+      .execute();
+    for (const { id } of [...idle, ...pushed]) await finalizeSession(db, workspaceId, id, now());
   }
 
   /** History import: every file of every enabled source, in order; idempotent through the cursors. */
   async function importAll(onProgress?: Progress): Promise<{ files: number; events: number }> {
+    // Fetch what the buckets hold first; a broken bucket fails the import only after the rest is in.
+    const s3Failure = await syncS3().then(
+      () => null,
+      (e: unknown) => (e instanceof Error ? e : new Error(String(e))),
+    );
     const work: { source: EnabledSource; path: string }[] = [];
     for (const source of await sources.enabledRows()) {
       for await (const path of listSessionFiles(source.agent, source.path))
@@ -232,6 +355,7 @@ export function createIngest(deps: IngestDeps) {
     }
     if (work.length === 0) await onProgress?.(0, 0);
     await finalizeIdle();
+    if (s3Failure) throw s3Failure;
     return { files: work.length, events };
   }
 
@@ -260,10 +384,18 @@ export function createIngest(deps: IngestDeps) {
         await reconcile();
       },
     },
+    [S3_SYNC_JOB]: {
+      concurrency: 1,
+      run: async () => {
+        await syncS3();
+      },
+    },
     [PURGE_JOB]: {
       concurrency: 1,
       run: async () => {
-        await purgePayloads(db, workspaceId, (await deps.settings.get())['retention.days'], now());
+        const days = (await deps.settings.get())['retention.days'];
+        await purgePayloads(db, workspaceId, days, now());
+        await purgeRawLogs(db, workspaceId, rawLogRoots, days, now());
         await purgeFinishedJobs(db, workspaceId, now());
       },
     },
@@ -271,6 +403,7 @@ export function createIngest(deps: IngestDeps) {
 
   const schedules: Schedule[] = [
     { name: 'ingest-reconcile', cron: () => Promise.resolve('* * * * *'), kind: RECONCILE_JOB },
+    { name: 'ingest-s3-sync', cron: () => Promise.resolve('* * * * *'), kind: S3_SYNC_JOB },
     { name: 'ingest-purge', cron: () => Promise.resolve('30 3 * * *'), kind: PURGE_JOB },
   ];
 
@@ -299,16 +432,48 @@ export function createIngest(deps: IngestDeps) {
     return null;
   }
 
+  const intake = createIntake({
+    pipeline,
+    dataDir: deps.dataDir,
+    addSource: (agent, path, userId) => sources.add(agent, path, { kind: 'intake', userId }),
+    onFile: (path) => onFileEvent(path),
+  });
+
   return {
+    intake,
     sources: {
       list: (): Promise<SourceDto[]> => sources.list(),
-      add: (agent: Agent, path: string, opts?: { restrict?: boolean }): Promise<SourceDto> =>
+      add: (
+        agent: Agent,
+        path: string,
+        opts?: Parameters<typeof sources.add>[2],
+      ): Promise<SourceDto> =>
         sources.add(agent, path, opts).then((dto) => {
           watcher?.add(dto.path);
           return dto;
         }),
+      /** Validates that the bucket answers, then caches it under `<dataDir>/s3/<sourceId>`. */
+      addS3: async (agent: Agent, given: S3Remote): Promise<SourceDto> => {
+        const remote = { ...given, prefix: normalizePrefix(given.prefix) };
+        checkEndpoint(remote.endpoint, deps.s3AllowHttp ?? false);
+        await probeS3(remote, s3ApiFor(remote)).catch((e: unknown) => {
+          throw new InvalidInputError(
+            `Cannot read s3://${remote.bucket}/${remote.prefix}: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        });
+        const dto = await sources.addS3(agent, remote, async (id) => {
+          const dir = join(deps.dataDir, S3_DIR, id);
+          await mkdir(dir, { recursive: true, mode: 0o700 });
+          return realpath(dir);
+        });
+        watcher?.add(dto.path);
+        // Fetch now rather than at the next scheduled sync.
+        await deps.queue.enqueue({ workspaceId, kind: S3_SYNC_JOB, maxAttempts: 1 });
+        return dto;
+      },
       detect: detectSources,
     },
+    syncS3,
     sessions,
     rawFile,
     handleFileEvent: onFileEvent,
@@ -318,6 +483,7 @@ export function createIngest(deps: IngestDeps) {
     setReference: (id: string, member: boolean, max: number) =>
       setReference(db, workspaceId, id, member, max),
     purgePayloads: (days: number) => purgePayloads(db, workspaceId, days, now()),
+    purgeRawLogs: (days: number) => purgeRawLogs(db, workspaceId, rawLogRoots, days, now()),
     reconcile,
     importAll,
     /** Enqueues a history import and returns its job id. */

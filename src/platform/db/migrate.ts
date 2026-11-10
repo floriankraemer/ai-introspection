@@ -10,6 +10,7 @@ import * as improver from './migrations/0006_improver.js';
 import * as improverReview from './migrations/0007_improver_review.js';
 import * as trends from './migrations/0008_trends.js';
 import * as trendsReview from './migrations/0009_trends_review.js';
+import * as intakeS3 from './migrations/0010_intake_s3.js';
 
 /** Migrations are bundled (not read from a folder) so tsx, tsc output and tests all find them. */
 export async function migrateToLatest({ db, dialect }: DbHandle): Promise<void> {
@@ -30,6 +31,7 @@ export async function migrateToLatest({ db, dialect }: DbHandle): Promise<void> 
     '0007_improver_review': { up: (k) => improverReview.up(k, dialect) },
     '0008_trends': { up: (k) => trends.up(k) },
     '0009_trends_review': { up: (k) => trendsReview.up(k) },
+    '0010_intake_s3': { up: (k) => intakeS3.up(k) },
   };
   const provider: MigrationProvider = { getMigrations: () => Promise.resolve(migrations) };
   const { error } = await new Migrator({

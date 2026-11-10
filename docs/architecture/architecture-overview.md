@@ -74,6 +74,7 @@ flowchart LR
 ```
 
 Only redacted data crosses the Introspect boundary towards Anthropic and, in team mode, towards the team server.
+One exception: in raw intake mode other people send unredacted logs to the server, which redacts them on ingest (ADR-0012).
 
 ## 4. Container view
 
@@ -84,21 +85,31 @@ flowchart TB
     cli[introspect CLI]
     subgraph proc[introspect serve - one Node.js process]
       api[api role<br/>Hono /v1 + static SPA]
+      intake[intake listener, optional<br/>PUT /v1/intake/*, port 7318]
       watcher[watcher role<br/>chokidar + reconcile]
       worker[worker role<br/>job executor]
       sched[scheduler role<br/>croner]
     end
     db[(SQLite file<br/>introspect.db, WAL)]
     logs[/Agent logs/]
+    s3cache[/S3 cache and pushed logs<br/>data/s3, data/intake/]
     repo[/Global skills repo, project repos, worktrees/]
   end
   anthropic[(Anthropic API / claude CLI)]
   team[[Team server, optional]]
+  pushers[Other people<br/>introspect push, curl]
+  bucket[(S3 bucket)]
 
   browser -->|HTTP 127.0.0.1| api
   cli -->|HTTP + token, or direct for import| api
   watcher -->|enqueue ingest_file| db
   logs --> watcher
+  s3cache --> watcher
+  pushers -->|HTTPS via reverse proxy, intake token| intake
+  intake -->|raw log file| s3cache
+  intake -->|session redacted by the pusher| db
+  worker -->|s3_sync every minute| bucket
+  worker -->|copies logs| s3cache
   api --> db
   worker --> db
   sched -->|enqueue scheduled jobs| db
@@ -106,6 +117,12 @@ flowchart TB
   worker -->|git CLI| repo
   worker -->|POST /v1/sessions when sharing| team
 ```
+
+The intake listener (ADR-0012) is a second port in the same process, started when `INTROSPECT_INTAKE_PORT` is set.
+It serves only intake routes with per-person tokens.
+Raw uploads become files under `data/intake/<person>/<agent>/` and ordinary sources; redacted sessions are upserted directly.
+S3 sources are mirrored by the `s3_sync` job into `data/s3/<source id>`, and then they are ordinary folder sources.
+Contract: `docs/api/intake-openapi.json`.
 
 Team mode replaces the SQLite file with PostgreSQL, disables the watcher on the server, and adds OIDC, GitHub App webhooks, and several replicas (section 8).
 
@@ -118,7 +135,7 @@ flowchart TB
     authmw[auth middleware<br/>local-token or OIDC]
   end
   subgraph modules[Domain modules]
-    ingest[ingest<br/>adapters, redactor, normalizer, signals,<br/>flag+sample, outcome linker, retention, shipper]
+    ingest[ingest<br/>adapters, redactor, normalizer, signals,<br/>flag+sample, outcome linker, retention, shipper,<br/>intake, push client, S3 sync]
     rubrics[rubrics<br/>git-backed rubric store,<br/>calibration labels, gate]
     grading[grading<br/>Judge port, policy, dry-run,<br/>reference re-grade, pass rates]
     improvement[improvement<br/>Improver port, clustering, target resolution,<br/>worktrees, proposal lifecycle, skill repos]
@@ -412,6 +429,7 @@ flowchart LR
 - The container runs as the host UID and GID, so files in bind mounts are never owned by root.
 - The watcher polls by default, because inotify is unreliable on WSL2 and Docker Desktop bind mounts.
 - The port is published on `127.0.0.1` only; nothing listens on a non-loopback host interface.
+  The intake port 7318 is published on `${INTROSPECT_INTAKE_BIND:-127.0.0.1}`; exposing it needs TLS in front (ADR-0012).
 - Credentials: the API key lives in the data volume (mode 0600); the CLI transport mounts `~/.claude` read-only, the one weaker isolation point (ADR-0011).
 - Development uses the same image lineage: `compose.dev.yaml` (source bind-mounted, Postgres 16) driven by the Makefile, also as a devcontainer.
 - Without Docker: install the npm package and run `introspect serve` on the host; inside WSL, sources under `/mnt/c/...` are polled.

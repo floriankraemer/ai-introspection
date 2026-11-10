@@ -18,6 +18,7 @@ import type {
   BudgetMode,
   Settings as SettingsData,
   SkillRepo,
+  Source,
   SourceStatus,
 } from '../api/types.js';
 import { NextRun } from '../components/NextRun.js';
@@ -200,21 +201,56 @@ function PatternsSetting({
   );
 }
 
+const KIND: Record<Source['kind'], string> = { folder: 'Folder', s3: 'S3', intake: 'Pushed' };
+
+function sourceLocation(s: Source) {
+  return s.remote ? `s3://${s.remote.bucket}/${s.remote.prefix}` : s.path;
+}
+
 function SourcesCard() {
   const api = useApi();
   const qc = useQueryClient();
   const sources = useSources();
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState<'folder' | 's3' | null>(null);
   const [agent, setAgent] = useState<Agent>('claude_code');
   const [path, setPath] = useState('');
+  const [bucket, setBucket] = useState('');
+  const [prefix, setPrefix] = useState('');
+  const [region, setRegion] = useState('');
+  const [endpoint, setEndpoint] = useState('');
+  const [pathStyle, setPathStyle] = useState(false);
   const add = useMutation({
-    mutationFn: () => api.addSource({ agent, path: path.trim() }),
+    mutationFn: () => {
+      if (adding === 's3') {
+        const e = endpoint.trim();
+        return api.addSource({
+          agent,
+          s3: {
+            bucket: bucket.trim(),
+            prefix: prefix.trim(),
+            ...(region.trim() ? { region: region.trim() } : {}),
+            ...(e ? { endpoint: e, forcePathStyle: pathStyle } : {}),
+          },
+        });
+      }
+      return api.addSource({ agent, path: path.trim() });
+    },
     onSuccess: async () => {
-      setAdding(false);
+      setAdding(null);
       setPath('');
+      setBucket('');
+      setPrefix('');
+      setRegion('');
+      setEndpoint('');
+      setPathStyle(false);
       await invalidateKeys(qc, ['sources', 'doctor']);
     },
   });
+  const open = (kind: 'folder' | 's3') => {
+    add.reset();
+    setAdding(kind);
+  };
+  const ready = adding === 's3' ? bucket.trim() !== '' : path.trim() !== '';
   return (
     <section aria-label="Sources" className={SECTION}>
       <h2 className={H2}>Sources</h2>
@@ -236,8 +272,17 @@ function SourcesCard() {
             className="flex items-center justify-between gap-3 border-b border-line-soft py-2.5"
           >
             <div className="flex min-w-0 flex-col gap-0.5">
-              <strong className="text-sm">{s.agent === 'codex' ? 'Codex' : 'Claude Code'}</strong>
-              <code className="break-all text-muted">{s.path}</code>
+              <strong className="flex items-center gap-2 text-sm">
+                {s.agent === 'codex' ? 'Codex' : 'Claude Code'}
+                <Chip>{KIND[s.kind]}</Chip>
+              </strong>
+              {s.kind === 'intake' ? (
+                <span className="text-[13px] text-muted">
+                  Pushed by {s.person?.name ?? 'someone'}
+                </span>
+              ) : (
+                <code className="break-all text-muted">{sourceLocation(s)}</code>
+              )}
             </div>
             <Chip tone={tone}>{text}</Chip>
           </div>
@@ -245,10 +290,11 @@ function SourcesCard() {
       })}
       {adding ? (
         <form
+          aria-label={adding === 's3' ? 'Add S3 bucket' : 'Add source folder'}
           className="flex flex-col gap-3 rounded-lg border border-line-soft p-3"
           onSubmit={(e) => {
             e.preventDefault();
-            if (path.trim()) add.mutate();
+            if (ready) add.mutate();
           }}
         >
           <Field label="Agent">
@@ -263,24 +309,93 @@ function SourcesCard() {
               <option value="codex">Codex</option>
             </select>
           </Field>
-          <Field label="Folder path">
-            <input
-              className={FIELD}
-              value={path}
-              placeholder="~/.claude/projects"
-              onChange={(e) => {
-                setPath(e.target.value);
-              }}
-            />
-          </Field>
-          {add.isError ? <p className="m-0 text-sm text-fail">{add.error.message}</p> : null}
+          {adding === 's3' ? (
+            <>
+              <Field label="Bucket">
+                <input
+                  className={FIELD}
+                  value={bucket}
+                  placeholder="team-logs"
+                  aria-describedby={add.isError ? 'source-error' : undefined}
+                  onChange={(e) => {
+                    setBucket(e.target.value);
+                  }}
+                />
+              </Field>
+              <Field label="Prefix (optional)">
+                <input
+                  className={FIELD}
+                  value={prefix}
+                  placeholder="claude/"
+                  onChange={(e) => {
+                    setPrefix(e.target.value);
+                  }}
+                />
+              </Field>
+              <Field label="Region (optional)">
+                <input
+                  className={FIELD}
+                  value={region}
+                  placeholder="eu-central-1"
+                  onChange={(e) => {
+                    setRegion(e.target.value);
+                  }}
+                />
+              </Field>
+              <Field label="Endpoint (optional)" hint="For S3-compatible storage such as MinIO.">
+                <input
+                  className={FIELD}
+                  type="url"
+                  value={endpoint}
+                  placeholder="https://minio.example.com"
+                  onChange={(e) => {
+                    setEndpoint(e.target.value);
+                  }}
+                />
+              </Field>
+              {endpoint.trim() ? (
+                <label className="flex items-center gap-2.5 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={pathStyle}
+                    onChange={(e) => {
+                      setPathStyle(e.target.checked);
+                    }}
+                  />
+                  Use path-style addressing
+                </label>
+              ) : null}
+              <p className="m-0 text-xs text-muted">
+                Credentials come from the server’s environment (<code>AWS_ACCESS_KEY_ID</code> and{' '}
+                <code>AWS_SECRET_ACCESS_KEY</code>, or <code>AWS_PROFILE</code>). Never enter them
+                here.
+              </p>
+            </>
+          ) : (
+            <Field label="Folder path">
+              <input
+                className={FIELD}
+                value={path}
+                placeholder="~/.claude/projects"
+                aria-describedby={add.isError ? 'source-error' : undefined}
+                onChange={(e) => {
+                  setPath(e.target.value);
+                }}
+              />
+            </Field>
+          )}
+          {add.isError ? (
+            <p id="source-error" role="alert" className="m-0 text-sm text-fail">
+              {add.error.message}
+            </p>
+          ) : null}
           <div className="flex gap-2">
-            <Button type="submit" variant="primary" disabled={add.isPending || !path.trim()}>
-              Add folder
+            <Button type="submit" variant="primary" disabled={add.isPending || !ready}>
+              {adding === 's3' ? 'Add bucket' : 'Add folder'}
             </Button>
             <Button
               onClick={() => {
-                setAdding(false);
+                setAdding(null);
               }}
             >
               Cancel
@@ -288,15 +403,24 @@ function SourcesCard() {
           </div>
         </form>
       ) : (
-        <Button
-          variant="dashed"
-          className="self-start"
-          onClick={() => {
-            setAdding(true);
-          }}
-        >
-          + Add source folder
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="dashed"
+            onClick={() => {
+              open('folder');
+            }}
+          >
+            + Add source folder
+          </Button>
+          <Button
+            variant="dashed"
+            onClick={() => {
+              open('s3');
+            }}
+          >
+            + Add S3 bucket
+          </Button>
+        </div>
       )}
     </section>
   );

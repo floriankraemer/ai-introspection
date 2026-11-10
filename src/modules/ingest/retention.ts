@@ -1,3 +1,5 @@
+import { lstat, readdir, realpath, unlink } from 'node:fs/promises';
+import { join } from 'node:path';
 import { PostgresAdapter, type SelectQueryBuilder } from 'kysely';
 import type { Db, Schema } from '../../platform/db/schema.js';
 
@@ -106,6 +108,61 @@ export async function setReference(
       .execute();
     return 'ok';
   });
+}
+
+/** An unfinished upload or download this old is abandoned. */
+const STALE_PART_MS = 3600_000;
+
+/**
+ * Deletes raw logs Introspect keeps copies of (intake uploads, S3 caches) once their last write is
+ * older than the retention window, and `.part` files older than an hour. Like `purgePayloads`, the
+ * files of pinned and reference-set sessions stay, so their raw view keeps working. Logs in the
+ * user's own folders are never touched. Returns the number of files deleted.
+ */
+export async function purgeRawLogs(
+  db: Db,
+  workspaceId: string,
+  roots: readonly string[],
+  retentionDays: number,
+  now: Date,
+): Promise<number> {
+  const cutoff = now.getTime() - retentionDays * DAY_MS;
+  const keep = new Set(
+    (
+      await db
+        .selectFrom('ingest_cursor')
+        .innerJoin('session', 'session.id', 'ingest_cursor.session_id')
+        .select('ingest_cursor.file_path')
+        .where('session.workspace_id', '=', workspaceId)
+        .where((eb) =>
+          eb.or([eb('session.pinned', '=', true), eb('session.in_reference_set', '=', true)]),
+        )
+        .execute()
+    ).map((r) => r.file_path),
+  );
+  let deleted = 0;
+  for (const given of roots) {
+    const root = await realpath(given).catch(() => null);
+    if (!root) continue;
+    for (const entry of await readdir(root, { withFileTypes: true, recursive: true })) {
+      if (!entry.isFile()) continue;
+      const path = join(entry.parentPath, entry.name);
+      const st = await lstat(path).catch(() => null);
+      if (!st) continue;
+      const stale = entry.name.endsWith('.part')
+        ? st.mtimeMs < now.getTime() - STALE_PART_MS
+        : st.mtimeMs < cutoff && !keep.has(path);
+      if (
+        stale &&
+        (await unlink(path).then(
+          () => true,
+          () => false,
+        ))
+      )
+        deleted += 1;
+    }
+  }
+  return deleted;
 }
 
 const FINISHED_JOB_DAYS = 7;

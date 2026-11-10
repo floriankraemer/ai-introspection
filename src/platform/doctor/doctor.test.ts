@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import {
   checkChangeScan,
   checkClock,
+  checkIntake,
   checkData,
   checkGh,
   checkGitIdentity,
@@ -14,6 +15,7 @@ import {
   checkOwnership,
   checkRedaction,
   checkSkillsRepo,
+  checkS3Sources,
   checkSources,
   checkWatcher,
   formatReport,
@@ -93,6 +95,24 @@ describe('sources check', () => {
     );
     expect(checks.map((c) => c.status)).toEqual(['ok', 'fail']);
     expect(checks[1]?.fix).toContain('/sources/claude/projects:ro');
+  });
+  it('leaves pushed and S3 sources to their own checks', () => {
+    const checks = checkSources(
+      input({
+        sources: [
+          { agent: 'claude_code', path: tmp(), enabled: true },
+          {
+            agent: 'claude_code',
+            path: '/data/intake/u1/claude_code',
+            enabled: true,
+            kind: 'intake',
+          },
+          { agent: 'codex', path: '/data/s3/s1', enabled: true, kind: 's3' },
+        ],
+      }),
+    );
+    expect(checks).toHaveLength(1);
+    expect(checks[0]?.status).toBe('ok');
   });
 });
 
@@ -202,6 +222,32 @@ describe('clock check', () => {
   });
 });
 
+describe('intake check', () => {
+  it('reports off, loopback with the token count, and warns about a non-loopback bind', () => {
+    expect(checkIntake({ intake: undefined, env: {} })).toMatchObject({
+      status: 'ok',
+      detail: expect.stringContaining('Off') as string,
+    });
+    const on = { port: 7318, host: '127.0.0.1', activeTokens: 2 };
+    expect(checkIntake({ intake: on, env: {} })).toMatchObject({
+      status: 'ok',
+      detail: 'On, port 7318 on 127.0.0.1; 2 active token(s)',
+    });
+    const exposed = checkIntake({ intake: { ...on, host: '0.0.0.0' }, env: {} });
+    expect(exposed).toMatchObject({
+      status: 'warn',
+      fix: expect.stringContaining('TLS') as string,
+    });
+    // In a container the published address decides, not the 0.0.0.0 bind inside it.
+    expect(
+      checkIntake({
+        intake: { ...on, host: '0.0.0.0' },
+        env: { INTROSPECT_INTAKE_BIND: '127.0.0.1' },
+      }).status,
+    ).toBe('ok');
+  });
+});
+
 describe('redaction check', () => {
   it('warns when redaction is off and says what that means for grading', () => {
     expect(checkRedaction(input()).status).toBe('ok');
@@ -249,5 +295,34 @@ describe('report', () => {
     expect(formatReport(bad)).toMatch(
       /^FAIL {2}Data folder and database: Database unusable: boom\n {6}fix: /m,
     );
+  });
+});
+
+describe('checkS3Sources', () => {
+  const s3 = {
+    agent: 'codex',
+    path: '/data/s3/x',
+    enabled: true,
+    kind: 's3',
+    remote: { bucket: 'b', prefix: 'p/' },
+  };
+  const run = (d: { credentialsError: string | null; bucketError: string | null }) =>
+    checkS3Sources({ sources: [s3], diagnoseS3: () => Promise.resolve(d) });
+
+  it('reports missing credentials, an unreachable bucket, or success, one fix each', async () => {
+    const [noCreds] = await run({
+      credentialsError: 'Could not load credentials',
+      bucketError: null,
+    });
+    expect(noCreds).toMatchObject({
+      status: 'fail',
+      fix: expect.stringContaining('AWS_ACCESS_KEY_ID'),
+    });
+    const [noBucket] = await run({ credentialsError: null, bucketError: 'NoSuchBucket' });
+    expect(noBucket).toMatchObject({
+      status: 'fail',
+      detail: expect.stringContaining('NoSuchBucket'),
+    });
+    expect((await run({ credentialsError: null, bucketError: null }))[0]?.status).toBe('ok');
   });
 });

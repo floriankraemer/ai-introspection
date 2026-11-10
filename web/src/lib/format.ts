@@ -3,6 +3,9 @@ import type { Agent, EventKind, SessionDetail, TraceEvent } from '../api/types.j
 /** "1 session", "2 sessions". */
 export const plural = (n: number, word: string) => `${String(n)} ${word}${n === 1 ? '' : 's'}`;
 
+/** The fixed local admin (`LOCAL_USER_ID` on the server): sessions read from this machine. */
+export const LOCAL_USER_ID = '00000000-0000-7000-8000-000000000002';
+
 export const AGENT_LABEL: Record<Agent, string> = { claude_code: 'Claude Code', codex: 'Codex' };
 
 /** "2 h ago", "Yesterday", "3 days ago" (the wording of the Sessions mockup). */

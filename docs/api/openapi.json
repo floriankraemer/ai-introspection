@@ -169,6 +169,9 @@
               "null"
             ]
           },
+          "person": {
+            "$ref": "#/components/schemas/Person"
+          },
           "startedAt": {
             "type": "string",
             "format": "date-time"
@@ -228,6 +231,7 @@
           "title",
           "agent",
           "repo",
+          "person",
           "startedAt",
           "toolErrors",
           "tokensIn",
@@ -243,6 +247,40 @@
         "enum": [
           "claude_code",
           "codex"
+        ]
+      },
+      "Person": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ]
+      },
+      "PersonWithSessions": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Person"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "sessions": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "sessions"
+            ]
+          }
         ]
       },
       "SessionDetail": {
@@ -269,6 +307,9 @@
               "string",
               "null"
             ]
+          },
+          "person": {
+            "$ref": "#/components/schemas/Person"
           },
           "startedAt": {
             "type": "string",
@@ -345,6 +386,7 @@
           "agent",
           "repo",
           "branch",
+          "person",
           "startedAt",
           "durationS",
           "tokensIn",
@@ -521,6 +563,17 @@
           "path": {
             "type": "string"
           },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "folder",
+              "intake",
+              "s3"
+            ]
+          },
+          "remote": {
+            "$ref": "#/components/schemas/S3Remote"
+          },
           "enabled": {
             "type": "boolean"
           },
@@ -532,14 +585,69 @@
               "disabled",
               "missing"
             ]
+          },
+          "person": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ]
           }
         },
         "required": [
           "id",
           "agent",
           "path",
+          "kind",
+          "remote",
           "enabled",
-          "status"
+          "status",
+          "person"
+        ]
+      },
+      "S3Remote": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "bucket": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "prefix": {
+            "type": "string",
+            "maxLength": 1024,
+            "default": ""
+          },
+          "region": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "endpoint": {
+            "type": "string",
+            "format": "uri"
+          },
+          "forcePathStyle": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "bucket"
         ]
       },
       "DetectedSource": {
@@ -2913,6 +3021,15 @@
           {
             "schema": {
               "type": "string",
+              "format": "uuid"
+            },
+            "required": false,
+            "name": "person",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "enum": [
                 "failed_any",
                 "all",
@@ -2978,6 +3095,81 @@
                     "items",
                     "nextCursor"
                   ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Well-formed but cannot be applied",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/people": {
+      "get": {
+        "summary": "People who own at least one session, most sessions first",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The people",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PersonWithSessions"
+                  }
                 }
               }
             }
@@ -3418,7 +3610,7 @@
         }
       },
       "post": {
-        "summary": "Register a log folder (idempotent per agent and path)",
+        "summary": "Register a log folder or an S3 bucket (idempotent per agent and location)",
         "security": [
           {
             "bearerAuth": []
@@ -3429,19 +3621,38 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "properties": {
-                  "agent": {
-                    "$ref": "#/components/schemas/Agent"
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "agent": {
+                        "$ref": "#/components/schemas/Agent"
+                      },
+                      "path": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "agent",
+                      "path"
+                    ]
                   },
-                  "path": {
-                    "type": "string",
-                    "minLength": 1
+                  {
+                    "type": "object",
+                    "properties": {
+                      "agent": {
+                        "$ref": "#/components/schemas/Agent"
+                      },
+                      "s3": {
+                        "$ref": "#/components/schemas/S3Remote"
+                      }
+                    },
+                    "required": [
+                      "agent",
+                      "s3"
+                    ]
                   }
-                },
-                "required": [
-                  "agent",
-                  "path"
                 ]
               }
             }

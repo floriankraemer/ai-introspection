@@ -23,7 +23,7 @@ import {
   GRADE_SESSION_JOB,
   type Grading,
 } from './index.js';
-import { STALE_RESERVATION_MS } from './budget.js';
+import { STALE_RESERVATION_MS, createBudget } from './budget.js';
 import type { FakeDecision } from './judge-fake.js';
 import { JudgeCallError, type Judge, type JudgeRequest, type Usage } from './types.js';
 
@@ -508,6 +508,30 @@ export function gradingSuite(name: string, make: TestDbFactory): void {
         expect(
           (await grading.budget.status(later(STALE_RESERVATION_MS + 60_000))).tokensToday,
         ).toBe(0);
+      });
+
+      it('counts the day of the app clock, not of the machine (INTROSPECT_NOW)', async () => {
+        const fixed = new Date('2020-01-01T10:00:00Z');
+        await t.handle.db
+          .insertInto('llm_call')
+          .values({
+            id: newId(),
+            workspace_id: LOCAL_WORKSPACE_ID,
+            at: fixed.toISOString(),
+            purpose: 'grade',
+            model: 'm',
+            transport: 'api',
+            tokens_in: 500,
+          })
+          .execute();
+        const budget = createBudget(
+          t.handle.db,
+          LOCAL_WORKSPACE_ID,
+          () => settings.get(),
+          'UTC',
+          () => fixed,
+        );
+        expect((await budget.status()).tokensToday).toBe(500);
       });
     });
 

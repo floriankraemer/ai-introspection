@@ -11,6 +11,9 @@ services:
     user: '${UID:-1000}:${GID:-1000}'
     ports:
       - '127.0.0.1:7317:7317'
+      # Intake port where other people push sessions. Set INTROSPECT_INTAKE_BIND=0.0.0.0 in .env to
+      # expose it, and put TLS (a reverse proxy) in front.
+      - '${INTROSPECT_INTAKE_BIND:-127.0.0.1}:7318:7318'
     read_only: true
     tmpfs:
       - /tmp
@@ -40,6 +43,17 @@ services:
       INTROSPECT_IMPROVER:
       # Time zone of the budget windows ("tokens per day", "dollars per month"); UTC when unset.
       TZ:
+      INTROSPECT_INTAKE_PORT: '7318'
+      # Only for `introspect doctor`: the address the intake port is published on (see ports).
+      INTROSPECT_INTAKE_BIND: ${INTROSPECT_INTAKE_BIND:-127.0.0.1}
+      INTROSPECT_INTAKE_MAX_MB: ${INTROSPECT_INTAKE_MAX_MB:-64}
+      INTROSPECT_INTAKE_QUOTA_MB: ${INTROSPECT_INTAKE_QUOTA_MB:-2048}
+      # AWS credentials for S3 sources (pass-through: unset unless in .env); Introspect never stores them.
+      # AWS_PROFILE is not passed: ~/.aws is not mounted, so a profile could not resolve here.
+      AWS_ACCESS_KEY_ID:
+      AWS_SECRET_ACCESS_KEY:
+      AWS_SESSION_TOKEN:
+      AWS_REGION:
     volumes:
       - data:/data
       # Agent logs, read-only. Compose has no optional bind mounts: a missing folder is created

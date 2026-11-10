@@ -10,6 +10,7 @@ Open it by clicking a session title on the [Sessions](06-screen-sessions.md) scr
 
 The heading is the first prompt of the session.
 Under it you see the agent, repo, branch, duration and token counts.
+For a session that another person pushed, the line also says "Pushed by <name>".
 If the session ended with a pull request, a link to it appears here.
 
 Buttons:

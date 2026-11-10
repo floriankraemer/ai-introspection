@@ -18,6 +18,7 @@
 | Health check | The list of checks in Settings. See [Troubleshooting](16-troubleshooting.md). |
 | Improver | The model that reads failing grades and drafts proposals. |
 | Ingest | Reading a session log, masking secrets and storing it. |
+| Intake | The second port (7318) where other people push sessions with a personal intake token. |
 | Judge | The model that grades sessions. It runs through an Anthropic API key or through the `claude` command. |
 | Label | Your own verdict, **Pass** or **Fail**, on one session for one rubric. |
 | Merge into main | The accept button in local mode. It merges the proposal's branch into the repo's default branch. |
@@ -32,7 +33,7 @@
 | Score | The number the judge gives on a rubric's scale. A score at or above the pass threshold is a pass. |
 | Session | One run of a coding agent, from the first prompt to the end, as written in its log file. |
 | Skills repo | Short name for the global skills repo, as on the screens. |
-| Source | A folder with session logs that Introspect reads. |
+| Source | A folder or S3 bucket with session logs that Introspect reads. |
 | Superseded | A proposal that a newer proposal replaced. It appears under **Rejected**. |
 | Trusted | A rubric that passed the calibration gate. Only trusted rubrics feed the improver. |
 | Untrusted / uncalibrated | A rubric that has not passed the calibration gate. It still grades, but the improver ignores it. |

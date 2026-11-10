@@ -10,9 +10,18 @@ import {
   runScanCommand,
   startServer,
 } from './platform/bootstrap.js';
+import { runPush } from './modules/ingest/index.js';
 import { formatReport, hasFailure } from './platform/doctor/index.js';
 import { rotateToken } from './platform/http/auth.js';
 import { loadConfig } from './platform/config/index.js';
+import { openDatabase } from './platform/db/connection.js';
+import { migrateToLatest } from './platform/db/migrate.js';
+import { ensureLocalIdentity } from './platform/identity/index.js';
+import {
+  createIntakeToken,
+  listIntakeTokens,
+  revokeIntakeToken,
+} from './platform/identity/intake-tokens.js';
 
 async function serveCommand(): Promise<void> {
   const server = await startServer(loadConfig());
@@ -44,6 +53,47 @@ function rotateTokenCommand(): void {
   const { dataDir, port } = loadConfig();
   const token = rotateToken(dataDir);
   console.log(`Token rotated. Sign in again: http://127.0.0.1:${String(port)}/auth#${token}`);
+}
+
+async function intakeTokenCommand(): Promise<void> {
+  const [sub, arg] = process.argv.slice(3);
+  const handle = openDatabase(loadConfig().databaseUrl);
+  try {
+    await migrateToLatest(handle);
+    await ensureLocalIdentity(handle.db);
+    if (sub === 'create' && arg) {
+      const { token } = await createIntakeToken(handle.db, arg, {
+        expires: option('expires'),
+        samePerson: process.argv.includes('--same-person'),
+      });
+      console.log(token);
+      console.error(
+        'Shown once; it cannot be displayed again. Revoke and create a new one if lost.',
+      );
+    } else if (sub === 'list') {
+      for (const r of await listIntakeTokens(handle.db)) {
+        console.log(
+          [
+            r.name,
+            r.person,
+            `created ${r.createdAt}`,
+            `expires ${r.expiresAt ?? 'never'}`,
+            `revoked ${r.revokedAt ?? 'no'}`,
+          ].join('\t'),
+        );
+      }
+    } else if (sub === 'revoke' && arg) {
+      const n = await revokeIntakeToken(handle.db, arg);
+      if (n === 0) throw new Error(`No active intake token named or with id "${arg}".`);
+      console.log(`Revoked ${String(n)} token(s).`);
+    } else {
+      throw new Error(
+        'Usage: introspect intake-token create <name> [--expires 90d] [--same-person] | list | revoke <name|id>',
+      );
+    }
+  } finally {
+    await handle.close();
+  }
 }
 
 function option(name: string): string | undefined {
@@ -144,6 +194,47 @@ async function doctorCommand(): Promise<void> {
   if (hasFailure(report)) process.exit(1);
 }
 
+const PUSH_USAGE =
+  'Usage: introspect push --server <url> [--token <t>] [--redact] [--since <7d|12h>] [--dir <claude_code|codex>=<folder>]... [--dry-run] [--insecure]\n  The token is better passed as INTROSPECT_PUSH_TOKEN; the server as INTROSPECT_PUSH_URL.';
+
+async function pushCommand(): Promise<void> {
+  const args = process.argv.slice(3);
+  const dirs = args
+    .flatMap((a, i) => (a === '--dir' ? [args[i + 1] ?? ''] : []))
+    .map((d) => {
+      const [agent, ...rest] = d.split('=');
+      if ((agent !== 'claude_code' && agent !== 'codex') || rest.length === 0)
+        throw new Error(PUSH_USAGE);
+      return { agent, path: rest.join('=') } as const;
+    });
+  const server = option('server') ?? process.env.INTROSPECT_PUSH_URL;
+  const token = option('token') ?? process.env.INTROSPECT_PUSH_TOKEN;
+  if (!server || !token) throw new Error(PUSH_USAGE);
+  if (option('token') !== undefined)
+    console.error(
+      'Warning: --token lands in your shell history and process list; prefer INTROSPECT_PUSH_TOKEN.',
+    );
+  const since = option('since');
+  const dryRun = process.argv.includes('--dry-run');
+  const s = await runPush({
+    server,
+    token,
+    redact: process.argv.includes('--redact'),
+    since: since === undefined ? undefined : parseSince(since),
+    dirs,
+    dryRun,
+    insecure: process.argv.includes('--insecure'),
+    dataDir: loadConfig().dataDir,
+    databaseUrl: loadConfig().databaseUrl,
+    log: console.log,
+  });
+  console.log(
+    `${dryRun ? 'would push' : 'pushed'} ${String(s.pushed)}, unchanged ${String(s.unchanged)}, failed ${String(s.failed)}`,
+  );
+  for (const e of s.errors) console.error(e);
+  if (s.failed > 0) process.exit(1);
+}
+
 const [command] = process.argv.slice(2);
 if (command === 'serve') {
   serveCommand().catch((e: unknown) => {
@@ -154,6 +245,11 @@ if (command === 'serve') {
   openCommand();
 } else if (command === 'rotate-token') {
   rotateTokenCommand();
+} else if (command === 'intake-token') {
+  intakeTokenCommand().catch((e: unknown) => {
+    console.error(e instanceof Error ? e.message : e);
+    process.exit(1);
+  });
 } else if (command === 'doctor') {
   doctorCommand().catch((e: unknown) => {
     console.error(e instanceof Error ? e.message : e);
@@ -179,6 +275,11 @@ if (command === 'serve') {
     console.error(e instanceof Error ? e.message : e);
     process.exit(1);
   });
+} else if (command === 'push') {
+  pushCommand().catch((e: unknown) => {
+    console.error(e instanceof Error ? e.message : e);
+    process.exit(1);
+  });
 } else if (command === 'grade') {
   gradeCommand().catch((e: unknown) => {
     console.error(e instanceof Error ? e.message : e);
@@ -186,7 +287,7 @@ if (command === 'serve') {
   });
 } else {
   console.error(
-    'Usage: introspect serve | open | rotate-token | doctor | judge-login | import [--agent <agent> --path <folder>] | grade --session <id> | --since <7d> | --all [--policy] | improve [--now] [--since 24h] | scan',
+    'Usage: introspect serve | open | rotate-token | intake-token create|list|revoke | doctor | judge-login | import [--agent <agent> --path <folder>] | grade --session <id> | --since <7d> | --all [--policy] | improve [--now] [--since 24h] | scan | push --server <url> [--redact] [--since 7d] [--dir <agent>=<folder>] [--dry-run]',
   );
   process.exit(1);
 }

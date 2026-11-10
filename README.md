@@ -76,6 +76,34 @@ Run it in the stack with `docker compose exec introspect introspect improve --no
 - The improver's calls are on the same budget ledger as grading; `GET /v1/budget` reports its share in `improver`.
 - `INTROSPECT_IMPROVER=fake` (environment only) swaps in a deterministic improver for tests and demos.
 
+## Sharing sessions
+
+Other people can push their sessions to your server through a second port, the intake (7318, loopback until you set `INTROSPECT_INTAKE_BIND=0.0.0.0`).
+Each person gets a token: `docker compose exec introspect introspect intake-token create alice --expires 90d`.
+They push with `introspect push --redact` (the session is redacted on their computer, with their own patterns, and again on the server), or send a raw log with `curl`:
+
+```sh
+gzip -c ~/.claude/projects/my-proj/1234.jsonl | curl -fsS -X PUT \
+  -H "Authorization: Bearer $INTROSPECT_PUSH_TOKEN" \
+  -H "Content-Type: application/x-ndjson" -H "Content-Encoding: gzip" \
+  --data-binary @- "https://introspect.example.com/v1/intake/logs/claude_code/my-proj/1234.jsonl"
+```
+
+A raw push sends unredacted logs, and the server keeps the file.
+Put TLS and rate limiting in front of the intake port before you expose it.
+Limits: 64 MB per upload (`INTROSPECT_INTAKE_MAX_MB`, also for S3 objects) and 2048 MB of raw logs per person (`INTROSPECT_INTAKE_QUOTA_MB`).
+Revoking the token is what stops a person.
+Setup, cron, errors: [Sharing sessions](docs/manual/20-sharing-sessions.md).
+Contract: [docs/api/intake-openapi.json](docs/api/intake-openapi.json); decision: ADR-0012.
+
+## S3 sources
+
+Settings > Sources > **+ Add S3 bucket** reads session logs from a bucket.
+Credentials come from `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` and `AWS_REGION` in `.env`; Introspect never stores them.
+It copies the logs to `<data>/s3/<source id>` once a minute and imports them like a folder.
+A file deleted in the bucket stays in the copy.
+The endpoint must use https unless it is on your computer (`INTROSPECT_S3_ALLOW_HTTP=1` allows plain http).
+
 ## Security notes
 
 - **Sign-in**: `make open` prints a one-time link; the browser keeps an HttpOnly, SameSite=Strict cookie for 30 days.
@@ -93,6 +121,8 @@ Run it in the stack with `docker compose exec introspect introspect improve --no
 - **Redaction**: traces are redacted before they are stored, and again whenever the rules change (`REDACTION_VERSION`; older sessions are re-imported).
   Tool inputs are redacted as decoded values, not as JSON text.
   Retention removes payloads, the session title and the judge's reasons of sessions older than `retention.days`, except pinned and reference sessions; SQLite runs with `secure_delete`.
+- **Intake**: the intake port accepts uploads only, with per-person tokens (stored as hashes); the sign-in token does not work there.
+  Raw pushes are stored unredacted under `<data>/intake` (0700/0600), so use TLS in front and prefer `--redact`.
 - **Native install**: the data directory is `0700`, and the database, WAL and SHM files are `0600`.
 - **Improver proposals**: files under `skills/`, `agents/` and `commands/` must be Markdown, and their frontmatter may only hold descriptive keys (`name`, `description`, `argument-hint`, ...).
   Keys such as `hooks`, `allowed-tools`, `tools`, `mcpServers`, `permissionMode` or `model`, and removing `disallowedTools`, are refused unless the repository sets `allowExecutable`; then they are accepted with a warning.

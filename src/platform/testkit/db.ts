@@ -40,16 +40,20 @@ export const sqliteTestDb: TestDbFactory = async () => {
   };
 };
 
-/** A private schema per test keeps parallel test files from seeing each other's rows. */
+/**
+ * A private database per test. A schema per test is not enough: Kysely's migrator and `introspection`
+ * look at every schema of the database, so one process dropping its schema made another's migration
+ * fail with 3F000 "schema does not exist".
+ */
 export const postgresTestDb: TestDbFactory = async () => {
   const base = process.env.INTROSPECT_TEST_DATABASE_URL;
   if (!base) throw new Error('INTROSPECT_TEST_DATABASE_URL is not set; run via `make test-pg`');
-  const schema = `t_${randomUUID().replaceAll('-', '')}`;
+  const name = `t_${randomUUID().replaceAll('-', '')}`;
   const admin = new pg.Client({ connectionString: base });
   await admin.connect();
-  await admin.query(`create schema ${schema}`);
+  await admin.query(`create database ${name}`);
   const url = new URL(base);
-  url.searchParams.set('options', `-c search_path=${schema}`);
+  url.pathname = `/${name}`;
   const handles: DbHandle[] = [];
   const open = (): DbHandle => {
     const h = openDatabase(url.toString());
@@ -65,8 +69,25 @@ export const postgresTestDb: TestDbFactory = async () => {
     open,
     destroy: async () => {
       await Promise.all(handles.map((h) => h.close()));
-      await admin.query(`drop schema ${schema} cascade`);
+      await dropWhenIdle(admin, name);
       await admin.end();
     },
   };
 };
+
+/**
+ * `with (force)` would kill backends whose client is still closing, which surfaces as an unhandled 57P01
+ * pool error in the test run. A plain drop fails with 55006 until the closed connections have gone; retry.
+ */
+async function dropWhenIdle(admin: pg.Client, name: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await admin.query(`drop database ${name}`);
+      return;
+    } catch (e) {
+      const inUse = (e as { code?: string }).code === '55006';
+      if (!inUse || attempt >= 100) throw e;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }
+}

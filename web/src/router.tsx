@@ -61,6 +61,7 @@ const sessions = createRoute({
   validateSearch: (s: Record<string, unknown>): SessionsSearch => ({
     q: typeof s.q === 'string' && s.q ? s.q : undefined,
     agent: AGENTS.find((a) => a === s.agent),
+    person: typeof s.person === 'string' && s.person ? s.person : undefined,
     result: RESULTS.find((r) => r === s.result),
     range: SESSION_RANGES.find((r) => r === s.range),
   }),

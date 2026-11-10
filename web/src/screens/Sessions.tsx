@@ -1,6 +1,13 @@
 import { Link } from '@tanstack/react-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useBudget, useGradeJob, useImport, useSessions, useTrendSummary } from '../api/queries.js';
+import {
+  useBudget,
+  useGradeJob,
+  useImport,
+  usePeople,
+  useSessions,
+  useTrendSummary,
+} from '../api/queries.js';
 import type { Agent, SessionResultFilter, SessionSummary, TrendSummary } from '../api/types.js';
 import {
   Button,
@@ -96,11 +103,13 @@ const RUBRIC_SHORT: Record<string, string> = {
 function SessionRow({
   s,
   rubricCols,
+  showPerson,
   checked,
   onToggle,
 }: {
   s: SessionSummary;
   rubricCols: string[];
+  showPerson: boolean;
   checked: boolean;
   onToggle: () => void;
 }) {
@@ -125,6 +134,13 @@ function SessionRow({
           {titleText(s.title)}
         </Link>
       </td>
+      {showPerson ? (
+        <td>
+          <span className="block truncate" title={s.person.name}>
+            {s.person.name}
+          </span>
+        </td>
+      ) : null}
       <td>{AGENT_LABEL[s.agent]}</td>
       <td>
         <span className="block truncate" title={s.repo ?? undefined}>
@@ -162,6 +178,7 @@ function SessionRow({
 export interface SessionsSearch {
   q?: string | undefined;
   agent?: Agent | undefined;
+  person?: string | undefined;
   result?: SessionResultFilter | undefined;
   range?: SessionRange | undefined;
 }
@@ -224,7 +241,14 @@ export function Sessions({
       range === 'all' ? undefined : new Date(Date.now() - RANGE_DAYS[range] * DAY_MS).toISOString(),
     [range],
   );
-  const sessions = useSessions({ q: search.q, agent: search.agent, result, since });
+  const people = usePeople();
+  const sessions = useSessions({
+    q: search.q,
+    agent: search.agent,
+    person: search.person,
+    result,
+    since,
+  });
 
   if (summary.isPending) return <Loading label="Loading sessions" />;
   if (summary.isError)
@@ -234,7 +258,11 @@ export function Sessions({
     return <Loading label="Loading sessions" />;
 
   const s = summary.data;
-  const filtered = Boolean(search.q ?? search.agent ?? search.result ?? search.range);
+  const filtered = Boolean(
+    search.q ?? search.agent ?? search.person ?? search.result ?? search.range,
+  );
+  // Only worth a column and a filter once sessions of more than one person exist.
+  const showPerson = (people.data?.length ?? 0) > 1;
   const items = sessions.data?.pages.flatMap((p) => p.items) ?? [];
   const names = s.rubrics.map((r) => r.name);
   const rubricCols = names.length ? names : ['Rubrics'];
@@ -364,6 +392,24 @@ export function Sessions({
                 <option value="codex">Codex</option>
               </select>
             </Field>
+            {showPerson ? (
+              <Field label="Person">
+                <select
+                  className={FIELD}
+                  value={search.person ?? ''}
+                  onChange={(e) => {
+                    onSearch({ person: e.target.value || undefined });
+                  }}
+                >
+                  <option value="">Everyone</option>
+                  {people.data?.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            ) : null}
             <Field label="Period">
               <select
                 className={FIELD}
@@ -430,14 +476,16 @@ export function Sessions({
               ) : null}
               <Card className="overflow-x-auto">
                 <table
-                  className={`w-full table-fixed border-collapse ${names.length ? 'min-w-[58.5rem]' : 'min-w-[42.5rem]'}`}
+                  className={`w-full table-fixed border-collapse ${names.length ? (showPerson ? 'min-w-[62.25rem]' : 'min-w-[58.5rem]') : showPerson ? 'min-w-[46.5rem]' : 'min-w-[42.5rem]'}`}
                 >
                   <caption className="sr-only">Sessions</caption>
                   <colgroup>
                     <col className="w-10" />
                     <col />
+                    {/* Person and a narrower Repo still fit a 1280px window without scrolling. */}
+                    {showPerson ? <col className="w-20" /> : null}
                     <col className="w-[6.5rem]" />
-                    <col className="w-28" />
+                    <col className={showPerson ? 'w-24' : 'w-28'} />
                     <col className="w-[5.75rem]" />
                     <col className="w-[5.75rem]" />
                     {rubricCols.map((n) => (
@@ -456,6 +504,7 @@ export function Sessions({
                         />
                       </th>
                       <th scope="col">Session</th>
+                      {showPerson ? <th scope="col">Person</th> : null}
                       <th scope="col">Agent</th>
                       <th scope="col">Repo</th>
                       <th scope="col">When</th>
@@ -475,6 +524,7 @@ export function Sessions({
                         key={row.id}
                         s={row}
                         rubricCols={rubricCols}
+                        showPerson={showPerson}
                         checked={selected.has(row.id)}
                         onToggle={() => {
                           toggle(row.id);

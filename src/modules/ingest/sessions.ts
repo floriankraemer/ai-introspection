@@ -23,6 +23,8 @@ export type EventFilter = 'all' | 'errors' | 'evidence';
 export interface SessionQuery {
   q?: string | undefined;
   agent?: Agent | undefined;
+  /** Only sessions of this person (`app_user.id`). */
+  person?: string | undefined;
   result?: SessionResultFilter | undefined;
   cursor?: string | undefined;
   /** Only sessions that started at or after this instant (ISO). */
@@ -30,11 +32,22 @@ export interface SessionQuery {
   limit: number;
 }
 
+export interface Person {
+  id: string;
+  name: string;
+}
+
+export interface PersonWithSessions extends Person {
+  sessions: number;
+}
+
 export interface SessionSummary {
   id: string;
   title: string;
   agent: Agent;
   repo: string | null;
+  /** Who the session belongs to; the local admin for sessions read from this machine. */
+  person: Person;
   startedAt: string;
   toolErrors: number;
   /** `tokensIn` is fresh input only; cache reads and writes are separate. */
@@ -53,6 +66,7 @@ export interface SessionDetail {
   agent: Agent;
   repo: string | null;
   branch: string | null;
+  person: Person;
   startedAt: string;
   durationS: number;
   tokensIn: number;
@@ -138,7 +152,10 @@ export function createSessionQueries(db: Db, workspaceId: string) {
       let qb = db
         .selectFrom('session')
         .leftJoin('signal', 'signal.session_id', 'session.id')
+        .innerJoin('app_user', 'app_user.id', 'session.user_id')
         .select([
+          'app_user.display_name',
+          'session.user_id',
           'session.id',
           'session.title',
           'session.agent',
@@ -157,6 +174,7 @@ export function createSessionQueries(db: Db, workspaceId: string) {
         ])
         .where('session.workspace_id', '=', workspaceId);
       if (q.agent) qb = qb.where('session.agent', '=', q.agent);
+      if (q.person) qb = qb.where('session.user_id', '=', q.person);
       if (q.since) qb = qb.where('session.started_at', '>=', new Date(q.since).toISOString());
       if (q.result === 'failed_any') qb = qb.where(FAILED_ANY);
       if (q.result === 'not_graded') qb = qb.where(NOT_GRADED);
@@ -191,6 +209,7 @@ export function createSessionQueries(db: Db, workspaceId: string) {
           title: r.title ?? 'Untitled session',
           agent: r.agent as Agent,
           repo: r.repo,
+          person: { id: r.user_id, name: r.display_name },
           startedAt: r.started_at ?? r.created_at,
           toolErrors: r.failed_tool_calls ?? 0,
           tokensIn: r.tokens_in,
@@ -205,12 +224,28 @@ export function createSessionQueries(db: Db, workspaceId: string) {
       };
     },
 
+    /** Everyone who owns at least one session, most sessions first. */
+    async people(): Promise<PersonWithSessions[]> {
+      const rows = await db
+        .selectFrom('session')
+        .innerJoin('app_user', 'app_user.id', 'session.user_id')
+        .select(['app_user.id', 'app_user.display_name', sql<number>`count(*)`.as('n')])
+        .where('session.workspace_id', '=', workspaceId)
+        .groupBy(['app_user.id', 'app_user.display_name'])
+        .orderBy('n', 'desc')
+        .orderBy('app_user.display_name')
+        .execute();
+      return rows.map((r) => ({ id: r.id, name: r.display_name, sessions: r.n }));
+    },
+
     async get(id: string): Promise<SessionDetail | null> {
       const s = await db
         .selectFrom('session')
-        .selectAll()
-        .where('id', '=', id)
-        .where('workspace_id', '=', workspaceId)
+        .innerJoin('app_user', 'app_user.id', 'session.user_id')
+        .selectAll('session')
+        .select('app_user.display_name')
+        .where('session.id', '=', id)
+        .where('session.workspace_id', '=', workspaceId)
         .executeTakeFirst();
       if (!s) return null;
       const counts = await db
@@ -227,6 +262,7 @@ export function createSessionQueries(db: Db, workspaceId: string) {
         agent: s.agent as Agent,
         repo: s.repo,
         branch: s.branch,
+        person: { id: s.user_id, name: s.display_name },
         startedAt: s.started_at ?? s.created_at,
         durationS: s.duration_s ?? 0,
         tokensIn: s.tokens_in,

@@ -16,6 +16,8 @@ export type JudgeTransport = Settings['judge.transport'];
 export type BudgetMode = Settings['budget.mode'];
 export type Source = Schemas['Source'];
 export type SourceStatus = Source['status'];
+export type S3Remote = NonNullable<Schemas['S3Remote']>;
+export type AddSourceBody = { agent: Agent; path: string } | { agent: Agent; s3: S3Remote };
 export type DetectedSource = Schemas['DetectedSource'];
 export type SkillRepo = Schemas['SkillRepo'];
 export type DetectedSkillRepo = Schemas['DetectedSkillRepo'];
@@ -24,6 +26,8 @@ export type JobStatus = Job['status'];
 export type JudgeTestResult = Json200<paths['/v1/judge/test']['post']>;
 export type TrendSummary = Schemas['TrendSummary'];
 export type RubricRate = TrendSummary['rubrics'][number];
+export type Person = Schemas['Person'];
+export type PersonWithSessions = Schemas['PersonWithSessions'];
 export type SessionSummary = Schemas['SessionSummary'];
 export type SessionGrade = SessionSummary['grades'][number];
 
@@ -58,6 +62,8 @@ export type DoctorCheck = Doctor['checks'][number];
 export interface SessionQuery {
   q?: string | undefined;
   agent?: Agent | undefined;
+  /** A person's id: only that person's sessions. */
+  person?: string | undefined;
   result?: SessionResultFilter | undefined;
   /** ISO instant: only sessions that started at or after it. */
   since?: string | undefined;
@@ -105,7 +111,7 @@ export interface Api {
   testJudge(body: { transport: JudgeTransport; apiKey?: string }): Promise<JudgeTestResult>;
   listSources(): Promise<Source[]>;
   detectSources(): Promise<DetectedSource[]>;
-  addSource(body: { agent: Agent; path: string }): Promise<Source>;
+  addSource(body: AddSourceBody): Promise<Source>;
   listSkillRepos(): Promise<SkillRepo[]>;
   detectSkillRepos(): Promise<DetectedSkillRepo[]>;
   putGlobalSkillRepo(path: string): Promise<SkillRepo>;
@@ -130,6 +136,7 @@ export interface Api {
   addToReferenceSet(sessionId: string): Promise<void>;
   removeFromReferenceSet(sessionId: string): Promise<void>;
   listSessions(query: SessionQuery): Promise<Page<SessionSummary>>;
+  listPeople(): Promise<PersonWithSessions[]>;
   getSession(id: string): Promise<SessionDetail>;
   listEvents(id: string, query: EventQuery): Promise<Page<TraceEvent> & { total: number }>;
   exchangeToken(token: string): Promise<void>;

@@ -118,6 +118,15 @@ Without Docker, run `introspect judge-login`.
 It replaces the real judge with a test judge.
 **Fix:** Remove the variable from `.env` and run `make up`.
 
+### Session intake
+
+This line says whether the intake is on, its port and address, and the number of active tokens.
+
+**Symptom:** Warning "reachable from other machines".
+**Cause:** `INTROSPECT_INTAKE_BIND` is not loopback.
+**Fix:** Put a reverse proxy with TLS in front of port 7318.
+If it is already there, the warning is a reminder.
+
 ### Redaction
 
 **Symptom:** Warning "Redaction is off: new sessions are stored unredacted and are never sent to a judge".
@@ -152,6 +161,35 @@ If the repo seems damaged, run `git fsck` in it.
 **Cause:** A test setting fixes the app clock.
 **Fix:** Remove `INTROSPECT_NOW` from `.env` and run `make up`.
 
+### S3 source: …
+
+**Symptom:** Failing "No AWS credentials: …".
+**Cause:** The container has no AWS credentials.
+**Fix:** Set `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (and `AWS_SESSION_TOKEN` for temporary credentials) in `.env`, then run `make up`.
+`AWS_PROFILE` does not work in Docker, because `~/.aws` is not mounted.
+
+**Symptom:** Failing "Bucket is not reachable: …".
+**Cause:** The bucket name, region or endpoint is wrong, or the credentials may not list and read the bucket.
+**Fix:** Check the bucket, region and endpoint in the Sources card of [Settings](11-screen-settings.md#sources).
+Check that the credentials have `s3:ListBucket` and `s3:GetObject` for the bucket.
+For MinIO and similar storage, set **Endpoint (optional)** and tick **Use path-style addressing**.
+
+**Symptom:** **Add bucket** shows a red "Cannot read s3://…" message.
+**Cause and fix:** The same as above.
+The message includes the error from S3.
+
+**Symptom:** Failing "S3 sync … skipped objects larger than INTROSPECT_INTAKE_MAX_MB".
+**Cause:** An object in the bucket is larger than the limit (default 64 MB).
+**Fix:** Raise `INTROSPECT_INTAKE_MAX_MB` in `.env` and run `make up`.
+
+**Symptom:** **Add bucket** says the endpoint must use https.
+**Cause:** The endpoint starts with `http://` and is not on your own computer.
+**Fix:** Use `https://`, or set `INTROSPECT_S3_ALLOW_HTTP=1` in `.env` for a test server.
+
+**Symptom:** No sessions come from the bucket.
+**Cause:** Introspect copies only files whose path below the prefix has the layout of the agent's logs (`<project>/<session>.jsonl` for Claude Code), and it checks every minute.
+**Fix:** Check the **Prefix (optional)** and the **Agent** of the source, then wait a minute.
+
 ## Common problems
 
 ### Port 7317 is already in use
@@ -169,6 +207,57 @@ Files in your repo belong to `root`.
 **Fix:** Run `make up` instead of `docker compose up`, because it creates the folders as your user.
 Set `UID` and `GID` in `.env`.
 Repair files that already belong to root with `sudo chown -R $(id -u):$(id -g) <folder>`.
+
+### Pushing sessions fails
+
+These answers come from the intake port.
+`introspect push` prints the status and the reason, and `curl -fsS` prints the status.
+The guide is [Sharing sessions](20-sharing-sessions.md).
+
+**Symptom:** 401 Unauthorized.
+**Cause:** The token is wrong, expired or revoked, or it is the sign-in token of the app, which does not work on the intake port.
+**Fix:** Ask the admin for a new token (`introspect intake-token create`), and check `INTROSPECT_PUSH_TOKEN`.
+`introspect intake-token list` shows which tokens are valid.
+
+**Symptom:** 413 Payload too large.
+**Cause:** The file is larger than `INTROSPECT_INTAKE_MAX_MB` (default 64 MB), counted after decompression.
+**Fix:** The admin raises `INTROSPECT_INTAKE_MAX_MB` in `.env` and runs `make up`.
+
+**Symptom:** 507 Insufficient storage.
+**Cause:** You used up your storage quota (`INTROSPECT_INTAKE_QUOTA_MB`, default 2048 MB), or the server disk is nearly full (less than 1 GiB would remain).
+**Fix:** The admin raises the quota, frees disk space, or waits for the retention purge.
+
+**Symptom:** 503 Service unavailable, with `Retry-After`.
+**Cause:** The server parses at most two redacted sessions at once, and both slots are busy.
+**Fix:** Wait the seconds in `Retry-After` (5) and push again.
+
+**Symptom:** 422 with "… is not a claude_code session log path …".
+**Cause:** The path in the address is not the layout of that agent's logs.
+It must be relative to the agent's log folder, end in `.jsonl`, and use only letters, digits, `.`, `_` and `-`.
+**Fix:** Use `<project>/<session>.jsonl` for Claude Code and `YYYY/MM/DD/rollout-….jsonl` for Codex, and the right agent name (`claude_code` or `codex`).
+
+**Symptom:** 409 Conflict ("This session or path cannot be stored; it conflicts with data already on the server").
+**Cause:** The session is read from a raw log file on the server and you pushed a redacted copy, or the session belongs to another person, or the path clashes with a file you uploaded before.
+**Fix:** Push the session the same way as before: raw logs with raw pushes, or `--redact` every time.
+
+**Symptom:** 415 Unsupported media type.
+**Cause:** The `Content-Type` is not `application/x-ndjson` (logs) or `application/json` (sessions), or `Content-Encoding` is neither `gzip` nor empty.
+**Fix:** Use the headers from the `curl` example.
+
+**Symptom:** "Refusing to send session logs over plain http".
+**Cause:** The server address starts with `http://` and is not your own computer.
+**Fix:** Use `https://`.
+Ask the admin to put TLS in front of the intake port.
+Use `--insecure` only on a network you control.
+
+**Symptom:** `introspect push --redact` stops with "Cannot read the custom redaction patterns …".
+**Cause:** Your local Introspect database exists but cannot be read.
+**Fix:** Repair the database, or run without `--redact`.
+The command pushes nothing until it can apply your patterns.
+
+**Symptom:** The connection is refused or times out.
+**Cause:** The intake port is bound to `127.0.0.1`, or a firewall blocks it.
+**Fix:** The admin sets `INTROSPECT_INTAKE_BIND=0.0.0.0` in `.env` and runs `make up`, with TLS in front.
 
 ### The sessions list is empty
 

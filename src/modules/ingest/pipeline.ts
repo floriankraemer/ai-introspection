@@ -20,7 +20,7 @@ import type { Agent, ParsedItem, RawEvent, TokenCounts } from './types.js';
 
 const BATCH_LINES = 1000;
 const BATCH_CHARS = 4 * 1024 * 1024;
-const INSERT_CHUNK = 250;
+export const INSERT_CHUNK = 250;
 const MAX_LINE_BYTES = 16 * 1024 * 1024;
 /** Redaction runs on at most this much of a field, so one giant tool output cannot stall a job. */
 const PRE_REDACT_CHARS = 1024 * 1024;
@@ -98,7 +98,7 @@ type EventRow = Insertable<Schema['event']>;
 
 // One ingest run per file at a time inside this process.
 const locks = new Map<string, Promise<unknown>>();
-async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+export async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const previous = locks.get(key) ?? Promise.resolve();
   const run = previous.then(fn, fn);
   const tail = run.catch(() => undefined);
@@ -156,14 +156,14 @@ function inputPaths(input: string): string[] {
 }
 
 /** Output of this call is redacted whole: a read of a credential file, or a shell command that cats one. */
-function resultIsSensitive(name: string | null, input: string | null): boolean {
+export function resultIsSensitive(name: string | null, input: string | null): boolean {
   if (!name || !input) return false;
   if (FILE_READ_TOOLS.has(name)) return inputPaths(input).some(isSensitivePath);
   return SHELL_TOOLS.has(name) && readsSensitiveFile(input);
 }
 
 /** Replaces the content fields of a write to a credential file; the path stays visible. */
-function redactWrite(
+export function redactWrite(
   name: string | undefined,
   input: string,
   redactWhole: Redactor['redactWhole'],
@@ -180,7 +180,7 @@ function redactWrite(
   }
 }
 
-function titleOf(text: string): string {
+export function titleOf(text: string): string {
   return text.replace(/\s+/g, ' ').trim().slice(0, TITLE_CHARS);
 }
 
@@ -231,7 +231,7 @@ interface OldEvent {
  * repeated line) pair in order. Rows stored before `source_key` existed pair by position only
  * when kind, time and call id agree too. Whatever is left gets a new id.
  */
-function reuseIds(rows: EventRow[], old: readonly OldEvent[]): void {
+export function reuseIds(rows: EventRow[], old: readonly OldEvent[]): void {
   const byKey = new Map<string, OldEvent[]>();
   const legacy = new Map<number, OldEvent>();
   for (const e of old) {
@@ -260,7 +260,11 @@ function reuseIds(rows: EventRow[], old: readonly OldEvent[]): void {
 }
 
 /** A grade whose evidence is no longer all in the session says nothing true any more. */
-async function markStaleGrades(tx: Db, sid: string, eventIds: ReadonlySet<string>): Promise<void> {
+export async function markStaleGrades(
+  tx: Db,
+  sid: string,
+  eventIds: ReadonlySet<string>,
+): Promise<void> {
   const grades = await tx
     .selectFrom('grade')
     .select(['id', 'evidence_event_ids'])
@@ -276,7 +280,7 @@ async function markStaleGrades(tx: Db, sid: string, eventIds: ReadonlySet<string
 
 export async function ingestFile(
   deps: PipelineDeps,
-  source: { id: string; agent: Agent },
+  source: { id: string; agent: Agent; userId: string },
   path: string,
   options: IngestOptions = {},
 ): Promise<IngestFileResult> {
@@ -287,7 +291,7 @@ export async function ingestFile(
 
 async function run(
   deps: PipelineDeps,
-  source: { id: string; agent: Agent },
+  source: { id: string; agent: Agent; userId: string },
   path: string,
   force: boolean,
 ): Promise<IngestFileResult> {
@@ -317,6 +321,23 @@ async function run(
     )
     .executeTakeFirst();
   if (owner) return { status: 'unchanged', sessionId: sid, events: 0, reset: false };
+  // A session without any cursor was written by the client-redacted intake; a file must not touch it.
+  const unowned = await db
+    .selectFrom('session')
+    .select('session.id')
+    .where('session.id', '=', sid)
+    .where((eb) =>
+      eb.not(
+        eb.exists(
+          eb
+            .selectFrom('ingest_cursor')
+            .select('session_id')
+            .whereRef('session_id', '=', 'session.id'),
+        ),
+      ),
+    )
+    .executeTakeFirst();
+  if (unowned) return { status: 'unchanged', sessionId: sid, events: 0, reset: false };
   const cursor = await db
     .selectFrom('ingest_cursor')
     .selectAll()
@@ -605,7 +626,7 @@ async function run(
           .values({
             id: sid,
             workspace_id: workspaceId,
-            user_id: deps.userId,
+            user_id: source.userId,
             agent: source.agent,
             native_id: nativeId,
             created_at: now().toISOString(),

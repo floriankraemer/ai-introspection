@@ -22,7 +22,7 @@ What is sent, and when:
 | Judge reasons, instruction files from the target repo (redacted) and a list of failing sessions | Anthropic, as an improver request | The improver runs |
 | A pull request and a branch | GitHub | You accept a proposal in pull request mode |
 
-Nothing else leaves your machine.
+Nothing else leaves your machine, unless you push sessions to another server (see [Sharing sessions](20-sharing-sessions.md) and the section below).
 Introspect does not send usage data of its own.
 The container's `claude` command runs with telemetry, error reporting and auto-update switched off.
 Network access from the container stays open on purpose, because the judge, the improver and `gh` need it.
@@ -45,6 +45,46 @@ Two more rules protect you:
 - If redaction is off, or the stored session used older rules, Introspect never sends that session to a judge.
   The Sessions screen then shows "redaction is off" or "not redacted with current rules".
 - When Introspect improves its rules, it rebuilds older sessions from their log files.
+
+## Sharing sessions: raw and redacted pushes
+
+The intake lets other people send their sessions to a server (see [Sharing sessions](20-sharing-sessions.md)).
+It is off for the app on port 7317, and listens on a second port, 7318, on `127.0.0.1` until the admin changes `INTROSPECT_INTAKE_BIND`.
+
+> **NOTICE: A raw push sends unredacted logs over the network, and the server stores them.**
+> Hazard: `introspect push` without `--redact`, and the `curl` command, send the log file as it is.
+> The server redacts when it ingests the file, but it keeps the raw file in its data folder (`intake/`, file mode 0600).
+> Consequence: a secret that the patterns miss is in the stored file, and on the network if the connection is not encrypted.
+> To avoid this: push with `--redact`, so the secrets are masked on your computer first, and let the server mask again.
+> The admin must put TLS (`https://`) in front of the intake port before any other computer can reach it.
+> `introspect push` refuses plain `http://` to another computer.
+
+Facts to know:
+
+- With `--redact`, the server still applies its own rules and your admin's extra patterns to what it receives.
+  Your computer applies the default rules and your own extra patterns.
+  If your own patterns cannot be read, nothing is pushed.
+- A token belongs to one person.
+  Whoever holds it can push sessions as that person, so keep it like a password.
+  Pass it as `INTROSPECT_PUSH_TOKEN`, not as `--token`.
+  The server shows a token only once and stores only a hash.
+- The admin revokes a token with `introspect intake-token revoke`.
+  This is the control that stops a person.
+  Disabling the person's source in Settings does not stop uploads.
+  Give tokens an expiry with `--expires`.
+- An intake token works only on the intake port.
+  The admin token of the app does not work there.
+- The server limits upload size and each person's stored raw logs.
+  It does not limit how often a token pushes, so put rate limiting in the reverse proxy.
+- Intake and S3 copies older than the retention period are deleted, except those of pinned sessions.
+- `introspect push` never follows a redirect, so your token and logs go only to the address you gave.
+- The intake port accepts uploads only.
+  It serves no screens and none of the app's settings or git functions.
+
+S3 sources read logs from a bucket with the credentials in the server's environment.
+Introspect never stores them.
+It copies the log files to its data folder, so the bucket's logs also exist on the server disk.
+The S3 endpoint must use https, unless it is on your own computer.
 
 ## The container has its own Claude login
 

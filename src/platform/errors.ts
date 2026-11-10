@@ -36,3 +36,19 @@ export class NotFoundError extends Error {
     this.name = 'NotFoundError';
   }
 }
+
+/** A request body is larger than the configured limit (HTTP 413). */
+export class PayloadTooLargeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PayloadTooLargeError';
+  }
+}
+
+/** The server has no room to store the request: the disk is nearly full or a storage quota is used up (HTTP 507). */
+export class InsufficientStorageError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InsufficientStorageError';
+  }
+}

@@ -1,6 +1,7 @@
 import {
   appendFileSync,
   copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -15,13 +16,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ConflictError } from '../../platform/errors.js';
-import { newId } from '../../platform/db/ids.js';
+import { newId, sessionId } from '../../platform/db/ids.js';
 import { fromJson } from '../../platform/db/json.js';
 import { LOCAL_USER_ID, LOCAL_WORKSPACE_ID } from '../../platform/identity/index.js';
 import { createJobQueue } from '../../platform/jobs/queue.js';
 import type { TestDb, TestDbFactory } from '../../platform/testkit/db.js';
 import { createSecretStore, createSettings } from '../settings/index.js';
-import { createIngest, REDACTION_VERSION, type IngestService } from './index.js';
+import { createIngest, REDACTION_VERSION, type IngestService, type S3Api } from './index.js';
+import { fakeS3Api } from '../../platform/testkit/s3.js';
 import {
   CLAUDE_SESSION_ID,
   CLAUDE_TOKENS,
@@ -32,6 +34,7 @@ import {
   writeFixtureSources,
 } from '../../platform/testkit/agent-fixtures.js';
 
+const DAY_MS = 86_400_000;
 const TABLES = ['session', 'event', 'signal', 'ingest_cursor', 'source', 'setting', 'job'] as const;
 
 export function ingestSuite(name: string, make: TestDbFactory): void {
@@ -40,6 +43,7 @@ export function ingestSuite(name: string, make: TestDbFactory): void {
     let dir: string;
     let ingest: IngestService;
     let sources: { claude: string; codex: string; claudeFile: string };
+    let s3Api: S3Api = fakeS3Api({}).api;
 
     const build = (): IngestService => {
       const settings = createSettings(
@@ -55,6 +59,7 @@ export function ingestSuite(name: string, make: TestDbFactory): void {
         settings,
         queue: createJobQueue(t.handle),
         pollMode: false,
+        s3Api: () => s3Api,
       });
     };
     const count = async (table: 'session' | 'event'): Promise<number> =>
@@ -872,6 +877,238 @@ export function ingestSuite(name: string, make: TestDbFactory): void {
         expect(after.every((e) => e.input === null && e.output === null)).toBe(true);
         expect(after.every((e) => e.payload_purged_at !== null)).toBe(true);
       });
+    });
+
+    it('stores a session under the user of the source that found it', async () => {
+      const { db } = t.handle;
+      const other = newId();
+      await db
+        .insertInto('app_user')
+        .values({
+          id: other,
+          workspace_id: LOCAL_WORKSPACE_ID,
+          display_name: 'Other',
+          share_sessions: true,
+          created_at: new Date().toISOString(),
+        })
+        .execute();
+      await db.updateTable('source').set({ user_id: other }).where('agent', '=', 'codex').execute();
+      await importAll();
+      const users = await db.selectFrom('session').select(['agent', 'user_id']).execute();
+      expect(users.find((u) => u.agent === 'codex')?.user_id).toBe(other);
+      expect(users.find((u) => u.agent === 'claude_code')?.user_id).toBe(LOCAL_USER_ID);
+
+      const ada = { id: other, name: 'Other' };
+      const you = { id: LOCAL_USER_ID, name: 'You' };
+      const { items } = await ingest.sessions.list({ limit: 10 });
+      expect(items.find((s) => s.agent === 'codex')?.person).toEqual(ada);
+      expect(items.find((s) => s.agent === 'claude_code')?.person).toEqual(you);
+      const theirs = await ingest.sessions.list({ limit: 10, person: other });
+      expect(theirs.items.map((s) => s.agent)).toEqual(['codex']);
+      expect((await ingest.sessions.get(theirs.items[0]?.id ?? ''))?.person).toEqual(ada);
+      expect(await ingest.sessions.people()).toEqual([
+        { ...ada, sessions: 1 },
+        { ...you, sessions: 1 },
+      ]); // equal counts: by name
+      expect(await ingest.sessions.list({ limit: 10, person: newId() })).toEqual({
+        items: [],
+        nextCursor: null,
+      });
+    });
+
+    it('names who pushes to an intake source, and no one for the other kinds', async () => {
+      const { db } = t.handle;
+      const other = newId();
+      await db
+        .insertInto('app_user')
+        .values({
+          id: other,
+          workspace_id: LOCAL_WORKSPACE_ID,
+          display_name: 'Ada',
+          share_sessions: true,
+          created_at: new Date().toISOString(),
+        })
+        .execute();
+      const folder = join(dir, 'intake-ada');
+      mkdirSync(folder);
+      const added = await ingest.sources.add('claude_code', folder, {
+        kind: 'intake',
+        userId: other,
+      });
+      expect(added.person).toEqual({ id: other, name: 'Ada' });
+      const listed = await ingest.sources.list();
+      expect(listed.find((s) => s.id === added.id)?.person).toEqual({ id: other, name: 'Ada' });
+      expect(listed.filter((s) => s.kind === 'folder').every((s) => s.person === null)).toBe(true);
+    });
+
+    it('leaves a session without ingest cursor alone and finalizes it once idle', async () => {
+      await importAll();
+      const { db } = t.handle;
+      const id = await sessionIdOf('claude_code');
+      const before = await ingest.sessions.get(id);
+      await db.deleteFrom('ingest_cursor').where('session_id', '=', id).execute();
+      await db
+        .updateTable('session')
+        .set({ status: 'active', ended_at: '2020-01-01T00:00:00.000Z' })
+        .where('id', '=', id)
+        .execute();
+      const eventsBefore = await count('event');
+      await importAll();
+      expect(await count('event')).toBe(eventsBefore);
+      expect(
+        await db
+          .selectFrom('ingest_cursor')
+          .select('session_id')
+          .where('session_id', '=', id)
+          .execute(),
+      ).toEqual([]);
+      const row = await db
+        .selectFrom('session')
+        .select('status')
+        .where('id', '=', id)
+        .executeTakeFirstOrThrow();
+      expect(row.status).not.toBe('active');
+      expect(before).not.toBeNull();
+    });
+
+    it('adds an S3 source, caches it under the data folder, syncs and ingests it', async () => {
+      const lines = `${claudeSessionLines().join('\n')}\n`;
+      s3Api = fakeS3Api({
+        'logs/-work-s3/s3-session.jsonl': {
+          body: lines,
+          lastModified: new Date(Date.now() - DAY_MS),
+        },
+      }).api;
+      const remote = { bucket: 'logs-bucket', prefix: 'logs' };
+      const added = await ingest.sources.addS3('claude_code', remote);
+      // The first sync is queued right away, not left to the next scheduled one.
+      const syncs = await t.handle.db
+        .selectFrom('job')
+        .select('id')
+        .where('kind', '=', 's3_sync')
+        .execute();
+      expect(syncs).toHaveLength(1);
+      expect(added).toMatchObject({
+        kind: 's3',
+        remote: { bucket: 'logs-bucket', prefix: 'logs/' },
+      });
+      expect(added.path.startsWith(realpathSync(join(dir, 'data', 's3')))).toBe(true);
+      expect((await ingest.sources.addS3('claude_code', remote)).id).toBe(added.id);
+
+      expect(await ingest.syncS3()).toBe(1);
+      expect(readFileSync(join(added.path, '-work-s3', 's3-session.jsonl'), 'utf8')).toBe(lines);
+      expect(await ingest.syncS3()).toBe(0);
+      const queued = await t.handle.db
+        .selectFrom('job')
+        .select('id')
+        .where('kind', '=', 'ingest_file')
+        .execute();
+      expect(queued.length).toBeGreaterThan(0);
+    });
+
+    it('runs one S3 sync at a time, so syncs started together fetch an object once', async () => {
+      const fake = fakeS3Api({
+        'logs/-p/s.jsonl': {
+          body: `${claudeSessionLines().join('\n')}\n`,
+          lastModified: new Date(Date.now() - DAY_MS),
+        },
+      });
+      s3Api = {
+        ...fake.api,
+        get: async (key: string) => {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return fake.api.get(key);
+        },
+      };
+      await ingest.sources.addS3('claude_code', { bucket: 'b', prefix: 'logs' });
+      const [a, b] = await Promise.all([ingest.syncS3(), ingest.syncS3()]);
+      expect(a + b).toBe(1);
+      expect(fake.gets).toHaveLength(1);
+    });
+
+    it('history import fetches S3 sources first', async () => {
+      s3Api = fakeS3Api({
+        'logs/-work-s3/s3-session.jsonl': {
+          body: `${claudeSessionLines().join('\n')}\n`,
+          lastModified: new Date(Date.now() - DAY_MS),
+        },
+      }).api;
+      await ingest.sources.addS3('claude_code', { bucket: 'b', prefix: 'logs' });
+      await importAll();
+      const s3Session = await ingest.sessions.get(sessionId('claude_code', 's3-session'));
+      expect(s3Session).not.toBeNull();
+    });
+
+    it('refuses a plain-http S3 endpoint on another host, but allows this machine', async () => {
+      await expect(
+        ingest.sources.addS3('claude_code', {
+          bucket: 'b',
+          prefix: '',
+          endpoint: 'http://minio.example:9000',
+        }),
+      ).rejects.toThrow(/https/);
+      const local = await ingest.sources.addS3('claude_code', {
+        bucket: 'b',
+        prefix: '',
+        endpoint: 'http://127.0.0.1:9000',
+      });
+      expect(local.kind).toBe('s3');
+    });
+
+    it('purges intake and S3 copies past retention, keeps pinned sessions’ files, and does not fetch them again', async () => {
+      const db = t.handle.db;
+      const monthAgo = new Date(Date.now() - 30 * DAY_MS);
+      const lines = `${claudeSessionLines().join('\n')}\n`;
+      s3Api = fakeS3Api({
+        [`logs/-p/${CLAUDE_SESSION_ID}.jsonl`]: { body: lines, lastModified: monthAgo },
+        'logs/-p/other-session.jsonl': { body: lines, lastModified: monthAgo },
+      }).api;
+      const s3 = await ingest.sources.addS3('claude_code', { bucket: 'b', prefix: 'logs' });
+      expect(await ingest.syncS3()).toBe(2);
+      for (const j of await db
+        .selectFrom('job')
+        .select('payload')
+        .where('kind', '=', 'ingest_file')
+        .execute())
+        await ingest.handlers.ingest_file?.run({ payload: fromJson(j.payload) } as never);
+      expect(await ingest.pinSession(sessionId('claude_code', CLAUDE_SESSION_ID))).toBe(true);
+
+      const data = realpathSync(join(dir, 'data'));
+      const intakeOld = join(data, 'intake', 'u1', 'claude_code', '-p', 'old.jsonl');
+      const intakeFresh = join(data, 'intake', 'u1', 'claude_code', '-p', 'fresh.jsonl');
+      const stalePart = join(data, 'intake', '.tmp', 'stale.part');
+      const freshPart = join(data, 'intake', '.tmp', 'fresh.part');
+      mkdirSync(join(data, 'intake', 'u1', 'claude_code', '-p'), { recursive: true });
+      mkdirSync(join(data, 'intake', '.tmp'), { recursive: true });
+      for (const f of [intakeOld, intakeFresh, stalePart, freshPart]) writeFileSync(f, 'x\n');
+      utimesSync(intakeOld, monthAgo, monthAgo);
+      const twoHoursAgo = new Date(Date.now() - 2 * 3600_000);
+      utimesSync(stalePart, twoHoursAgo, twoHoursAgo);
+      // The user's own log folders are never touched.
+      utimesSync(sources.claudeFile, monthAgo, monthAgo);
+
+      await createSettings(db, LOCAL_WORKSPACE_ID, createSecretStore(join(dir, 'data'))).update({
+        'retention.days': 7,
+      });
+      await ingest.handlers.purge_payloads?.run({} as never);
+
+      const pinned = join(s3.path, '-p', `${CLAUDE_SESSION_ID}.jsonl`);
+      const other = join(s3.path, '-p', 'other-session.jsonl');
+      expect([pinned, intakeFresh, freshPart, sources.claudeFile].filter(existsSync)).toHaveLength(
+        4,
+      );
+      expect([other, intakeOld, stalePart].filter(existsSync)).toEqual([]);
+      // Past the retention window: the next sync leaves the purged object in the bucket.
+      expect(await ingest.syncS3()).toBe(0);
+      expect(existsSync(other)).toBe(false);
+    });
+
+    it('refuses an S3 source whose bucket cannot be listed, with the AWS message', async () => {
+      s3Api = fakeS3Api({}, { failWith: 'Access Denied' }).api;
+      await expect(
+        ingest.sources.addS3('claude_code', { bucket: 'nope', prefix: '' }),
+      ).rejects.toThrow(/Access Denied/);
+      expect((await ingest.sources.list()).filter((s) => s.kind === 's3')).toEqual([]);
     });
 
     it('registers a source once and rejects missing folders', async () => {

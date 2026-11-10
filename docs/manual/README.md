@@ -40,6 +40,10 @@ One page per screen:
 18. [Command reference](18-command-reference.md): `make` targets and the `introspect` command.
 19. [Glossary](19-glossary.md)
 
+## Sharing
+
+20. [Sharing sessions](20-sharing-sessions.md): let other people push their sessions to your server, and read logs from S3.
+
 ## For people who maintain this manual
 
 [How to extend the manual](CONTRIBUTING.md) explains how to add a page, how to add a screenshot, and how to regenerate all screenshots with `make manual-screenshots`.

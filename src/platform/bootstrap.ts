@@ -7,7 +7,13 @@ import {
   createSkillRepos,
   parseSince,
 } from '../modules/improvement/index.js';
-import { createIngest, createRedactor, loadOrCreateRedactionKey } from '../modules/ingest/index.js';
+import {
+  createIngest,
+  createRedactor,
+  diagnoseS3,
+  loadOrCreateRedactionKey,
+  type SourceDto,
+} from '../modules/ingest/index.js';
 import { createRubrics } from '../modules/rubrics/index.js';
 import { createSecretStore, createSettings } from '../modules/settings/index.js';
 import { createTrends, enqueueTrendsScan, TRENDS_SCAN_JOB } from '../modules/trends/index.js';
@@ -18,8 +24,10 @@ import { openDatabase } from './db/connection.js';
 import { migrateToLatest } from './db/migrate.js';
 import { runDoctor, runProgram, type DoctorReport } from './doctor/index.js';
 import { createApp } from './http/app.js';
+import { createIntakeApp } from './http/intake-app.js';
 import { tokenReader } from './http/auth.js';
 import { ensureLocalIdentity, LOCAL_USER_ID, LOCAL_WORKSPACE_ID } from './identity/index.js';
+import { countActiveIntakeTokens } from './identity/intake-tokens.js';
 import { createJobQueue } from './jobs/queue.js';
 import { createScheduler } from './jobs/scheduler.js';
 import { createWorker } from './jobs/worker.js';
@@ -141,7 +149,7 @@ async function doctorReport(
   config: Config,
   handle: ReturnType<typeof openDatabase>,
   settings: ReturnType<typeof createSettings>,
-  sources: { list(): Promise<{ agent: string; path: string; enabled: boolean }[]> },
+  sources: { list(): Promise<SourceDto[]> },
   skillRepos: ReturnType<typeof createSkillRepos>,
   parts: Pick<GradingParts, 'rubrics' | 'judges'>,
 ): Promise<DoctorReport> {
@@ -150,6 +158,7 @@ async function doctorReport(
   let sourceList: Awaited<ReturnType<typeof sources.list>> = [];
   let rubricProblems: string[] = [];
   let scanWarnings: { path: string; warning: string }[] = [];
+  let activeTokens = 0;
   try {
     await handle.db.selectFrom('setting').select('key').limit(1).execute();
     repos = await skillRepos.list();
@@ -158,6 +167,7 @@ async function doctorReport(
     );
     sourceList = await sources.list();
     rubricProblems = (await parts.rubrics.list()).problems.map((p) => `${p.name}: ${p.error}`);
+    activeTokens = await countActiveIntakeTokens(handle.db, appClock(config)());
   } catch (e) {
     dbError = e instanceof Error ? e.message : String(e);
   }
@@ -170,6 +180,7 @@ async function doctorReport(
     redactionEnabled: current?.['redaction.enabled'] ?? true,
     db: dbError === undefined ? {} : { error: dbError },
     sources: sourceList,
+    diagnoseS3,
     repos,
     scanWarnings,
     rubricProblems,
@@ -183,6 +194,7 @@ async function doctorReport(
         isolationProblem: status?.isolationProblem ?? null,
       },
     },
+    intake: config.intake && { ...config.intake, activeTokens },
     env: process.env,
     uid: process.getuid?.(),
     run: runProgram,
@@ -204,6 +216,8 @@ export async function runDoctorCommand(config: Config): Promise<DoctorReport> {
       settings,
       queue,
       pollMode: config.watchPoll,
+      logMaxBytes: config.logMaxBytes,
+      s3AllowHttp: config.s3AllowHttp,
       now: appClock(config),
     });
     const skillRepos = createSkillRepos(handle.db, LOCAL_WORKSPACE_ID);
@@ -242,6 +256,8 @@ export async function startServer(config: Config): Promise<RunningServer> {
     settings,
     queue,
     pollMode: config.watchPoll,
+    logMaxBytes: config.logMaxBytes,
+    s3AllowHttp: config.s3AllowHttp,
   });
   const skillRepos = createSkillRepos(handle.db, LOCAL_WORKSPACE_ID);
   const { rubrics, judges, grading } = buildGrading(
@@ -325,6 +341,25 @@ export async function startServer(config: Config): Promise<RunningServer> {
   const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host }, (info) => {
     console.log(`introspect listening on http://${info.address}:${String(info.port)}`);
   });
+  const servers = [server];
+  if (config.intake) {
+    const intakeApp = createIntakeApp({
+      db: handle.db,
+      workspaceId: LOCAL_WORKSPACE_ID,
+      intake: ingest.intake,
+      maxBytes: config.intake.maxBytes,
+      quotaBytes: config.intake.quotaBytes,
+      now: appClock(config),
+    });
+    servers.push(
+      serve(
+        { fetch: intakeApp.fetch, port: config.intake.port, hostname: config.intake.host },
+        (info) => {
+          console.log(`introspect intake listening on http://${info.address}:${String(info.port)}`);
+        },
+      ),
+    );
+  }
   // A crash can leave worktrees and branches behind; clear them before any job can use them.
   await improvement.sweep().catch((e: unknown) => {
     console.error('improver housekeeping failed', e);
@@ -345,12 +380,17 @@ export async function startServer(config: Config): Promise<RunningServer> {
     async stop() {
       scheduler.stop();
       await ingest.stopWatching();
-      await new Promise<void>((resolve) => {
-        server.close(() => {
-          resolve();
-        });
-        if ('closeIdleConnections' in server) server.closeIdleConnections();
-      });
+      await Promise.all(
+        servers.map(
+          (s) =>
+            new Promise<void>((resolve) => {
+              s.close(() => {
+                resolve();
+              });
+              if ('closeIdleConnections' in s) s.closeIdleConnections();
+            }),
+        ),
+      );
       await worker.stop();
       await handle.close();
     },
@@ -380,6 +420,8 @@ export async function runImportCommand(
       settings,
       queue: createJobQueue(handle, appClock(config)),
       pollMode: config.watchPoll,
+      logMaxBytes: config.logMaxBytes,
+      s3AllowHttp: config.s3AllowHttp,
       now: appClock(config),
     });
     if (folder) await ingest.sources.add(folder.agent, folder.path);
@@ -423,6 +465,8 @@ export async function runGradeCommand(
       settings,
       queue,
       pollMode: config.watchPoll,
+      logMaxBytes: config.logMaxBytes,
+      s3AllowHttp: config.s3AllowHttp,
       now: appClock(config),
     });
     const skillRepos = createSkillRepos(handle.db, LOCAL_WORKSPACE_ID);
@@ -483,6 +527,8 @@ export async function runImproveCommand(
       settings,
       queue,
       pollMode: config.watchPoll,
+      logMaxBytes: config.logMaxBytes,
+      s3AllowHttp: config.s3AllowHttp,
       now: appClock(config),
     });
     const skillRepos = createSkillRepos(handle.db, LOCAL_WORKSPACE_ID);

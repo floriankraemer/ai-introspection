@@ -163,4 +163,26 @@ for (const s of specs) {
   );
 }
 
+// ---- Sessions that do not come from the local folders: pushed with curl and `introspect push`, and
+// read from the MinIO bucket (spec 7). Outside `sources`, so specs 1-6 never see them. ----
+const extraRoot = join(root, '..', 'extra');
+function extra(index: number, title: string, repo: string, dir: string): void {
+  const s: Spec = {
+    index,
+    title,
+    repo,
+    startMs: NOW - DAY - 4 * HOUR - index * 60_000,
+    failedCalls: 0,
+  };
+  write(
+    join(extraRoot, dir, `-work-${repo}`, `${uuid(index)}.jsonl`),
+    claudeLines(s),
+    s.startMs + HOUR,
+  );
+}
+extra(100, 'Pushed with curl', 'alpha', 'curl');
+extra(101, 'Pushed with the CLI', 'beta', 'push/claude');
+extra(102, 'Read from the bucket', 'gamma', 's3/claude');
+extra(103, 'Second bucket session', 'gamma', 's3/claude');
+
 console.log(`Seeded ${String(COUNT + 2)} sessions under ${root}`);

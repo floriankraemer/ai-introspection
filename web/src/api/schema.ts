@@ -572,6 +572,7 @@ export interface paths {
         query?: {
           q?: string;
           agent?: components['schemas']['Agent'];
+          person?: string;
           result?: 'failed_any' | 'all' | 'not_graded';
           cursor?: string;
           since?: string;
@@ -593,6 +594,87 @@ export interface paths {
               items: components['schemas']['SessionSummary'][];
               nextCursor: string | null;
             };
+          };
+        };
+        /** @description Invalid request */
+        400: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Missing or invalid token */
+        401: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Not found */
+        404: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Conflicts with the current state */
+        409: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+        /** @description Well-formed but cannot be applied */
+        422: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/problem+json': components['schemas']['Problem'];
+          };
+        };
+      };
+    };
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/people': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** People who own at least one session, most sessions first */
+    get: {
+      parameters: {
+        query?: never;
+        header?: never;
+        path?: never;
+        cookie?: never;
+      };
+      requestBody?: never;
+      responses: {
+        /** @description The people */
+        200: {
+          headers: {
+            [name: string]: unknown;
+          };
+          content: {
+            'application/json': components['schemas']['PersonWithSessions'][];
           };
         };
         /** @description Invalid request */
@@ -981,7 +1063,7 @@ export interface paths {
       };
     };
     put?: never;
-    /** Register a log folder (idempotent per agent and path) */
+    /** Register a log folder or an S3 bucket (idempotent per agent and location) */
     post: {
       parameters: {
         query?: never;
@@ -991,10 +1073,15 @@ export interface paths {
       };
       requestBody: {
         content: {
-          'application/json': {
-            agent: components['schemas']['Agent'];
-            path: string;
-          };
+          'application/json':
+            | {
+                agent: components['schemas']['Agent'];
+                path: string;
+              }
+            | {
+                agent: components['schemas']['Agent'];
+                s3: components['schemas']['S3Remote'];
+              };
         };
       };
       responses: {
@@ -4327,6 +4414,7 @@ export interface components {
       title: string;
       agent: components['schemas']['Agent'];
       repo: string | null;
+      person: components['schemas']['Person'];
       /** Format: date-time */
       startedAt: string;
       toolErrors: number;
@@ -4343,6 +4431,14 @@ export interface components {
     };
     /** @enum {string} */
     Agent: 'claude_code' | 'codex';
+    Person: {
+      /** Format: uuid */
+      id: string;
+      name: string;
+    };
+    PersonWithSessions: components['schemas']['Person'] & {
+      sessions: number;
+    };
     SessionDetail: {
       /** Format: uuid */
       id: string;
@@ -4350,6 +4446,7 @@ export interface components {
       agent: components['schemas']['Agent'];
       repo: string | null;
       branch: string | null;
+      person: components['schemas']['Person'];
       /** Format: date-time */
       startedAt: string;
       durationS: number;
@@ -4405,10 +4502,27 @@ export interface components {
       id: string;
       agent: components['schemas']['Agent'];
       path: string;
+      /** @enum {string} */
+      kind: 'folder' | 'intake' | 's3';
+      remote: components['schemas']['S3Remote'];
       enabled: boolean;
       /** @enum {string} */
       status: 'watching' | 'polling' | 'disabled' | 'missing';
+      person: {
+        /** Format: uuid */
+        id: string;
+        name: string;
+      } | null;
     };
+    S3Remote: {
+      bucket: string;
+      /** @default  */
+      prefix: string;
+      region?: string;
+      /** Format: uri */
+      endpoint?: string;
+      forcePathStyle?: boolean;
+    } | null;
     DetectedSource: {
       agent: components['schemas']['Agent'];
       path: string;
