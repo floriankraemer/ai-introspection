@@ -1,21 +1,24 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
+import { ApiError } from '../api/client.js';
 import { useApi } from '../api/context.js';
 import {
   invalidateKeys,
   useAddProjectRepo,
   useBudget,
+  useIntakeTokens,
   usePatchSettings,
   usePatchSkillRepo,
   useSettings,
   useSkillRepos,
   useSources,
 } from '../api/queries.js';
-import { formatTokens } from '../lib/format.js';
+import { formatTokens, formatWhen, plural } from '../lib/format.js';
 import type {
   Agent,
   BudgetMode,
+  IntakeToken,
   Settings as SettingsData,
   SkillRepo,
   Source,
@@ -201,14 +204,148 @@ function PatternsSetting({
   );
 }
 
+/** Optional row actions (Disable/Enable, Revoke) and their empty slot share one width, so chips align. */
+const ACTION_W = 'w-[4.5rem]';
 const KIND: Record<Source['kind'], string> = { folder: 'Folder', s3: 'S3', intake: 'Pushed' };
 
 function sourceLocation(s: Source) {
   return s.remote ? `s3://${s.remote.bucket}/${s.remote.prefix}` : s.path;
 }
 
+/** Inline confirmation, same look as the executable-files one. Focus lands on Cancel, the safe choice. */
+function ConfirmBar({
+  label,
+  confirmLabel,
+  onConfirm,
+  onCancel,
+  busy = false,
+  children,
+}: {
+  label: string;
+  confirmLabel: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+  busy?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      role="alertdialog"
+      aria-label={label}
+      className="flex basis-full flex-col gap-2 rounded-lg border border-warn-line bg-warn-bg p-3 text-sm text-ink"
+    >
+      <span>{children}</span>
+      <div className="flex gap-2">
+        <Button variant="primary" disabled={busy} onClick={onConfirm}>
+          {confirmLabel}
+        </Button>
+        <Button autoFocus onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** `onGone` moves focus to the card once the row's focused control disappears (remove, revoke). */
+function SourceRow({ s, onGone }: { s: Source; onGone: () => void }) {
+  const api = useApi();
+  const qc = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+  const removeBtn = useRef<HTMLButtonElement>(null);
+  const toggle = useMutation({
+    mutationFn: () => api.patchSource(s.id, { enabled: !s.enabled }),
+    onSuccess: () => invalidateKeys(qc, ['sources', 'doctor']),
+  });
+  const remove = useMutation({
+    mutationFn: () => api.removeSource(s.id),
+    onSuccess: async () => {
+      await invalidateKeys(qc, ['sources', 'doctor', 'sessions', 'people']);
+      onGone();
+    },
+  });
+  const [text, tone] = STATUS[s.status];
+  const where = sourceLocation(s);
+  const name = s.kind === 'intake' ? `pushed by ${s.person?.name ?? 'someone'}` : where;
+  const closeConfirm = () => {
+    setConfirming(false);
+    // The confirm unmounts with the focused button; hand focus back to the trigger.
+    setTimeout(() => removeBtn.current?.focus());
+  };
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line-soft py-2.5">
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <strong className="flex items-center gap-2 text-sm">
+          {s.agent === 'codex' ? 'Codex' : 'Claude Code'}
+          <Chip>{KIND[s.kind]}</Chip>
+        </strong>
+        {s.kind === 'intake' ? (
+          <span className="text-[13px] text-muted">Pushed by {s.person?.name ?? 'someone'}</span>
+        ) : (
+          <code className="break-all text-muted">{where}</code>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        <Chip tone={tone}>{text}</Chip>
+        {s.kind === 'intake' ? (
+          <span aria-hidden="true" className={ACTION_W} />
+        ) : (
+          <Button
+            variant="small"
+            className={ACTION_W}
+            disabled={toggle.isPending}
+            aria-label={`${s.enabled ? 'Disable' : 'Enable'} ${name}`}
+            onClick={() => {
+              toggle.mutate();
+            }}
+          >
+            {s.enabled ? 'Disable' : 'Enable'}
+          </Button>
+        )}
+        <Button
+          variant="small"
+          ref={removeBtn}
+          aria-label={`Remove ${name}`}
+          onClick={() => {
+            remove.reset();
+            setConfirming(true);
+          }}
+        >
+          Remove
+        </Button>
+      </div>
+      {toggle.isError ? (
+        <p role="alert" className="m-0 basis-full text-sm text-fail">
+          {toggle.error.message}
+        </p>
+      ) : null}
+      {confirming ? (
+        <ConfirmBar
+          label={`Confirm removing ${name}`}
+          confirmLabel="Remove"
+          busy={remove.isPending}
+          onCancel={closeConfirm}
+          onConfirm={() => {
+            remove.mutate();
+          }}
+        >
+          Remove <code className="break-all">{name}</code>? Its {plural(s.sessionCount, 'session')}{' '}
+          stay in Introspect.
+          {s.kind === 'folder' ? '' : ' The copied log files are deleted.'}
+          {remove.isError ? (
+            <span role="alert" className="mt-1 block text-fail">
+              {remove.error.message}
+            </span>
+          ) : null}
+        </ConfirmBar>
+      ) : null}
+    </div>
+  );
+}
+
 function SourcesCard() {
   const api = useApi();
+  const heading = useRef<HTMLHeadingElement>(null);
   const qc = useQueryClient();
   const sources = useSources();
   const [adding, setAdding] = useState<'folder' | 's3' | null>(null);
@@ -253,7 +390,9 @@ function SourcesCard() {
   const ready = adding === 's3' ? bucket.trim() !== '' : path.trim() !== '';
   return (
     <section aria-label="Sources" className={SECTION}>
-      <h2 className={H2}>Sources</h2>
+      <h2 ref={heading} tabIndex={-1} className={H2}>
+        Sources
+      </h2>
       {sources.isPending ? <Loading /> : null}
       {sources.isError ? (
         <ErrorState error={sources.error} onRetry={() => void sources.refetch()} />
@@ -264,30 +403,9 @@ function SourcesCard() {
           example <code>~/.claude/projects</code>.
         </p>
       ) : null}
-      {sources.data?.map((s) => {
-        const [text, tone] = STATUS[s.status];
-        return (
-          <div
-            key={s.id}
-            className="flex items-center justify-between gap-3 border-b border-line-soft py-2.5"
-          >
-            <div className="flex min-w-0 flex-col gap-0.5">
-              <strong className="flex items-center gap-2 text-sm">
-                {s.agent === 'codex' ? 'Codex' : 'Claude Code'}
-                <Chip>{KIND[s.kind]}</Chip>
-              </strong>
-              {s.kind === 'intake' ? (
-                <span className="text-[13px] text-muted">
-                  Pushed by {s.person?.name ?? 'someone'}
-                </span>
-              ) : (
-                <code className="break-all text-muted">{sourceLocation(s)}</code>
-              )}
-            </div>
-            <Chip tone={tone}>{text}</Chip>
-          </div>
-        );
-      })}
+      {sources.data?.map((s) => (
+        <SourceRow key={s.id} s={s} onGone={() => heading.current?.focus()} />
+      ))}
       {adding ? (
         <form
           aria-label={adding === 's3' ? 'Add S3 bucket' : 'Add source folder'}
@@ -419,6 +537,269 @@ function SourcesCard() {
             }}
           >
             + Add S3 bucket
+          </Button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+const EXPIRY: [string, string][] = [
+  ['30', '30 days'],
+  ['90', '90 days'],
+  ['365', '365 days'],
+  ['never', 'Never'],
+];
+
+function tokenStatus(t: IntakeToken): [string, ChipTone] {
+  if (t.revokedAt) return ['Revoked', 'na'];
+  if (t.expiresAt && new Date(t.expiresAt).getTime() < Date.now()) return ['Expired', 'warn'];
+  return ['Active', 'pass'];
+}
+
+function TokenRow({ t, onGone }: { t: IntakeToken; onGone: () => void }) {
+  const api = useApi();
+  const qc = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const revoke = useMutation({
+    mutationFn: () => api.revokeIntakeToken(t.id),
+    onSuccess: async () => {
+      setConfirming(false);
+      await invalidateKeys(qc, ['intake-tokens', 'doctor']);
+      onGone();
+    },
+  });
+  const [text, tone] = tokenStatus(t);
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line-soft py-2.5">
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <strong className="text-sm">{t.person}</strong>
+        <span className="text-[13px] text-muted">
+          {t.name !== t.person ? `Token ${t.name} · ` : ''}created{' '}
+          {formatWhen(t.createdAt).toLowerCase()} ·{' '}
+          {t.expiresAt ? `expires ${t.expiresAt.slice(0, 10)}` : 'never expires'}
+        </span>
+      </div>
+      <div className="flex items-center gap-2">
+        <Chip tone={tone}>{text}</Chip>
+        {text === 'Active' ? (
+          <Button
+            variant="small"
+            className={ACTION_W}
+            ref={trigger}
+            aria-label={`Revoke token ${t.name}`}
+            onClick={() => {
+              revoke.reset();
+              setConfirming(true);
+            }}
+          >
+            Revoke
+          </Button>
+        ) : (
+          <span aria-hidden="true" className={ACTION_W} />
+        )}
+      </div>
+      {confirming ? (
+        <ConfirmBar
+          label={`Confirm revoking token ${t.name}`}
+          confirmLabel="Revoke"
+          busy={revoke.isPending}
+          onCancel={() => {
+            setConfirming(false);
+            setTimeout(() => trigger.current?.focus());
+          }}
+          onConfirm={() => {
+            revoke.mutate();
+          }}
+        >
+          Revoke the token <code>{t.name}</code>? {t.person} can no longer push with it. Sessions
+          already pushed stay.
+          {revoke.isError ? (
+            <span role="alert" className="mt-1 block text-fail">
+              {revoke.error.message}
+            </span>
+          ) : null}
+        </ConfirmBar>
+      ) : null}
+    </div>
+  );
+}
+
+/** Shown once after creation: the plaintext token exists only in this mutation result. */
+function TokenReveal({
+  token,
+  port,
+  onDone,
+}: {
+  token: string;
+  port: number | null;
+  onDone: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const server = `https://<your-server>:${port === null ? '<port>' : String(port)}`;
+  const commands = `export INTROSPECT_PUSH_TOKEN=${token}
+
+# with the introspect command
+introspect push --server ${server} --redact
+
+# one raw log, with curl
+gzip -c ~/.claude/projects/my-proj/1234.jsonl | curl -fsS -X PUT \\
+  -H "Authorization: Bearer $INTROSPECT_PUSH_TOKEN" \\
+  -H "Content-Type: application/x-ndjson" -H "Content-Encoding: gzip" \\
+  --data-binary @- "${server}/v1/intake/logs/claude_code/my-proj/1234.jsonl"`;
+  return (
+    <div
+      role="group"
+      aria-label="New token"
+      className="flex flex-col gap-3 rounded-lg border border-line-soft p-3"
+    >
+      <Field label="Token" hint="It is not shown again. Send it to the person over a safe channel.">
+        <div className="flex gap-2">
+          <input readOnly className={`${FIELD} min-w-0 flex-1 font-mono`} value={token} />
+          <Button
+            onClick={() => {
+              void navigator.clipboard.writeText(token).then(() => {
+                setCopied(true);
+              });
+            }}
+          >
+            {copied ? 'Copied' : 'Copy'}
+          </Button>
+        </div>
+      </Field>
+      <div className="flex flex-col gap-1 text-xs text-muted">
+        Commands for the person (replace the server address with where the intake is reachable):
+        <pre className="m-0 overflow-x-auto rounded-lg border border-line-soft bg-sunken p-3 font-mono text-xs text-ink">
+          {commands}
+        </pre>
+      </div>
+      <div>
+        <Button variant="primary" onClick={onDone}>
+          Done
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function PeopleCard() {
+  const api = useApi();
+  const heading = useRef<HTMLHeadingElement>(null);
+  const qc = useQueryClient();
+  const tokens = useIntakeTokens();
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState('');
+  const [expiry, setExpiry] = useState('90');
+  const create = useMutation({
+    mutationFn: (samePerson: boolean) =>
+      api.createIntakeToken({
+        name: name.trim(),
+        ...(expiry === 'never' ? {} : { expiresInDays: Number(expiry) }),
+        ...(samePerson ? { samePerson: true } : {}),
+      }),
+    onSuccess: () => invalidateKeys(qc, ['intake-tokens', 'doctor']),
+  });
+  const close = () => {
+    create.reset();
+    setAdding(false);
+    setName('');
+    setExpiry('90');
+  };
+  const port = tokens.data?.intake.port ?? null;
+  const taken = create.error instanceof ApiError && create.error.status === 409;
+  return (
+    <section aria-label="People who push" className={SECTION}>
+      <h2 ref={heading} tabIndex={-1} className={H2}>
+        People who push
+      </h2>
+      {tokens.isPending ? <Loading /> : null}
+      {tokens.isError ? (
+        <ErrorState error={tokens.error} onRetry={() => void tokens.refetch()} />
+      ) : null}
+      {tokens.data && port === null ? (
+        <p className="m-0 text-[13px] text-muted">
+          Session intake is off. Set <code>INTROSPECT_INTAKE_PORT</code> to let other people push.
+        </p>
+      ) : null}
+      {tokens.data?.tokens.length === 0 ? (
+        <p className="m-0 text-sm text-ink-soft">
+          Nobody pushes sessions yet. Add a person to give them a token.
+        </p>
+      ) : null}
+      {tokens.data?.tokens.map((t) => (
+        <TokenRow key={t.id} t={t} onGone={() => heading.current?.focus()} />
+      ))}
+      {create.isSuccess ? (
+        <TokenReveal token={create.data.token} port={port} onDone={close} />
+      ) : adding ? (
+        <form
+          aria-label="Add person"
+          className="flex flex-col gap-3 rounded-lg border border-line-soft p-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (name.trim()) create.mutate(false);
+          }}
+        >
+          <Field label="Name">
+            <input
+              className={FIELD}
+              value={name}
+              autoFocus
+              placeholder="alice"
+              aria-describedby={create.isError ? 'token-error' : undefined}
+              onChange={(e) => {
+                setName(e.target.value);
+                if (create.isError) create.reset();
+              }}
+            />
+          </Field>
+          <Field label="Expires">
+            <select
+              className={FIELD}
+              value={expiry}
+              onChange={(e) => {
+                setExpiry(e.target.value);
+              }}
+            >
+              {EXPIRY.map(([v, text]) => (
+                <option key={v} value={v}>
+                  {text}
+                </option>
+              ))}
+            </select>
+          </Field>
+          {create.isError ? (
+            <p id="token-error" role="alert" className="m-0 text-sm text-fail">
+              {create.error.message}
+            </p>
+          ) : null}
+          <div className="flex flex-wrap gap-2">
+            <Button type="submit" variant="primary" disabled={create.isPending || !name.trim()}>
+              Create token
+            </Button>
+            {taken ? (
+              <Button
+                disabled={create.isPending}
+                onClick={() => {
+                  create.mutate(true);
+                }}
+              >
+                Create another token for {name.trim()}
+              </Button>
+            ) : null}
+            <Button onClick={close}>Cancel</Button>
+          </div>
+        </form>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="dashed"
+            onClick={() => {
+              setAdding(true);
+            }}
+          >
+            + Add person
           </Button>
         </div>
       )}
@@ -937,6 +1318,7 @@ export function Settings() {
       <HealthCheck />
       <div className="lg:columns-2 lg:gap-5">
         <SourcesCard />
+        <PeopleCard />
         <RedactionCard settings={settings} save={save} />
         <JudgeCard settings={settings} save={save} />
         <ScheduleCard settings={settings} save={save} />

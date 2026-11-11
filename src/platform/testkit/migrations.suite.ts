@@ -1,6 +1,7 @@
 import { sql } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { migrateToLatest } from '../db/migrate.js';
+import * as sessionOrigin from '../db/migrations/0011_session_origin.js';
 import { asBool, fromJson, toJson } from '../db/json.js';
 import { newId, sessionId } from '../db/ids.js';
 import { LOCAL_USER_ID, LOCAL_WORKSPACE_ID } from '../identity/index.js';
@@ -106,6 +107,57 @@ export function migrationsSuite(name: string, make: TestDbFactory): void {
           })
           .execute(),
       ).rejects.toThrow();
+    });
+
+    it('backfills session origin: sessions without a cursor were pushed', async () => {
+      const { db } = t.handle;
+      const at = new Date().toISOString();
+      const session = (nativeId: string) => ({
+        id: sessionId('codex', nativeId),
+        workspace_id: LOCAL_WORKSPACE_ID,
+        user_id: LOCAL_USER_ID,
+        agent: 'codex',
+        native_id: nativeId,
+        created_at: at,
+      });
+      await db
+        .insertInto('session')
+        .values([session('from-file'), session('pushed')])
+        .execute();
+      const sourceId = newId();
+      await db
+        .insertInto('source')
+        .values({
+          id: sourceId,
+          workspace_id: LOCAL_WORKSPACE_ID,
+          user_id: LOCAL_USER_ID,
+          agent: 'codex',
+          path: '/x',
+          created_at: at,
+        })
+        .execute();
+      await db
+        .insertInto('ingest_cursor')
+        .values({
+          workspace_id: LOCAL_WORKSPACE_ID,
+          source_id: sourceId,
+          file_path: '/x/from-file.jsonl',
+          session_id: sessionId('codex', 'from-file'),
+          updated_at: at,
+        })
+        .execute();
+      // Back to the state before 0011, then run it over the existing rows.
+      await db.schema.alterTable('session').dropColumn('origin').execute();
+      await sessionOrigin.up(db as never);
+      const rows = await db
+        .selectFrom('session')
+        .select(['native_id', 'origin'])
+        .orderBy('native_id')
+        .execute();
+      expect(rows).toEqual([
+        { native_id: 'from-file', origin: 'file' },
+        { native_id: 'pushed', origin: 'pushed' },
+      ]);
     });
 
     it('rejects a second session with the same agent and native id', async () => {

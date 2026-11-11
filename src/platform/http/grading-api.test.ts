@@ -77,6 +77,7 @@ beforeAll(async () => {
     dataDir,
   });
   app = createApp({
+    intakeTokens: { db: t.handle.db, port: null },
     webDir: join(dir, 'web'),
     port: PORT,
     token,

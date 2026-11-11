@@ -193,6 +193,124 @@ describe('Settings', () => {
     expect(within(sources).queryByText(/intake\/ada/)).toBeNull();
   });
 
+  it('disables and enables folder and S3 sources; pushed sources have no Disable', async () => {
+    const user = userEvent.setup();
+    renderApp('/settings');
+    const sources = await screen.findByRole('region', { name: 'Sources' });
+    await user.click(await within(sources).findByRole('button', { name: /^Disable ~\/\.codex/ }));
+    expect(await within(sources).findByText('Disabled')).toBeVisible();
+    await user.click(within(sources).getByRole('button', { name: /^Enable ~\/\.codex/ }));
+    await waitFor(() => {
+      expect(within(sources).queryByText('Disabled')).toBeNull();
+    });
+    expect(within(sources).getAllByRole('button', { name: /^Disable / })).toHaveLength(3);
+    expect(within(sources).getByRole('button', { name: 'Remove pushed by Ada' })).toBeVisible();
+  });
+
+  it('confirms before removing a source, and mentions deleted copies for pushed ones', async () => {
+    const user = userEvent.setup();
+    renderApp('/settings');
+    const sources = await screen.findByRole('region', { name: 'Sources' });
+    const remove = await within(sources).findByRole('button', { name: /^Remove ~\/\.codex/ });
+    await user.click(remove);
+    const ask = within(sources).getByRole('alertdialog');
+    expect(ask).toHaveTextContent('Its 1 session stay in Introspect.');
+    expect(ask).not.toHaveTextContent('copied log files');
+    await user.click(within(ask).getByRole('button', { name: 'Cancel' }));
+    expect(within(sources).queryByRole('alertdialog')).toBeNull();
+    await waitFor(() => {
+      expect(remove).toHaveFocus();
+    });
+    await user.click(within(sources).getByRole('button', { name: 'Remove pushed by Ada' }));
+    expect(within(sources).getByRole('alertdialog')).toHaveTextContent(
+      'The copied log files are deleted.',
+    );
+    await user.click(within(sources).getByRole('button', { name: 'Cancel' }));
+    await user.click(remove);
+    await user.click(
+      within(within(sources).getByRole('alertdialog')).getByRole('button', { name: 'Remove' }),
+    );
+    await waitFor(() => {
+      expect(within(sources).queryByText('~/.codex/sessions')).toBeNull();
+    });
+  });
+
+  it('says when session intake is off', async () => {
+    const mock = createMockApi('graded', 0);
+    const api: Api = {
+      ...mock,
+      listIntakeTokens: () => Promise.resolve({ intake: { port: null }, tokens: [] }),
+    };
+    render(<App api={api} history={createMemoryHistory({ initialEntries: ['/settings'] })} />);
+    const card = await screen.findByRole('region', { name: 'People who push' });
+    expect(await within(card).findByText(/Session intake is off/)).toBeVisible();
+  });
+
+  it('creates a token, shows it once and hides it after Done', async () => {
+    const user = userEvent.setup();
+    renderApp('/settings');
+    const card = await screen.findByRole('region', { name: 'People who push' });
+    expect(await within(card).findByText('Ada')).toBeVisible();
+    expect(within(card).getByText('Active')).toBeVisible();
+    await user.click(within(card).getByRole('button', { name: '+ Add person' }));
+    await user.type(within(card).getByLabelText('Name'), 'bob');
+    expect(within(card).getByLabelText('Expires')).toHaveValue('90');
+    await user.click(within(card).getByRole('button', { name: 'Create token' }));
+    const token = await within(card).findByDisplayValue('intk_mock_0123456789abcdef');
+    expect(token).toHaveAttribute('readonly');
+    expect(within(card).getByText(/It is not shown again/)).toBeVisible();
+    expect(
+      within(card).getByText(/introspect push --server https:\/\/<your-server>:7318/),
+    ).toBeVisible();
+    await user.click(within(card).getByRole('button', { name: 'Done' }));
+    expect(screen.queryByDisplayValue('intk_mock_0123456789abcdef')).toBeNull();
+    expect(screen.queryByText(/intk_mock/)).toBeNull();
+    expect(await within(card).findByText('bob')).toBeVisible();
+  });
+
+  it('offers another token for the same person when the name is taken', async () => {
+    const user = userEvent.setup();
+    const mock = createMockApi('graded', 0);
+    const createIntakeToken = vi.fn((b: Parameters<Api['createIntakeToken']>[0]) =>
+      mock.createIntakeToken(b),
+    );
+    render(
+      <App
+        api={{ ...mock, createIntakeToken }}
+        history={createMemoryHistory({ initialEntries: ['/settings'] })}
+      />,
+    );
+    const card = await screen.findByRole('region', { name: 'People who push' });
+    await user.click(await within(card).findByRole('button', { name: '+ Add person' }));
+    await user.type(within(card).getByLabelText('Name'), 'ada');
+    await user.selectOptions(within(card).getByLabelText('Expires'), 'Never');
+    await user.click(within(card).getByRole('button', { name: 'Create token' }));
+    expect(await within(card).findByRole('alert')).toHaveTextContent('already has a token');
+    await user.click(within(card).getByRole('button', { name: 'Create another token for ada' }));
+    expect(await within(card).findByDisplayValue(/intk_mock/)).toBeVisible();
+    expect(createIntakeToken).toHaveBeenLastCalledWith({ name: 'ada', samePerson: true });
+  });
+
+  it('revokes a token after confirming', async () => {
+    const user = userEvent.setup();
+    renderApp('/settings');
+    const card = await screen.findByRole('region', { name: 'People who push' });
+    await user.click(await within(card).findByRole('button', { name: 'Revoke token ada' }));
+    const ask = within(card).getByRole('alertdialog');
+    await user.click(within(ask).getByRole('button', { name: 'Cancel' }));
+    expect(within(card).queryByRole('alertdialog')).toBeNull();
+    await user.click(within(card).getByRole('button', { name: 'Revoke token ada' }));
+    await user.click(
+      within(within(card).getByRole('alertdialog')).getByRole('button', { name: 'Revoke' }),
+    );
+    expect(await within(card).findByText('Revoked')).toBeVisible();
+    expect(within(card).queryByRole('button', { name: /^Revoke token/ })).toBeNull();
+    // The Revoke button is gone; focus lands on the card, not on the page body.
+    await waitFor(() => {
+      expect(within(card).getByRole('heading', { name: 'People who push' })).toHaveFocus();
+    });
+  });
+
   it('adds an S3 bucket; the path-style box only appears with an endpoint', async () => {
     const user = userEvent.setup();
     const mock = createMockApi('graded', 0);

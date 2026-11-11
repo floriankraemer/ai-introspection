@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { ConflictError } from './platform/errors.js';
 import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import {
@@ -62,9 +63,15 @@ async function intakeTokenCommand(): Promise<void> {
     await migrateToLatest(handle);
     await ensureLocalIdentity(handle.db);
     if (sub === 'create' && arg) {
+      const samePerson = process.argv.includes('--same-person');
       const { token } = await createIntakeToken(handle.db, arg, {
         expires: option('expires'),
-        samePerson: process.argv.includes('--same-person'),
+        samePerson,
+      }).catch((e: unknown) => {
+        // The message is shared with the Settings screen; here the way out is a flag.
+        if (e instanceof ConflictError && !samePerson && e.message.includes('already has a token'))
+          throw new Error(`${e.message} Add --same-person to give them another one.`);
+        throw e;
       });
       console.log(token);
       console.error(

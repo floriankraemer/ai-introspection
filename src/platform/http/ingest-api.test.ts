@@ -97,6 +97,7 @@ beforeAll(async () => {
     dataDir,
   });
   app = createApp({
+    intakeTokens: { db: t.handle.db, port: null },
     webDir: join(dir, 'web'),
     port: PORT,
     token,
@@ -164,6 +165,46 @@ describe('sources and import', () => {
       ['codex', 'polling'],
     ]);
     expect(Array.isArray(await json(await call('GET', '/v1/sources/detected')))).toBe(true);
+  });
+
+  it('disables, enables and removes a source over the API', async () => {
+    // An S3 source of its own keeps the folder sources the other tests use.
+    const added = await json<{ id: string; path: string; sessionCount: number }>(
+      await call('POST', '/v1/sources', {
+        agent: 'claude_code',
+        s3: { bucket: 'scratch', prefix: 'y' },
+      }),
+    );
+    expect(added.sessionCount).toBe(0);
+    const off = await call('PATCH', `/v1/sources/${added.id}`, { enabled: false });
+    expect(off.status).toBe(200);
+    expect(await json(off)).toMatchObject({ enabled: false, status: 'disabled' });
+    const on = await call('PATCH', `/v1/sources/${added.id}`, { enabled: true });
+    expect((await json<{ enabled: boolean }>(on)).enabled).toBe(true);
+    expect((await call('DELETE', `/v1/sources/${added.id}`)).status).toBe(204);
+    expect(existsSync(added.path)).toBe(false);
+    expect((await call('DELETE', `/v1/sources/${added.id}`)).status).toBe(404);
+    const unknown = '00000000-0000-4000-8000-000000000000';
+    expect((await call('PATCH', `/v1/sources/${unknown}`, { enabled: false })).status).toBe(404);
+  });
+
+  it('answers 422 when asked to disable a pushed source', async () => {
+    const id = '11111111-1111-4111-8111-111111111111';
+    await t.handle.db
+      .insertInto('source')
+      .values({
+        id,
+        workspace_id: LOCAL_WORKSPACE_ID,
+        user_id: LOCAL_USER_ID,
+        agent: 'claude_code',
+        path: join(dir, 'pushed'),
+        kind: 'intake',
+        created_at: new Date().toISOString(),
+      })
+      .execute();
+    const res = await call('PATCH', `/v1/sources/${id}`, { enabled: false });
+    expect(res.status).toBe(422);
+    expect(JSON.stringify(await res.json())).toContain('revoke the person');
   });
 
   it('runs the import as a job with progress, and is idempotent', async () => {

@@ -1,7 +1,7 @@
-import { mkdir, realpath, stat } from 'node:fs/promises';
+import { mkdir, realpath, rm, stat } from 'node:fs/promises';
 import { join, sep } from 'node:path';
 import { DEFAULT_INTAKE_MAX_MB } from '../../platform/config/index.js';
-import { InvalidInputError } from '../../platform/errors.js';
+import { InvalidInputError, NotFoundError } from '../../platform/errors.js';
 import type { Db } from '../../platform/db/schema.js';
 import type { JobHandler } from '../../platform/jobs/worker.js';
 import type { Schedule } from '../../platform/jobs/scheduler.js';
@@ -291,37 +291,41 @@ export function createIngest(deps: IngestDeps) {
   /** Sessions with no new bytes for 10 minutes have ended: compute signals, flag and sample. */
   async function finalizeIdle(): Promise<void> {
     const cutoff = now().getTime() - SESSION_IDLE_MS;
+    // Idle: no cursor of the session saw a write since the cutoff. A session without any cursor (pushed
+    // redacted, or its source was removed) went quiet when its last event happened.
     const idle = await db
       .selectFrom('session')
-      .innerJoin('ingest_cursor', 'ingest_cursor.session_id', 'session.id')
       .select('session.id')
       .where('session.workspace_id', '=', workspaceId)
       .where('session.status', '=', 'active')
-      .where('ingest_cursor.mtime_ms', '<', cutoff)
-      .execute();
-    // Sessions pushed by the intake have no cursor; their last event time says when they went quiet.
-    const pushed = await db
-      .selectFrom('session')
-      .select('session.id')
-      .where('session.workspace_id', '=', workspaceId)
-      .where('session.status', '=', 'active')
-      .where(
-        (eb) => eb.fn.coalesce('session.ended_at', 'session.started_at', 'session.created_at'),
-        '<',
-        new Date(cutoff).toISOString(),
-      )
       .where((eb) =>
         eb.not(
           eb.exists(
             eb
               .selectFrom('ingest_cursor')
-              .select('session_id')
-              .whereRef('session_id', '=', 'session.id'),
+              .select('ingest_cursor.file_path')
+              .whereRef('ingest_cursor.session_id', '=', 'session.id')
+              .where('ingest_cursor.mtime_ms', '>=', cutoff),
           ),
         ),
       )
+      .where((eb) =>
+        eb.or([
+          eb.exists(
+            eb
+              .selectFrom('ingest_cursor')
+              .select('ingest_cursor.file_path')
+              .whereRef('ingest_cursor.session_id', '=', 'session.id'),
+          ),
+          eb(
+            eb.fn.coalesce('session.ended_at', 'session.started_at', 'session.created_at'),
+            '<',
+            new Date(cutoff).toISOString(),
+          ),
+        ]),
+      )
       .execute();
-    for (const { id } of [...idle, ...pushed]) await finalizeSession(db, workspaceId, id, now());
+    for (const { id } of idle) await finalizeSession(db, workspaceId, id, now());
   }
 
   /** History import: every file of every enabled source, in order; idempotent through the cursors. */
@@ -375,7 +379,19 @@ export function createIngest(deps: IngestDeps) {
           force?: boolean;
         };
         const source = (await sources.enabledRows()).find((s) => s.id === sourceId);
-        if (source) await ingestFile(pipeline, source, path, { force: force === true });
+        if (!source) return;
+        try {
+          await ingestFile(pipeline, source, path, { force: force === true });
+        } catch (e) {
+          // A remove that lands mid-run deletes the source row under the cursor insert (FK); that is a
+          // skip. Any other failure, also of a source disabled meanwhile, fails the job.
+          const gone = await sources.find(sourceId).then(
+            () => false,
+            (err: unknown) => err instanceof NotFoundError,
+          );
+          if (gone) return;
+          throw e;
+        }
       },
     },
     [RECONCILE_JOB]: {
@@ -432,6 +448,27 @@ export function createIngest(deps: IngestDeps) {
     return null;
   }
 
+  /** The real path of a cache folder, refused unless it lies strictly inside the data folder; null when it is gone. */
+  /** Stops watching `path`; chokidar's unwatch also drops it for an enabled source that contains it. */
+  async function unwatch(path: string): Promise<void> {
+    if (!watcher) return;
+    watcher.remove(path);
+    for (const row of await sources.enabledRows())
+      if (path !== row.path && path.startsWith(row.path + sep)) watcher.add(row.path);
+  }
+
+  async function cacheDirOf(path: string): Promise<string | null> {
+    const real = await realpath(path).catch(() => null);
+    if (!real) return null;
+    // Only a folder strictly below data/intake or data/s3, never those roots or the rest of /data.
+    const roots = await Promise.all(rawLogRoots.map((r) => realpath(r).catch(() => null)));
+    if (!roots.some((r) => r !== null && real.startsWith(r + sep)))
+      throw new InvalidInputError(
+        `"${path}" is not a copy folder in Introspect's data folder; not deleting it`,
+      );
+    return real;
+  }
+
   const intake = createIntake({
     pipeline,
     dataDir: deps.dataDir,
@@ -470,6 +507,39 @@ export function createIngest(deps: IngestDeps) {
         // Fetch now rather than at the next scheduled sync.
         await deps.queue.enqueue({ workspaceId, kind: S3_SYNC_JOB, maxAttempts: 1 });
         return dto;
+      },
+      setEnabled: async (id: string, enabled: boolean): Promise<SourceDto> => {
+        const dto = await sources.setEnabled(id, enabled);
+        if (enabled) {
+          watcher?.add(dto.path);
+          // What changed while the source was off is picked up now, not at the next minute.
+          await deps.queue.enqueue({ workspaceId, kind: RECONCILE_JOB, maxAttempts: 1 });
+          if (dto.kind === 's3')
+            await deps.queue.enqueue({ workspaceId, kind: S3_SYNC_JOB, maxAttempts: 1 });
+        } else await unwatch(dto.path);
+        return dto;
+      },
+      /**
+       * Deletes the registration; its sessions stay. Our own copies of the logs (S3 cache, intake
+       * folder) go too, under the lock that writers of that folder take. Folder sources are the
+       * user's files and are never touched.
+       */
+      remove: async (id: string): Promise<void> => {
+        const probe = await sources.find(id);
+        const lockKey =
+          probe.kind === 's3'
+            ? S3_SYNC_JOB
+            : probe.kind === 'intake'
+              ? `intake-user:${probe.userId}`
+              : null;
+        const run = async (): Promise<void> => {
+          const row = await sources.find(id);
+          const cache = row.kind === 'folder' ? null : await cacheDirOf(row.path);
+          const removed = await sources.remove(id);
+          await unwatch(removed.path);
+          if (cache) await rm(cache, { recursive: true, force: true });
+        };
+        await (lockKey ? withLock(lockKey, run) : run());
       },
       detect: detectSources,
     },

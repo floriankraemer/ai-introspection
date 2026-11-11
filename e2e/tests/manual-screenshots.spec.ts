@@ -223,6 +223,8 @@ test('manual screenshots', async ({ page, browser }) => {
   });
 
   await test.step('settings', async () => {
+    // One person who pushes, so the People who push card shows a token.
+    await send(page.request, 'post', '/v1/intake-tokens', { name: 'Ada', expiresInDays: 90 });
     await page.goto('/settings');
     const health = page.getByRole('region', { name: 'Health check' });
     await expect(health.getByText(/need attention|Everything works/)).toBeVisible();
@@ -230,6 +232,7 @@ test('manual screenshots', async ({ page, browser }) => {
     await shot(health, 'settings-health-check');
     for (const [name, file] of [
       ['Sources', 'settings-sources'],
+      ['People who push', 'settings-people'],
       ['Redaction and retention', 'settings-redaction'],
       ['Judge', 'settings-judge'],
       ['Schedule', 'settings-schedule'],

@@ -1,10 +1,10 @@
 # Settings and Health check
 
 The Settings screen holds every option, and the **Health check**.
-Below the Health check are seven cards: **Sources**, **Redaction and retention**, **Judge and budget**, **Schedule**, **Skills repositories**, **Trends** and **Team mode**.
+Below the Health check are eight cards: **Sources**, **People who push**, **Redaction and retention**, **Judge and budget**, **Schedule**, **Skills repositories**, **Trends** and **Team mode**.
 Open it with **Settings** in the left menu.
 
-![The Settings screen starts with the Health check, followed by seven cards.](images/settings-overview.png)
+![The Settings screen starts with the Health check, followed by eight cards.](images/settings-overview.png)
 
 Most settings save by themselves.
 A checkbox or a list saves when you change it.
@@ -87,10 +87,47 @@ Objects older than the retention period are not fetched.
 The endpoint must use https, unless it is on your own computer.
 The Health check reports whether the credentials are found and the bucket answers.
 
-Disabling a **Pushed** source does not stop that person from uploading.
-Revoke their token instead (see [Sharing sessions](20-sharing-sessions.md)).
+Every folder and S3 source has **Disable** (or **Enable** when it is disabled) and **Remove**.
+A disabled source is not watched and not imported.
+When you enable it again, Introspect imports what changed in the meantime.
+
+**Remove** asks first: "Remove <location>? Its N sessions stay in Introspect."
+For S3 and pushed sources the question adds: "The copied log files are deleted."
+Removing a source keeps its sessions, grades and labels.
+If you add the same folder again later, Introspect continues the same sessions without duplicates.
+
+A **Pushed** source cannot be disabled, because that would not stop the person from uploading.
+Revoke the person's token in **People who push** instead.
+If you remove a pushed source, it comes back with that person's next push.
 
 ![The Sources card lists each source with its kind: Folder, S3 or Pushed.](images/settings-sources.png)
+
+## People who push
+
+The **People who push** card manages the [intake tokens](20-sharing-sessions.md) of the people who push sessions to this server.
+
+![The People who push card lists each token with its status and a button to add a person.](images/settings-people.png)
+
+If the intake is off, the card says "Session intake is off. Set `INTROSPECT_INTAKE_PORT` to let other people push."
+
+Each token shows the person, when it was created, when it expires, and a status chip: **Active**, **Expired** or **Revoked**.
+**Revoke** asks for confirmation.
+After that, the next push with this token is refused.
+Sessions already pushed stay.
+
+To give a person a token:
+
+1. Click **+ Add person**.
+2. Enter the **Name**.
+3. Choose **Expires**: 30, 90 or 365 days, or **Never**.
+4. Click **Create token**.
+
+   Introspect shows the token once, with the `introspect push` command and the curl command filled in.
+   Copy it now and send it to the person over a safe channel.
+   It is not shown again.
+
+If the name already has a token, the card says so and offers **Create another token for <name>**.
+The command `introspect intake-token` still works (see the [command reference](18-command-reference.md)).
 
 ## Redaction and retention
 

@@ -36,7 +36,7 @@ export function intakeTokensSuite(name: string, make: TestDbFactory): void {
 
     it('refuses an existing name without --same-person, and never attaches to the admin', async () => {
       await createIntakeToken(t.handle.db, 'carol');
-      await expect(createIntakeToken(t.handle.db, 'carol')).rejects.toThrow(/--same-person/);
+      await expect(createIntakeToken(t.handle.db, 'carol')).rejects.toThrow(/already has a token/);
       // ensureLocalIdentity names the local admin "You".
       await expect(createIntakeToken(t.handle.db, 'You', { samePerson: true })).rejects.toThrow(
         /admin/,

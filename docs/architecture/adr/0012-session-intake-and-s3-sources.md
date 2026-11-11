@@ -196,6 +196,15 @@ The tie-break is the weight on privacy: a person who does not trust the server w
 - Negative: the intake has quotas and limits but no rate limiting; that is left to the reverse proxy.
 - Negative: a new dependency, `@aws-sdk/client-s3`.
 
+## Addendum: session origin (2026-11-11)
+
+Sessions now carry an explicit `origin`, either `file` or `pushed` (migration 0011, with a backfill for existing rows).
+Before, the code treated a session as pushed when it had no ingest cursors.
+That inference broke once a source could be removed: removing a source deletes its cursors, and a file session would then look like a pushed one.
+Removal has to keep sessions, grades and labels, and re-adding the folder has to continue the same sessions without duplicates.
+With `origin`, the ownership guards no longer depend on cursors.
+A file never rebuilds a session owned by another person, and a removed pushed source comes back with the person's next push.
+
 ## Revisit triggers
 
 - Team mode ships: decide whether `POST /v1/sessions` with OIDC replaces per-person intake tokens.

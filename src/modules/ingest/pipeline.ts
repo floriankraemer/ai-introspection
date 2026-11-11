@@ -305,14 +305,14 @@ async function run(
   const nativeId = adapter.nativeIdFromPath(path);
   const sid = deriveSessionId(source.agent, nativeId);
   // The same session can reach us through two sources (a copy, a second mount). The first one
-  // to ingest it owns it; a second would append every event again.
+  // to ingest it owns it; a second would append every event again. A disabled owner keeps it: the
+  // copy would otherwise rebuild the session from its own (maybe shorter) file, and the owner would
+  // append duplicates from its old offset once enabled again. Only removing the owner hands it over.
   const owner = await db
     .selectFrom('ingest_cursor')
-    .innerJoin('source', 'source.id', 'ingest_cursor.source_id')
     .select('ingest_cursor.file_path')
     .where('ingest_cursor.workspace_id', '=', workspaceId)
     .where('ingest_cursor.session_id', '=', sid)
-    .where('source.enabled', '=', true)
     .where((eb) =>
       eb.or([
         eb('ingest_cursor.source_id', '!=', source.id),
@@ -321,23 +321,15 @@ async function run(
     )
     .executeTakeFirst();
   if (owner) return { status: 'unchanged', sessionId: sid, events: 0, reset: false };
-  // A session without any cursor was written by the client-redacted intake; a file must not touch it.
-  const unowned = await db
+  const known = await db
     .selectFrom('session')
-    .select('session.id')
-    .where('session.id', '=', sid)
-    .where((eb) =>
-      eb.not(
-        eb.exists(
-          eb
-            .selectFrom('ingest_cursor')
-            .select('session_id')
-            .whereRef('session_id', '=', 'session.id'),
-        ),
-      ),
-    )
+    .select(['origin', 'user_id'])
+    .where('id', '=', sid)
     .executeTakeFirst();
-  if (unowned) return { status: 'unchanged', sessionId: sid, events: 0, reset: false };
+  // A session pushed client-redacted through the intake, or one that belongs to another person
+  // (whose source was removed): a file must not touch it.
+  if (known?.origin === 'pushed' || (known && known.user_id !== source.userId))
+    return { status: 'unchanged', sessionId: sid, events: 0, reset: false };
   const cursor = await db
     .selectFrom('ingest_cursor')
     .selectAll()
@@ -346,7 +338,9 @@ async function run(
     .executeTakeFirst();
 
   let start = cursor?.byte_offset ?? 0;
-  let reset = false;
+  // The session is stored but this file has no cursor (its source was removed and added again, or
+  // another source held it): rebuild from the whole file, or every event would be appended twice.
+  let reset = !cursor && known !== undefined;
   if (cursor) {
     const intact =
       st.size >= cursor.byte_offset &&
@@ -629,6 +623,7 @@ async function run(
             user_id: source.userId,
             agent: source.agent,
             native_id: nativeId,
+            origin: 'file',
             created_at: now().toISOString(),
             ...values,
           })

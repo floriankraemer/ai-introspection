@@ -46,6 +46,8 @@ const sourceSchema = z
     status: z.enum(['watching', 'polling', 'disabled', 'missing']),
     /** Who pushes to an intake source; null for other kinds. */
     person: z.object({ id: z.uuid(), name: z.string() }).nullable(),
+    /** Sessions ingested from this source; they stay when it is removed. */
+    sessionCount: z.number().int(),
   })
   .openapi('Source');
 
@@ -273,6 +275,34 @@ const addSource = createRoute({
   responses: { 200: json(sourceSchema, 'The source'), ...problemResponses },
 });
 
+const sourceIdParam = z.object({ id: z.uuid() });
+
+const patchSource = createRoute({
+  method: 'patch',
+  path: '/v1/sources/{id}',
+  summary:
+    'Disable or enable a folder or S3 source (a pushed source is switched off by revoking the token)',
+  security,
+  request: {
+    params: sourceIdParam,
+    body: {
+      content: { 'application/json': { schema: z.object({ enabled: z.boolean() }) } },
+      required: true,
+    },
+  },
+  responses: { 200: json(sourceSchema, 'The source'), ...problemResponses },
+});
+
+const deleteSource = createRoute({
+  method: 'delete',
+  path: '/v1/sources/{id}',
+  summary:
+    'Remove a source; its sessions stay, copies of its logs that Introspect made are deleted',
+  security,
+  request: { params: sourceIdParam },
+  responses: { 204: { description: 'Removed' }, ...problemResponses },
+});
+
 const startImport = createRoute({
   method: 'post',
   path: '/v1/imports',
@@ -347,6 +377,17 @@ export function registerIngestRoutes(
     const body = c.req.valid('json');
     if ('s3' in body) return c.json(await ingest.sources.addS3(body.agent, body.s3), 200);
     return c.json(await ingest.sources.add(body.agent, body.path, { restrict: true }), 200);
+  });
+
+  app.openapi(patchSource, async (c) =>
+    c.json(
+      await ingest.sources.setEnabled(c.req.valid('param').id, c.req.valid('json').enabled),
+      200,
+    ),
+  );
+  app.openapi(deleteSource, async (c) => {
+    await ingest.sources.remove(c.req.valid('param').id);
+    return c.body(null, 204);
   });
 
   app.openapi(startImport, async (c) => {

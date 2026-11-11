@@ -333,6 +333,7 @@ export async function startServer(config: Config): Promise<RunningServer> {
     judges,
     trends,
     skillRepos,
+    intakeTokens: { db: handle.db, port: config.intake?.port ?? null },
     now: appClock(config),
     doctor: () =>
       doctorReport(config, handle, settings, ingest.sources, skillRepos, { rubrics, judges }),

@@ -19,6 +19,14 @@ export type SourceStatus = Source['status'];
 export type S3Remote = NonNullable<Schemas['S3Remote']>;
 export type AddSourceBody = { agent: Agent; path: string } | { agent: Agent; s3: S3Remote };
 export type DetectedSource = Schemas['DetectedSource'];
+export type IntakeToken = Schemas['IntakeToken'];
+export type CreatedIntakeToken = Schemas['CreatedIntakeToken'];
+export type IntakeTokens = Json200<paths['/v1/intake-tokens']['get']>;
+export interface CreateIntakeTokenBody {
+  name: string;
+  expiresInDays?: number;
+  samePerson?: boolean;
+}
 export type SkillRepo = Schemas['SkillRepo'];
 export type DetectedSkillRepo = Schemas['DetectedSkillRepo'];
 export type Job = Schemas['Job'];
@@ -112,6 +120,11 @@ export interface Api {
   listSources(): Promise<Source[]>;
   detectSources(): Promise<DetectedSource[]>;
   addSource(body: AddSourceBody): Promise<Source>;
+  patchSource(id: string, body: { enabled: boolean }): Promise<Source>;
+  removeSource(id: string): Promise<void>;
+  listIntakeTokens(): Promise<IntakeTokens>;
+  createIntakeToken(body: CreateIntakeTokenBody): Promise<CreatedIntakeToken>;
+  revokeIntakeToken(id: string): Promise<void>;
   listSkillRepos(): Promise<SkillRepo[]>;
   detectSkillRepos(): Promise<DetectedSkillRepo[]>;
   putGlobalSkillRepo(path: string): Promise<SkillRepo>;

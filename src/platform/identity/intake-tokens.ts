@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import type { Db } from '../db/schema.js';
 import { newId } from '../db/ids.js';
+import { ConflictError, InvalidInputError } from '../errors.js';
 import { LOCAL_WORKSPACE_ID } from './index.js';
 import { hashIntakeToken } from './tokens.js';
 
@@ -45,13 +46,14 @@ export async function createIntakeToken(
       .where('workspace_id', '=', LOCAL_WORKSPACE_ID)
       .where('display_name', '=', name)
       .executeTakeFirst();
+    // Not a conflict another token could settle: the name is simply not available for a person.
     if (existing && existing.role !== 'member')
-      throw new Error(
+      throw new InvalidInputError(
         `"${name}" is the name of this installation's ${existing.role}; pick another name for the person.`,
       );
     if (existing && opts.samePerson !== true)
-      throw new Error(
-        `A person named "${name}" already has a token. Pass --same-person to give them another one, or pick another name.`,
+      throw new ConflictError(
+        `A person named "${name}" already has a token. Give the same person another token, or pick another name.`,
       );
     const userId = existing?.id ?? newId();
     if (!existing) {
@@ -126,6 +128,18 @@ export async function revokeIntakeToken(
         ? eb.or([eb('id', '=', nameOrId), eb('name', '=', nameOrId)])
         : eb('name', '=', nameOrId),
     )
+    .executeTakeFirst();
+  return Number(res.numUpdatedRows);
+}
+
+/** Revokes exactly one active token by id; never matches names (the HTTP API revokes by id). */
+export async function revokeIntakeTokenById(db: Db, id: string, now = new Date()): Promise<number> {
+  const res = await db
+    .updateTable('api_token')
+    .set({ revoked_at: now.toISOString() })
+    .where('workspace_id', '=', LOCAL_WORKSPACE_ID)
+    .where('revoked_at', 'is', null)
+    .where('id', '=', id)
     .executeTakeFirst();
   return Number(res.numUpdatedRows);
 }

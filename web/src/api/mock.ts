@@ -6,6 +6,7 @@ import type {
   Budget,
   CalibrationRow,
   DetectedSource,
+  IntakeToken,
   DoctorCheck,
   GradeDetail,
   Job,
@@ -358,6 +359,7 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
           enabled: true,
           status: 'watching',
           person: null,
+          sessionCount: 1,
         },
         {
           id: 's2',
@@ -368,6 +370,7 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
           enabled: true,
           status: 'watching',
           person: null,
+          sessionCount: 1,
         },
         {
           id: 's3',
@@ -378,6 +381,7 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
           enabled: true,
           status: 'polling',
           person: null,
+          sessionCount: 0,
         },
         {
           id: 's4',
@@ -388,6 +392,19 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
           enabled: true,
           status: 'watching',
           person: ADA,
+          sessionCount: 1,
+        },
+      ];
+  let tokens: IntakeToken[] = fresh
+    ? []
+    : [
+        {
+          id: '00000000-0000-7000-8000-00000000b001',
+          name: 'ada',
+          person: 'Ada',
+          createdAt: new Date(Date.now() - 12 * 86_400_000).toISOString(),
+          expiresAt: new Date(Date.now() + 78 * 86_400_000).toISOString(),
+          revokedAt: null,
         },
       ];
   const detected: DetectedSource[] = [
@@ -650,9 +667,59 @@ export function createMockApi(scenario: MockScenario = 'graded', latencyMs = 150
         enabled: true,
         status: 'watching',
         person: null,
+        sessionCount: 0,
       };
       sources = [...sources, s];
       return s;
+    },
+    async patchSource(id, body) {
+      await wait();
+      const s = sources.find((x) => x.id === id);
+      if (!s) throw new ApiError(404, 'Not Found', 'No such source.');
+      if (s.kind === 'intake')
+        throw new ApiError(422, 'Unprocessable', 'A pushed source cannot be disabled.');
+      const next: Source = {
+        ...s,
+        enabled: body.enabled,
+        status: body.enabled ? (s.kind === 's3' ? 'polling' : 'watching') : 'disabled',
+      };
+      sources = sources.map((x) => (x.id === id ? next : x));
+      return next;
+    },
+    async removeSource(id) {
+      await wait();
+      sources = sources.filter((x) => x.id !== id);
+    },
+    async listIntakeTokens() {
+      await wait();
+      return { intake: { port: 7318 }, tokens: [...tokens] };
+    },
+    async createIntakeToken(body) {
+      await wait();
+      const taken = tokens.find((t) => t.name === body.name);
+      if (taken && !body.samePerson)
+        throw new ApiError(
+          409,
+          'Conflict',
+          `A person named "${body.name}" already has a token. Give the same person another token, or pick another name.`,
+        );
+      const row = {
+        id: `00000000-0000-7000-8000-00000000b${String(tokens.length + 1).padStart(3, '0')}`,
+        name: body.name,
+        person: body.name,
+        createdAt: new Date().toISOString(),
+        expiresAt:
+          body.expiresInDays === undefined
+            ? null
+            : new Date(Date.now() + body.expiresInDays * 86_400_000).toISOString(),
+        revokedAt: null,
+      };
+      tokens = [...tokens, row];
+      return { ...row, token: 'intk_mock_0123456789abcdef' };
+    },
+    async revokeIntakeToken(id) {
+      await wait();
+      tokens = tokens.map((t) => (t.id === id ? { ...t, revokedAt: new Date().toISOString() } : t));
     },
     async listSkillRepos() {
       await wait();

@@ -75,6 +75,8 @@ export interface Schema {
     in_reference_set: Bool;
     pinned: Bool;
     ingest_warnings: Json | null;
+    /** `file`: ingested from a raw log through a source; `pushed`: client-redacted through the intake. */
+    origin: Generated<'file' | 'pushed'>;
     created_at: Ts;
   };
   event: {

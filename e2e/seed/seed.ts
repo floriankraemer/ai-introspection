@@ -181,6 +181,7 @@ function extra(index: number, title: string, repo: string, dir: string): void {
   );
 }
 extra(100, 'Pushed with curl', 'alpha', 'curl');
+extra(104, 'Pushed by a new person', 'alpha', 'curl');
 extra(101, 'Pushed with the CLI', 'beta', 'push/claude');
 extra(102, 'Read from the bucket', 'gamma', 's3/claude');
 extra(103, 'Second bucket session', 'gamma', 's3/claude');

@@ -4,6 +4,7 @@ const POLL_INTERVAL_MS = 5000;
 
 export interface SourceWatcher {
   add(root: string): void;
+  remove(root: string): void;
   close(): Promise<void>;
 }
 
@@ -29,6 +30,9 @@ export function createWatcher(opts: {
   return {
     add: (root) => {
       watcher.add(root);
+    },
+    remove: (root) => {
+      void watcher.unwatch(root);
     },
     close: () => watcher.close(),
   };

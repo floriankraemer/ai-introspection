@@ -201,18 +201,17 @@ export function createIntake(deps: IntakeDeps) {
 
   /**
    * True when the session is not this person's raw-log session: someone else's, or one pushed
-   * redacted (no cursor). The ingest would skip the file, so it must not be stored at all.
+   * redacted. The ingest would skip the file, so it must not be stored at all.
    */
   async function ownedElsewhere(sid: string, userId: string): Promise<boolean> {
     const row = await db
       .selectFrom('session')
-      .leftJoin('ingest_cursor', 'ingest_cursor.session_id', 'session.id')
-      .select(['session.workspace_id', 'session.user_id', 'ingest_cursor.file_path'])
-      .where('session.id', '=', sid)
+      .select(['workspace_id', 'user_id', 'origin'])
+      .where('id', '=', sid)
       .executeTakeFirst();
     return (
       row !== undefined &&
-      (row.workspace_id !== workspaceId || row.user_id !== userId || row.file_path === null)
+      (row.workspace_id !== workspaceId || row.user_id !== userId || row.origin === 'pushed')
     );
   }
 
@@ -372,17 +371,16 @@ export function createIntake(deps: IntakeDeps) {
       db.transaction().execute(async (tx: Db) => {
         const existing = await tx
           .selectFrom('session')
-          .select(['workspace_id', 'user_id'])
+          .select(['workspace_id', 'user_id', 'origin'])
           .where('id', '=', sid)
           .executeTakeFirst();
-        if (existing && (existing.workspace_id !== workspaceId || existing.user_id !== userId))
+        if (
+          existing &&
+          (existing.workspace_id !== workspaceId ||
+            existing.user_id !== userId ||
+            existing.origin === 'file')
+        )
           throw new ConflictError(CONFLICT);
-        const fromFile = await tx
-          .selectFrom('ingest_cursor')
-          .select('file_path')
-          .where('session_id', '=', sid)
-          .executeTakeFirst();
-        if (fromFile) throw new ConflictError(CONFLICT);
         await tx
           .insertInto('session')
           .values({
@@ -391,6 +389,7 @@ export function createIntake(deps: IntakeDeps) {
             user_id: userId,
             agent: trace.agent,
             native_id: trace.nativeId,
+            origin: 'pushed',
             created_at: now().toISOString(),
             ...values,
           })

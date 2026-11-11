@@ -5,7 +5,7 @@ import { join, relative, sep } from 'node:path';
 import { newId } from '../../platform/db/ids.js';
 import { asBool, fromJson, toJson } from '../../platform/db/json.js';
 import type { Db } from '../../platform/db/schema.js';
-import { ConflictError, InvalidInputError } from '../../platform/errors.js';
+import { ConflictError, InvalidInputError, NotFoundError } from '../../platform/errors.js';
 import { adapterFor } from './adapters/index.js';
 import type { S3Remote } from './s3.js';
 import { AGENTS, type Agent } from './types.js';
@@ -24,6 +24,16 @@ export interface SourceDto {
   status: SourceStatus;
   /** Who pushes to an intake source; null for the other kinds. */
   person: { id: string; name: string } | null;
+  /** Sessions ingested from this source; they stay when the source is removed. */
+  sessionCount: number;
+}
+
+export interface RemovedSource {
+  id: string;
+  agent: Agent;
+  path: string;
+  kind: SourceKind;
+  userId: string;
 }
 
 export interface DetectedSource {
@@ -118,16 +128,19 @@ export function createSources(
       return `"${path}" is outside the folders log sources may come from (${guard.roots.join(', ')})`;
     return null;
   };
-  const toDto = (row: {
-    id: string;
-    agent: string;
-    path: string;
-    kind: string;
-    remote: string | null;
-    enabled: boolean | number;
-    user_id: string;
-    display_name: string;
-  }): SourceDto => {
+  const toDto = (
+    row: {
+      id: string;
+      agent: string;
+      path: string;
+      kind: string;
+      remote: string | null;
+      enabled: boolean | number;
+      user_id: string;
+      display_name: string;
+    },
+    sessionCount: number,
+  ): SourceDto => {
     const enabled = asBool(row.enabled);
     const status: SourceStatus = !enabled
       ? 'disabled'
@@ -145,7 +158,26 @@ export function createSources(
       enabled,
       status,
       person: row.kind === 'intake' ? { id: row.user_id, name: row.display_name } : null,
+      sessionCount,
     };
+  };
+  /** Distinct sessions per source in one grouped query. */
+  const sessionCounts = async (): Promise<Map<string, number>> => {
+    const rows = await db
+      .selectFrom('ingest_cursor')
+      .select(['source_id', (eb) => eb.fn.count('session_id').distinct().as('n')])
+      .where('workspace_id', '=', workspaceId)
+      .groupBy('source_id')
+      .execute();
+    return new Map(rows.map((r) => [r.source_id, Number(r.n)]));
+  };
+  const dtoById = async (id: string): Promise<SourceDto> => {
+    const row = await selectDtoRows()
+      .where('source.workspace_id', '=', workspaceId)
+      .where('source.id', '=', id)
+      .executeTakeFirst();
+    if (!row) throw new NotFoundError('Source not found');
+    return toDto(row, (await sessionCounts()).get(id) ?? 0);
   };
   const selectDtoRows = () =>
     db
@@ -169,7 +201,49 @@ export function createSources(
         .orderBy('source.created_at')
         .orderBy('source.id')
         .execute();
-      return rows.map(toDto);
+      const counts = await sessionCounts();
+      return rows.map((r) => toDto(r, counts.get(r.id) ?? 0));
+    },
+
+    /** Folder and S3 sources only: an intake source is switched off by revoking the person's token. */
+    async setEnabled(id: string, enabled: boolean): Promise<SourceDto> {
+      const row = await db
+        .selectFrom('source')
+        .select('kind')
+        .where('workspace_id', '=', workspaceId)
+        .where('id', '=', id)
+        .executeTakeFirst();
+      if (!row) throw new NotFoundError('Source not found');
+      if (row.kind === 'intake')
+        throw new InvalidInputError(
+          "A pushed source cannot be disabled; revoke the person's token instead",
+        );
+      await db.updateTable('source').set({ enabled }).where('id', '=', id).execute();
+      return dtoById(id);
+    },
+
+    async find(id: string): Promise<RemovedSource> {
+      const row = await db
+        .selectFrom('source')
+        .select(['id', 'agent', 'path', 'kind', 'user_id'])
+        .where('workspace_id', '=', workspaceId)
+        .where('id', '=', id)
+        .executeTakeFirst();
+      if (!row) throw new NotFoundError('Source not found');
+      return {
+        id: row.id,
+        agent: row.agent as Agent,
+        path: trimSlash(row.path),
+        kind: row.kind,
+        userId: row.user_id,
+      };
+    },
+
+    /** Deletes the row (cursors cascade, sessions stay) and returns it so the caller can clean up. */
+    async remove(id: string): Promise<RemovedSource> {
+      const row = await this.find(id);
+      await db.deleteFrom('source').where('id', '=', id).execute();
+      return row;
     },
 
     /**
@@ -222,7 +296,7 @@ export function createSources(
         .where('source.agent', '=', agent)
         .where('source.path', 'in', [path, `${path}/`])
         .executeTakeFirstOrThrow();
-      return toDto(row);
+      return toDto(row, (await sessionCounts()).get(row.id) ?? 0);
     },
 
     /**
@@ -256,8 +330,7 @@ export function createSources(
           created_at: now().toISOString(),
         })
         .execute();
-      const row = await selectDtoRows().where('source.id', '=', id).executeTakeFirstOrThrow();
-      return toDto(row);
+      return dtoById(id);
     },
 
     async enabledRows(): Promise<

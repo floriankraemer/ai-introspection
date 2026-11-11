@@ -90,6 +90,11 @@ export function useSources() {
   return useQuery({ queryKey: ['sources'], queryFn: () => api.listSources() });
 }
 
+export function useIntakeTokens() {
+  const api = useApi();
+  return useQuery({ queryKey: ['intake-tokens'], queryFn: () => api.listIntakeTokens() });
+}
+
 export function useSkillRepos() {
   const api = useApi();
   return useQuery({ queryKey: ['skill-repos'], queryFn: () => api.listSkillRepos() });

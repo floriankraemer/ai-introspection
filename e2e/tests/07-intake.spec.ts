@@ -111,7 +111,84 @@ test('s3: add a bucket in Settings, its sessions appear', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Read from the bucket' })).toBeVisible();
 });
 
-// Settings with folder, pushed and S3 sources, light and dark.
+// Tests of this file run in order (one worker): the screenshots need the S3 source that the last test removes.
+test('people who push: a new token pushes, Revoke stops it', async ({ page }) => {
+  await page.goto('/settings');
+  const people = page.getByRole('region', { name: 'People who push' });
+  await people.getByRole('button', { name: '+ Add person' }).click();
+  const form = people.getByRole('form', { name: 'Add person' });
+  await form.getByLabel('Name').fill('e2e-dana');
+  await form.getByRole('button', { name: 'Create token' }).click();
+
+  // The token is shown once, in a read-only field.
+  const reveal = people.getByRole('group', { name: 'New token' });
+  const bearer = await reveal.getByLabel('Token').inputValue();
+  expect(bearer).not.toBe('');
+  await reveal.getByRole('button', { name: 'Done' }).click();
+  await expect(reveal).toHaveCount(0);
+  await expect(people.getByText('Active')).toHaveCount(3);
+
+  const file = `/work/extra/curl/-work-alpha/${uuid(104)}.jsonl`;
+  const url = `${INTAKE}/v1/intake/logs/claude_code/-work-alpha/${uuid(104)}.jsonl`;
+  const push = (): string =>
+    execFileSync(
+      'sh',
+      [
+        '-c',
+        `gzip -c "${file}" | curl -sS -o /dev/null -w '%{http_code}' -X PUT ` +
+          `-H "Authorization: Bearer ${bearer}" -H "Content-Type: application/x-ndjson" ` +
+          `-H "Content-Encoding: gzip" --data-binary @- "${url}"`,
+      ],
+      { encoding: 'utf8' },
+    );
+  expect(push()).toBe('202');
+  await expect.poll(() => sessionTitles(page)).toContain('Pushed by a new person');
+  await page.goto(ALL);
+  await expect(page.getByRole('row').filter({ hasText: 'Pushed by a new person' })).toBeVisible();
+
+  // Revoke: the same command is refused afterwards.
+  await page.goto('/settings');
+  await people.getByRole('button', { name: 'Revoke token e2e-dana' }).click();
+  await expect(people.getByRole('alertdialog')).toContainText('e2e-dana can no longer push');
+  await people.getByRole('alertdialog').getByRole('button', { name: 'Revoke' }).click();
+  await expect(people.getByText('Revoked')).toBeVisible();
+  await expect(people.getByRole('button', { name: 'Revoke token e2e-dana' })).toHaveCount(0);
+  expect(push()).toBe('401');
+});
+
+test('people who push: a taken name offers another token for the same person', async ({ page }) => {
+  await page.goto('/settings');
+  const people = page.getByRole('region', { name: 'People who push' });
+  await people.getByRole('button', { name: '+ Add person' }).click();
+  const form = people.getByRole('form', { name: 'Add person' });
+  await form.getByLabel('Name').fill('e2e-curl');
+  await form.getByRole('button', { name: 'Create token' }).click();
+  await expect(form.getByRole('alert')).toBeVisible();
+  await expect(
+    form.getByRole('button', { name: 'Create another token for e2e-curl' }),
+  ).toBeVisible();
+  await form.getByRole('button', { name: 'Cancel' }).click();
+  await expect(form).toHaveCount(0);
+});
+
+test('sources: Disable and Enable the Codex folder', async ({ page }) => {
+  await page.goto('/settings');
+  const sources = page.getByRole('region', { name: 'Sources' });
+  const row = sources
+    .locator('div')
+    .filter({ has: page.locator('code', { hasText: 'codex' }) })
+    .filter({ has: page.getByRole('button', { name: /^Remove / }) })
+    .last();
+  await expect(row.getByText('Polling')).toBeVisible();
+  await row.getByRole('button', { name: /^Disable / }).click();
+  await expect(row.getByText('Disabled', { exact: true })).toBeVisible();
+  await row.getByRole('button', { name: /^Enable / }).click();
+  await expect(row.getByText('Polling')).toBeVisible();
+  // A pushed source cannot be disabled.
+  await expect(sources.getByRole('button', { name: /^Disable pushed/ })).toHaveCount(0);
+});
+
+// Settings with folder, pushed and S3 sources and the people who push, light and dark.
 for (const scheme of ['light', 'dark'] as const) {
   test.describe(scheme, () => {
     test.use({ colorScheme: scheme });
@@ -119,14 +196,40 @@ for (const scheme of ['light', 'dark'] as const) {
     test('settings with pushed and S3 sources', async ({ page }) => {
       await page.goto('/settings');
       const sources = page.getByRole('region', { name: 'Sources' });
-      // Only the raw push (curl) has a folder; a --redact push writes sessions, no source.
-      await expect(sources.getByText('Pushed', { exact: true })).toHaveCount(1);
+      // Only raw pushes (curl, the new person) have a folder; a --redact push writes sessions, no source.
+      await expect(sources.getByText('Pushed', { exact: true })).toHaveCount(2);
       await expect(sources.getByText('Pushed by e2e-curl')).toBeVisible();
+      await expect(sources.getByText('Pushed by e2e-dana')).toBeVisible();
       await expect(sources.getByText('s3://e2e-logs/claude/')).toBeVisible();
       await expect(page.getByText('Loading', { exact: false })).toHaveCount(0);
       await expect(page).toHaveScreenshot(`settings-sources-${scheme}.png`, {
         fullPage: true,
       });
     });
+
+    test('settings people who push card', async ({ page }) => {
+      await page.goto('/settings');
+      const people = page.getByRole('region', { name: 'People who push' });
+      await expect(people.getByText('e2e-cli')).toBeVisible();
+      await expect(people.getByText('Revoked')).toBeVisible();
+      await expect(people).toHaveScreenshot(`settings-people-${scheme}.png`);
+    });
   });
 }
+
+test('sources: Remove the S3 bucket keeps its sessions', async ({ page }) => {
+  await page.goto('/settings');
+  const sources = page.getByRole('region', { name: 'Sources' });
+  await sources.getByRole('button', { name: 'Remove s3://e2e-logs/claude/' }).click();
+  const confirm = sources.getByRole('alertdialog');
+  await expect(confirm).toContainText(
+    'Remove s3://e2e-logs/claude/? Its 2 sessions stay in Introspect.',
+  );
+  await expect(confirm).toContainText('The copied log files are deleted.');
+  await confirm.getByRole('button', { name: 'Remove' }).click();
+  await expect(sources.getByText('s3://e2e-logs/claude/')).toHaveCount(0);
+
+  await page.goto(ALL);
+  await expect(page.getByRole('row').filter({ hasText: 'Read from the bucket' })).toBeVisible();
+  expect(await sessionTitles(page)).toContain('Second bucket session');
+});

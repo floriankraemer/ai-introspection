@@ -658,6 +658,51 @@ export function intakeSuite(name: string, make: TestDbFactory): void {
         ).toBe(bob.userId);
       });
 
+      it('keeps owning a raw-log session after its source is removed and added again', async () => {
+        const sid = sessionId('claude_code', CLAUDE_SESSION_ID);
+        await putLog(alice, 'claude_code', CLAUDE_PATH, lines(4));
+        await drain();
+        const before = await eventsOf(sid);
+        expect(before.length).toBeGreaterThan(0);
+        // Removing the source cascades its cursors; the session stays.
+        await db().deleteFrom('source').where('kind', '=', 'intake').execute();
+        expect(await db().selectFrom('ingest_cursor').select('file_path').execute()).toEqual([]);
+
+        expect((await putLog(alice, 'claude_code', CLAUDE_PATH, lines())).status).toBe(202);
+        await drain();
+        const after = await eventsOf(sid);
+        expect(after.length).toBeGreaterThan(before.length);
+        expect(after.map((e) => e.seq)).toEqual(after.map((_, i) => i));
+        expect(new Set(after.map((e) => e.source_key)).size).toBe(after.length);
+        expect(after.slice(0, before.length).map((e) => e.id)).toEqual(before.map((e) => e.id));
+        expect(await db().selectFrom('session').select('id').execute()).toEqual([{ id: sid }]);
+
+        const pushed = await putSession(alice, sid, trace({ nativeId: CLAUDE_SESSION_ID }));
+        expect(pushed.status).toBe(409);
+        expect(await eventsOf(sid)).toEqual(after);
+      });
+
+      it("never rebuilds another person's session from a file once the owner's source is gone", async () => {
+        const sid = sessionId('claude_code', CLAUDE_SESSION_ID);
+        // Both arrive before the session exists, so both are stored; Alice's is ingested first.
+        expect((await putLog(alice, 'claude_code', CLAUDE_PATH, lines(4))).status).toBe(202);
+        expect((await putLog(bob, 'claude_code', CLAUDE_PATH, lines())).status).toBe(202);
+        await drain();
+        const before = await eventsOf(sid);
+        expect(before.length).toBeGreaterThan(0);
+
+        await db().deleteFrom('source').where('user_id', '=', alice.userId).execute();
+        await ingest.reconcile();
+        await drain();
+        expect(await eventsOf(sid)).toEqual(before);
+        const owner = await db()
+          .selectFrom('session')
+          .select('user_id')
+          .where('id', '=', sid)
+          .executeTakeFirstOrThrow();
+        expect(owner.user_id).toBe(alice.userId);
+      });
+
       it('answers 409 to a raw log of a session pushed redacted or owned by someone else, and stores nothing', async () => {
         const sid = sessionId('claude_code', CLAUDE_SESSION_ID);
         await putSession(alice, sid, trace({ nativeId: CLAUDE_SESSION_ID }));

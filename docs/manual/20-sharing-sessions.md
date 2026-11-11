@@ -54,6 +54,9 @@ Then the person has to push again after a rule change, and `introspect push` doe
 
 4. Create a token for each person.
 
+   You can do this in **Settings**, card **People who push**, with **+ Add person**.
+   Or use the command line:
+
    ```sh
    docker compose exec introspect introspect intake-token create alice --expires 90d
    ```
@@ -69,6 +72,9 @@ Then the person has to push again after a rule change, and `introspect push` doe
 
 5. Check the tokens.
 
+   The **People who push** card lists them with their status.
+   On the command line:
+
    ```sh
    docker compose exec introspect introspect intake-token list
    ```
@@ -77,13 +83,15 @@ Then the person has to push again after a rule change, and `introspect push` doe
 
 6. Revoke a token when a person leaves, or when a token leaks.
 
+   Click **Revoke** on the **People who push** card, or use the command line:
+
    ```sh
    docker compose exec introspect introspect intake-token revoke alice
    ```
 
    The next push with that token answers 401.
    Revoking is the control that stops a person.
-   Disabling the person's source in Settings does not stop their uploads.
+   A pushed source cannot be disabled, because that would not stop their uploads.
    Sessions already pushed stay.
 
 The upload limit is 64 MB per file after decompression, and each person may keep 2048 MB of raw logs.

@@ -13,9 +13,9 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ConflictError } from '../../platform/errors.js';
+import { ConflictError, InvalidInputError, NotFoundError } from '../../platform/errors.js';
 import { newId, sessionId } from '../../platform/db/ids.js';
 import { fromJson } from '../../platform/db/json.js';
 import { LOCAL_USER_ID, LOCAL_WORKSPACE_ID } from '../../platform/identity/index.js';
@@ -643,6 +643,204 @@ export function ingestSuite(name: string, make: TestDbFactory): void {
       });
     });
 
+    describe('disabling and removing sources', () => {
+      const claudeSource = async () =>
+        (await ingest.sources.list()).find((s) => s.path === realpathSync(sources.claude));
+      const sessionRows = () =>
+        t.handle.db.selectFrom('session').select(['id', 'origin']).orderBy('id').execute();
+
+      it('counts the sessions of each source', async () => {
+        await importAll();
+        const list = await ingest.sources.list();
+        expect(list.map((s) => s.sessionCount).sort()).toEqual([1, 1]);
+        const extra = join(dir, 'empty');
+        mkdirSync(extra);
+        expect((await ingest.sources.add('codex', extra)).sessionCount).toBe(0);
+      });
+
+      it('keeps the sessions of a removed folder source, and re-adding it appends to them without duplicates', async () => {
+        await importAll();
+        const before = { sessions: await sessionRows(), events: await count('event') };
+        const src = await claudeSource();
+        await ingest.sources.remove(src?.id ?? '');
+        expect(await claudeSource()).toBeUndefined();
+        expect(existsSync(sources.claudeFile)).toBe(true);
+        expect(await sessionRows()).toEqual(before.sessions);
+        expect(await count('event')).toBe(before.events);
+
+        appendFileSync(sources.claudeFile, `${claudeSessionLines()[2] ?? ''}\n`);
+        await ingest.sources.add('claude_code', sources.claude);
+        await importAll();
+        expect(await sessionRows()).toEqual(before.sessions);
+        expect(await count('event')).toBe(before.events + 1);
+        await importAll();
+        expect(await count('event')).toBe(before.events + 1);
+      });
+
+      it('skips the files of a disabled source and ingests what changed meanwhile once it is enabled', async () => {
+        await importAll();
+        const src = await claudeSource();
+        const off = await ingest.sources.setEnabled(src?.id ?? '', false);
+        expect(off).toMatchObject({ enabled: false, status: 'disabled' });
+        const events = await count('event');
+        appendFileSync(sources.claudeFile, `${claudeSessionLines()[2] ?? ''}\n`);
+        expect(await ingest.reconcile()).toBe(0);
+        await importAll();
+        expect(await count('event')).toBe(events);
+
+        expect((await ingest.sources.setEnabled(src?.id ?? '', true)).enabled).toBe(true);
+        expect(await ingest.reconcile()).toBe(1);
+      });
+
+      it('finalizes an active session once its source is removed and it went quiet', async () => {
+        await importAll();
+        const sid = await sessionIdOf('claude_code');
+        const status = async () =>
+          (
+            await t.handle.db
+              .selectFrom('session')
+              .select('status')
+              .where('id', '=', sid)
+              .executeTakeFirstOrThrow()
+          ).status;
+        // A session still running when its source is removed.
+        await t.handle.db
+          .updateTable('session')
+          .set({ status: 'active' })
+          .where('id', '=', sid)
+          .execute();
+        await ingest.sources.remove((await claudeSource())?.id ?? '');
+        // No cursor is left; the fixture events are far older than the idle window.
+        await ingest.reconcile();
+        expect(await status()).not.toBe('active');
+      });
+
+      it('keeps a disabled owner of a session: a shorter copy elsewhere never rebuilds it', async () => {
+        await importAll();
+        const events = await count('event');
+        // A second folder holds an older, shorter copy of the same Claude session.
+        const copyRoot = join(dir, 'copy');
+        const copy = join(copyRoot, relative(sources.claude, sources.claudeFile));
+        mkdirSync(dirname(copy), { recursive: true });
+        writeFileSync(copy, `${claudeSessionLines().slice(0, 1).join('\n')}\n`);
+        await ingest.sources.add('claude_code', copyRoot);
+        const owner = await claudeSource();
+        await ingest.sources.setEnabled(owner?.id ?? '', false);
+        await importAll();
+        expect(await count('event')).toBe(events);
+
+        // Enabled again, the owner continues where it was: one new line, one new event.
+        await ingest.sources.setEnabled(owner?.id ?? '', true);
+        appendFileSync(sources.claudeFile, `${claudeSessionLines()[2] ?? ''}\n`);
+        await importAll();
+        expect(await count('event')).toBe(events + 1);
+      });
+
+      it('refuses to disable a pushed source and reports unknown ids', async () => {
+        const folder = join(dir, 'pushed');
+        mkdirSync(folder);
+        const pushed = await ingest.sources.add('claude_code', folder, { kind: 'intake' });
+        await expect(ingest.sources.setEnabled(pushed.id, false)).rejects.toThrow(
+          /revoke the person's token/,
+        );
+        await expect(ingest.sources.setEnabled(pushed.id, false)).rejects.toBeInstanceOf(
+          InvalidInputError,
+        );
+        await expect(ingest.sources.setEnabled(newId(), false)).rejects.toBeInstanceOf(
+          NotFoundError,
+        );
+        await expect(ingest.sources.remove(newId())).rejects.toBeInstanceOf(NotFoundError);
+      });
+
+      it('deletes the cache folder of a removed S3 source and keeps its sessions', async () => {
+        s3Api = fakeS3Api({
+          'logs/-work-s3/s3-session.jsonl': {
+            body: claudeSessionLines().join('\n') + '\n',
+            lastModified: new Date(),
+          },
+        }).api;
+        const s3 = await ingest.sources.addS3('claude_code', { bucket: 'b', prefix: 'logs' });
+        await ingest.syncS3();
+        await importAll();
+        const sessions = await count('session');
+        expect(existsSync(s3.path)).toBe(true);
+        await ingest.sources.remove(s3.id);
+        expect(existsSync(s3.path)).toBe(false);
+        expect(await count('session')).toBe(sessions);
+      });
+
+      it('deletes the folder of a removed intake source', async () => {
+        const person = newId();
+        await t.handle.db
+          .insertInto('app_user')
+          .values({
+            id: person,
+            workspace_id: LOCAL_WORKSPACE_ID,
+            display_name: 'Ada',
+            share_sessions: true,
+            created_at: new Date().toISOString(),
+          })
+          .execute();
+        const folder = join(dir, 'data', 'intake', person, 'claude_code');
+        mkdirSync(folder, { recursive: true });
+        writeFileSync(join(folder, 'x.jsonl'), '{}\n');
+        const added = await ingest.sources.add('claude_code', folder, {
+          kind: 'intake',
+          userId: person,
+        });
+        await ingest.sources.remove(added.id);
+        expect(existsSync(folder)).toBe(false);
+        expect((await ingest.sources.list()).some((s) => s.id === added.id)).toBe(false);
+      });
+
+      it('refuses to delete a cache folder outside the data folder', async () => {
+        s3Api = fakeS3Api({}).api;
+        const s3 = await ingest.sources.addS3('claude_code', { bucket: 'b', prefix: 'logs' });
+        const outside = join(dir, 'outside');
+        mkdirSync(outside);
+        writeFileSync(join(outside, 'keep.txt'), 'x');
+        await t.handle.db
+          .updateTable('source')
+          .set({ path: outside })
+          .where('id', '=', s3.id)
+          .execute();
+        await expect(ingest.sources.remove(s3.id)).rejects.toBeInstanceOf(InvalidInputError);
+        expect(existsSync(join(outside, 'keep.txt'))).toBe(true);
+        expect((await ingest.sources.list()).some((s) => s.id === s3.id)).toBe(true);
+      });
+
+      it('refuses to delete the copy root itself', async () => {
+        s3Api = fakeS3Api({}).api;
+        const s3 = await ingest.sources.addS3('claude_code', { bucket: 'b', prefix: 'logs' });
+        const root = join(dir, 'data', 's3');
+        await t.handle.db
+          .updateTable('source')
+          .set({ path: root })
+          .where('id', '=', s3.id)
+          .execute();
+        await expect(ingest.sources.remove(s3.id)).rejects.toBeInstanceOf(InvalidInputError);
+        expect(existsSync(root)).toBe(true);
+      });
+
+      it('skips an ingest job of a removed source, also when the remove races the job', async () => {
+        const src = await claudeSource();
+        const job = {
+          payload: { sourceId: src?.id, path: sources.claudeFile },
+        } as never;
+        await ingest.sources.remove(src?.id ?? '');
+        await expect(ingest.handlers.ingest_file?.run(job)).resolves.toBeUndefined();
+        expect(await count('session')).toBe(0);
+
+        const again = await ingest.sources.add('claude_code', sources.claude);
+        const raced = { payload: { sourceId: again.id, path: sources.claudeFile } } as never;
+        const results = await Promise.allSettled([
+          ingest.handlers.ingest_file?.run(raced),
+          ingest.sources.remove(again.id),
+        ]);
+        expect(results.map((r) => r.status)).toEqual(['fulfilled', 'fulfilled']);
+      });
+    });
+
     describe('job housekeeping', () => {
       const jobsWith = async (status: string): Promise<number> =>
         Number(
@@ -941,7 +1139,7 @@ export function ingestSuite(name: string, make: TestDbFactory): void {
       expect(listed.filter((s) => s.kind === 'folder').every((s) => s.person === null)).toBe(true);
     });
 
-    it('leaves a session without ingest cursor alone and finalizes it once idle', async () => {
+    it('leaves a pushed session alone and finalizes it once idle', async () => {
       await importAll();
       const { db } = t.handle;
       const id = await sessionIdOf('claude_code');
@@ -949,7 +1147,7 @@ export function ingestSuite(name: string, make: TestDbFactory): void {
       await db.deleteFrom('ingest_cursor').where('session_id', '=', id).execute();
       await db
         .updateTable('session')
-        .set({ status: 'active', ended_at: '2020-01-01T00:00:00.000Z' })
+        .set({ status: 'active', ended_at: '2020-01-01T00:00:00.000Z', origin: 'pushed' })
         .where('id', '=', id)
         .execute();
       const eventsBefore = await count('event');
